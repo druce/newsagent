@@ -15,7 +15,6 @@ import math
 from typing import Dict, List, Optional, Set, Tuple
 
 import choix
-import numpy as np
 
 from lib.llm import call_prompt_batch
 
@@ -109,24 +108,6 @@ def bradley_terry_from_battles(
 
     scores_array = choix.opt_pairwise(n, indexed)
     return {aid: float(scores_array[idx]) for aid, idx in id_to_idx.items()}
-
-
-def _run_battle_batch(
-    batch_items: List[dict],
-) -> List[Tuple[str, str]]:
-    """Call BATTLE_PROMPT on one batch; extract pairwise (winner, loser) outcomes."""
-    result = call_prompt_batch(
-        "battle_prompt",
-        [{"items": batch_items}],
-        parallelism=1,
-    )[0]
-
-    ranking: List[str] = result.ranking  # type: ignore[attr-defined]
-    outcomes: List[Tuple[str, str]] = []
-    for i in range(len(ranking) - 1):
-        for j in range(i + 1, len(ranking)):
-            outcomes.append((ranking[i], ranking[j]))
-    return outcomes
 
 
 def bradley_terry_scores(
