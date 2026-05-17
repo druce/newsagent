@@ -27,3 +27,8 @@ include = ["lib*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+
+[tool.pyright]
+extraPaths = ["."]
+include = ["lib", "tests"]
+reportMissingImports = "error"

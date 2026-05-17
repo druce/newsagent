@@ -1,7 +1,5 @@
-import json
 import sqlite3
-from datetime import datetime
-from lib.db import init_db, AgentState
+from lib.db import init_db
 from lib.state import (
     NewsletterAgentState, StepStatus, WORKFLOW_STEPS,
 )
@@ -11,7 +9,7 @@ def test_workflow_initializes_with_expected_steps(tmp_db):
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="s1", db_path=tmp_db)
     ids = [s.id for s in state.steps]
-    assert ids == [step_id for step_id, _name, _desc in WORKFLOW_STEPS]
+    assert ids == [step_id for step_id, *_ in WORKFLOW_STEPS]
     assert all(s.status == StepStatus.NOT_STARTED for s in state.steps)
 
 
@@ -66,7 +64,7 @@ def test_serialize_to_db_and_load_round_trip(tmp_db):
     assert loaded.get_step("init").status_message == "started session"
 
 
-def test_save_checkpoint_writes_one_row(tmp_db, capsys):
+def test_save_checkpoint_writes_one_row(tmp_db):
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="s1", db_path=tmp_db)
     state.save_checkpoint("init")
