@@ -165,7 +165,7 @@ class WorkflowState(BaseModel):
             lines.append("Status: All steps complete")
         lines.append("\nStep Details:")
         for i, step in enumerate(self.steps):
-            lines.append(f"  Step {i}: {step.name}: {step.status.value}")
+            lines.append(f"  Step {i}: {step.id} ({step.name}): {step.status.value}")
             if step.error_message:
                 lines.append(f"    Error: {step.error_message}")
             if step.status_message:
