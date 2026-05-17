@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Type, Union
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Sequence, Type, Union
 
 from pydantic import BaseModel, ValidationError
 
@@ -76,3 +77,27 @@ def call_prompt(
     engine_id = _resolve_engine(prompt_name, engine, cfg)
     eng = get_engine(engine_id)
     return eng(system=cfg.system_prompt, user=user_str, schema=cfg.output_schema)
+
+
+def call_prompt_batch(
+    prompt_name: str,
+    inputs: Sequence[Union[Dict[str, Any], BaseModel]],
+    *,
+    engine: Optional[str] = None,
+    parallelism: int = 8,
+) -> List[BaseModel]:
+    """Run a prompt over many inputs concurrently. Returns results in input order.
+
+    Concurrency: up to `parallelism` engine calls in flight at once. Both engines
+    block on I/O (subprocess / HTTP), so threading is sufficient — no asyncio.
+    """
+    if not inputs:
+        return []
+    if parallelism < 1:
+        raise ValueError("parallelism must be >= 1")
+
+    def _one(item):
+        return call_prompt(prompt_name, item, engine=engine)
+
+    with ThreadPoolExecutor(max_workers=parallelism) as pool:
+        return list(pool.map(_one, inputs))
