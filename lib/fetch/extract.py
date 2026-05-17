@@ -36,13 +36,15 @@ def extract_article_links(
     soup = BeautifulSoup(html, "html.parser")
 
     base_tag = soup.find("base")
-    base_url = base_tag.get("href") if base_tag and base_tag.get("href") else base_page_url
+    base_href = base_tag.get("href") if base_tag else None
+    base_url: str = str(base_href) if base_href else base_page_url
 
     raw_links = soup.find_all("a")
     candidates: list[Article] = []
     for link in raw_links:
         text = link.get_text(strip=True)
-        href = link.get("href") or ""
+        href_val = link.get("href")
+        href: str = str(href_val) if href_val else ""
         if not text or not href:
             continue
         if re.match(r"^\d+$", text):  # bare numbers (comment counts on Ars, etc.)

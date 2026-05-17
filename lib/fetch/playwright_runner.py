@@ -8,7 +8,6 @@ decide how to handle.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 
 _DEFAULT_NAV_TIMEOUT_MS = 30_000

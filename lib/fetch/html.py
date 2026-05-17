@@ -52,7 +52,7 @@ def fetch_html(
         return _try_playwright(source_name, source_cfg, url)
 
     # Try HTTP first
-    html, http_err = _http_fetch(url)
+    html, _http_err = _http_fetch(url)
     if html is not None:
         articles = extract_article_links(html, source_cfg, source_name)
         if len(articles) >= _MIN_LINKS_FOR_SUCCESS:

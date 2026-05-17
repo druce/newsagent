@@ -51,7 +51,7 @@ def test_fetch_html_falls_back_to_playwright_on_http_error():
         return_value=httpx.Response(500, text="explode")
     )
     with patch("lib.fetch.html.fetch_url_html", return_value=_HTML_GOOD) as mock_pw:
-        result, method = fetch_html("Example", _CFG_GOOD, scrape_method=None)
+        _result, method = fetch_html("Example", _CFG_GOOD, scrape_method=None)
     assert method == "playwright"
     assert mock_pw.called
 
