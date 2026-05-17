@@ -1,5 +1,4 @@
 import json
-import subprocess
 from unittest.mock import patch, MagicMock
 import pytest
 from pydantic import BaseModel
@@ -36,8 +35,7 @@ def test_subagent_engine_calls_claude_cli():
     assert result.label == "AI"
     assert result.score == 9
 
-    args, kwargs = mock_run.call_args
-    cmd = args[0]
+    cmd = mock_run.call_args[0][0]
     assert cmd[0] == "claude"
     # Prompt is passed as the last positional or via -p flag
     assert "-p" in cmd or "--print" in cmd
