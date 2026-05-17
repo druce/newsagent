@@ -47,6 +47,7 @@ _SCHEMA_STATEMENTS = [
         domain TEXT NOT NULL UNIQUE,
         name TEXT,
         reputation REAL DEFAULT 0.0,
+        scrape_method TEXT,
         last_seen TEXT
     )
     """,
@@ -206,3 +207,44 @@ class AgentState:
         )
         conn.commit()
         return cur.rowcount
+
+
+@dataclass
+class Site:
+    domain: str
+    name: Optional[str] = None
+    reputation: float = 0.0
+    scrape_method: Optional[str] = None  # None | "http" | "playwright"
+    last_seen: Optional[str] = None
+    id: Optional[int] = None
+
+    def upsert(self, conn: sqlite3.Connection) -> None:
+        cur = conn.execute(
+            """
+            INSERT INTO sites (domain, name, reputation, scrape_method, last_seen)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(domain) DO UPDATE SET
+                name = COALESCE(excluded.name, name),
+                reputation = excluded.reputation,
+                scrape_method = COALESCE(excluded.scrape_method, scrape_method),
+                last_seen = COALESCE(excluded.last_seen, last_seen)
+            """,
+            (self.domain, self.name, self.reputation,
+             self.scrape_method, self.last_seen),
+        )
+        if cur.lastrowid:
+            self.id = cur.lastrowid
+        conn.commit()
+
+    @classmethod
+    def get_by_domain(cls, conn: sqlite3.Connection, domain: str) -> Optional["Site"]:
+        row = conn.execute(
+            "SELECT id, domain, name, reputation, scrape_method, last_seen "
+            "FROM sites WHERE domain=?",
+            (domain,),
+        ).fetchone()
+        if not row:
+            return None
+        return cls(id=row[0], domain=row[1], name=row[2],
+                   reputation=row[3] or 0.0,
+                   scrape_method=row[4], last_seen=row[5])
