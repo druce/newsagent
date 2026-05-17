@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.db
+*.db-journal
+download/
+runs/
+out/
+*.pkl
+umap_reducer.pkl
+.venv/
+venv/
+.coverage
+htmlcov/
