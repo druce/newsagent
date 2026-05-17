@@ -1,6 +1,8 @@
 {
   "include": ["lib", "tests"],
   "extraPaths": ["."],
+  "venvPath": ".",
+  "venv": ".venv",
   "pythonVersion": "3.11",
   "reportMissingImports": "warning"
 }
