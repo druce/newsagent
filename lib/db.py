@@ -7,7 +7,7 @@ via init_db() but their dataclasses will be added in later phases as needed.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -104,7 +104,7 @@ class AgentState:
     session_id: str
     step_name: str
     state_data: str
-    updated_at: datetime
+    updated_at: Optional[datetime]
     id: Optional[int] = None
 
     def upsert(self, conn: sqlite3.Connection) -> None:
@@ -172,8 +172,8 @@ class AgentState:
             (session_id,),
         ).fetchall()
         return [
-            cls(id=r[0], session_id=r[1], step_name=r[2],
-                state_data=r[3], updated_at=_parse(r[4]))
+            AgentState(id=r[0], session_id=r[1], step_name=r[2],
+                       state_data=r[3], updated_at=_parse(r[4]))
             for r in rows
         ]
 
