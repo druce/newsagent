@@ -18,6 +18,11 @@ dependencies = [
   "feedparser>=6.0",
   "beautifulsoup4>=4.12",
   "playwright>=1.49",
+  "openai>=1.50",
+  "google-genai>=0.4",
+  "choix>=0.3",
+  "numpy>=1.26",
+  "scipy>=1.13",
 ]
 
 [project.optional-dependencies]
