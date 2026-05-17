@@ -4,9 +4,9 @@ __pycache__/
 .env
 *.db
 *.db-journal
-download/
-runs/
-out/
+/download/
+/runs/
+/out/
 *.pkl
 umap_reducer.pkl
 .venv/

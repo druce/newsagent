@@ -1,5 +1,4 @@
 import json
-import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 from click.testing import CliRunner
@@ -9,7 +8,7 @@ from lib.state import NewsletterAgentState
 from lib.steps.download import cli as download_cli
 
 
-def _setup(tmp_db, monkeypatch_chdir):
+def _setup(tmp_db, _monkeypatch_chdir=None):
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="d1", db_path=tmp_db)
     state.complete_step("init")
