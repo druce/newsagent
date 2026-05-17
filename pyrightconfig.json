@@ -1,0 +1,6 @@
+{
+  "include": ["lib", "tests"],
+  "extraPaths": ["."],
+  "pythonVersion": "3.11",
+  "reportMissingImports": "warning"
+}

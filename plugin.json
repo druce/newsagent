@@ -1,0 +1,24 @@
+{
+  "name": "news-agent",
+  "version": "0.1.0",
+  "description": "Daily AI newsletter agent: gather, filter, summarize, rate, cluster, and draft an AI-focused newsletter from RSS/HTML/REST sources.",
+  "author": {
+    "name": "Druce Vertes",
+    "email": "drucev@gmail.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/druce/news_agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/druce/news_agent.git"
+  },
+  "keywords": ["newsletter", "ai", "news", "rss", "summarization"],
+  "claude_code": {
+    "min_version": "0.1.0"
+  },
+  "skills": [
+    "skills/init",
+    "skills/status",
+    "skills/sessions"
+  ]
+}
