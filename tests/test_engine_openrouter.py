@@ -79,3 +79,27 @@ def test_openrouter_engine_requires_api_key(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(EngineError, match="OPENROUTER_API_KEY"):
         openrouter_engine("google/gemini-2.5-flash")(system="s", user="u", schema=_Out)
+
+
+@respx.mock
+def test_openrouter_engine_sends_reasoning_effort(or_key):
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_ok_body({"answer": "y", "confidence": 0.5}))
+    )
+    engine = openrouter_engine("google/gemini-2.5-flash")
+    engine(system="s", user="u", schema=_Out, reasoning_effort=8)
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["extra_body"]["reasoning"]["effort"] == "high"
+
+
+@respx.mock
+def test_openrouter_engine_omits_reasoning_when_zero(or_key):
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_ok_body({"answer": "y", "confidence": 0.5}))
+    )
+    engine = openrouter_engine("google/gemini-2.5-flash")
+    engine(system="s", user="u", schema=_Out, reasoning_effort=0)
+    sent = json.loads(route.calls.last.request.content)
+    # reasoning_effort=0 disables reasoning
+    assert sent.get("extra_body", {}).get("reasoning", {}).get("enabled") is False \
+        or "reasoning" not in sent.get("extra_body", {})

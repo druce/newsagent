@@ -23,6 +23,7 @@ class PromptConfig:
     input_schema: Type[BaseModel]
     output_schema: Type[BaseModel]
     default_engine: Optional[str]
+    reasoning_effort: int = 4  # 0-10 scale
 
 
 _registry: Dict[str, PromptConfig] = {}
@@ -76,7 +77,12 @@ def call_prompt(
 
     engine_id = _resolve_engine(prompt_name, engine, cfg)
     eng = get_engine(engine_id)
-    return eng(system=cfg.system_prompt, user=user_str, schema=cfg.output_schema)
+    return eng(
+        system=cfg.system_prompt,
+        user=user_str,
+        schema=cfg.output_schema,
+        reasoning_effort=cfg.reasoning_effort,
+    )
 
 
 def call_prompt_batch(

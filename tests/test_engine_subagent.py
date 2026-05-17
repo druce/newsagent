@@ -86,3 +86,12 @@ def test_subagent_engine_raises_when_claude_not_found():
         engine = subagent_engine()
         with pytest.raises(EngineError, match="claude"):
             engine(system="s", user="u", schema=_Out)
+
+
+def test_subagent_engine_embeds_reasoning_effort():
+    with patch("lib.engines.subagent.subprocess.run") as mock_run:
+        mock_run.return_value = _fake_run_ok({"label": "x", "score": 1})
+        engine = subagent_engine()
+        engine(system="s", user="u", schema=_Out, reasoning_effort=8)
+    prompt = mock_run.call_args[0][0][2]  # third arg = prompt text
+    assert "reasoning effort" in prompt.lower() or "8" in prompt

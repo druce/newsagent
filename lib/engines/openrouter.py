@@ -22,10 +22,23 @@ _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 def openrouter_engine(model_id: str) -> Callable[..., BaseModel]:
     """Build an Engine callable bound to a specific OpenRouter model id."""
 
-    def _call(system: str, user: str, schema: Type[BaseModel]) -> BaseModel:
+    def _call(system: str, user: str, schema: Type[BaseModel],
+              reasoning_effort: int = 4) -> BaseModel:
         api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise EngineError("OPENROUTER_API_KEY not set in environment")
+
+        extra_body: dict = {"provider": {"sort": "latency", "require_parameters": True}}
+        if reasoning_effort >= 1:
+            if reasoning_effort <= 3:
+                level = "low"
+            elif reasoning_effort <= 6:
+                level = "medium"
+            else:
+                level = "high"
+            extra_body["reasoning"] = {"enabled": True, "effort": level}
+        else:
+            extra_body["reasoning"] = {"enabled": False}
 
         body = {
             "model": model_id,
@@ -41,7 +54,7 @@ def openrouter_engine(model_id: str) -> Callable[..., BaseModel]:
                     "schema": schema.model_json_schema(),
                 },
             },
-            "provider": {"sort": "latency", "require_parameters": True},
+            "extra_body": extra_body,
         }
         headers = {
             "Authorization": f"Bearer {api_key}",

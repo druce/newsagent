@@ -45,3 +45,8 @@ def test_filter_urls_user_prompt_formats_items():
 def test_filter_urls_system_prompt_mentions_json():
     cfg = get_prompt("filter_urls")
     assert "JSON" in cfg.system_prompt or "json" in cfg.system_prompt.lower()
+
+
+def test_filter_urls_has_reasoning_effort():
+    cfg = get_prompt("filter_urls")
+    assert cfg.reasoning_effort == 4

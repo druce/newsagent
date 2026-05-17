@@ -18,10 +18,13 @@ from lib.engines.base import EngineError
 _TIMEOUT_SEC = 300
 
 
-def _build_prompt(system: str, user: str, schema: Type[BaseModel]) -> str:
+def _build_prompt(system: str, user: str, schema: Type[BaseModel],
+                  reasoning_effort: int = 4) -> str:
     schema_json = json.dumps(schema.model_json_schema(), indent=2)
     return (
         f"{system}\n\n"
+        f"Reasoning effort: {reasoning_effort}/10 "
+        f"(0=trivial, 4=moderate, 8=heavy)\n\n"
         f"User input:\n{user}\n\n"
         f"You MUST respond with valid JSON matching this exact schema. "
         f"No prose, no markdown fences — just the JSON object.\n\n"
@@ -32,8 +35,9 @@ def _build_prompt(system: str, user: str, schema: Type[BaseModel]) -> str:
 def subagent_engine() -> Callable[..., BaseModel]:
     """Build an Engine callable that dispatches to `claude -p`."""
 
-    def _call(system: str, user: str, schema: Type[BaseModel]) -> BaseModel:
-        prompt = _build_prompt(system, user, schema)
+    def _call(system: str, user: str, schema: Type[BaseModel],
+              reasoning_effort: int = 4) -> BaseModel:
+        prompt = _build_prompt(system, user, schema, reasoning_effort)
         cmd = ["claude", "-p", prompt, "--output-format", "json"]
 
         try:

@@ -35,7 +35,7 @@ def _register():
 
 def test_batch_returns_results_in_order(monkeypatch):
     _register()
-    def fake_engine(system, user, schema):
+    def fake_engine(system, user, schema, reasoning_effort=None):
         n = int(user.split("=")[1])
         return schema(doubled=n * 2)
     monkeypatch.setattr("lib.llm.get_engine", lambda i: fake_engine)
@@ -49,7 +49,7 @@ def test_batch_runs_in_parallel(monkeypatch):
     active_lock = threading.Lock()
     active = {"now": 0, "peak": 0}
 
-    def fake_engine(system, user, schema):
+    def fake_engine(system, user, schema, reasoning_effort=None):
         with active_lock:
             active["now"] += 1
             active["peak"] = max(active["peak"], active["now"])
@@ -66,7 +66,7 @@ def test_batch_runs_in_parallel(monkeypatch):
 
 def test_batch_propagates_errors(monkeypatch):
     _register()
-    def fake_engine(system, user, schema):
+    def fake_engine(system, user, schema, reasoning_effort=None):
         n = int(user.split("=")[1])
         if n == 3:
             raise RuntimeError("boom")
@@ -80,5 +80,5 @@ def test_batch_propagates_errors(monkeypatch):
 def test_batch_empty_inputs(monkeypatch):
     _register()
     monkeypatch.setattr("lib.llm.get_engine",
-                        lambda i: (lambda s, u, sc: sc(doubled=0)))
+                        lambda i: (lambda s, u, sc, reasoning_effort=None: sc(doubled=0)))
     assert call_prompt_batch("double", [], parallelism=4) == []

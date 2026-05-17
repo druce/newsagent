@@ -52,7 +52,7 @@ def test_call_prompt_formats_user_prompt_and_routes(monkeypatch):
     register_prompt(_make_cfg())
     called = {}
 
-    def fake_engine(system, user, schema):
+    def fake_engine(system, user, schema, reasoning_effort=None):
         called["system"] = system
         called["user"] = user
         called["schema"] = schema
@@ -78,7 +78,7 @@ def test_call_prompt_explicit_engine_overrides_default(monkeypatch):
 
     def fake_get_engine(identifier):
         captured["id"] = identifier
-        return lambda system, user, schema: schema(is_ai=False)
+        return lambda system, user, schema, reasoning_effort=None: schema(is_ai=False)
 
     monkeypatch.setattr("lib.llm.get_engine", fake_get_engine)
 
@@ -93,7 +93,7 @@ def test_call_prompt_env_var_overrides_default(monkeypatch):
 
     def fake_get_engine(identifier):
         captured["id"] = identifier
-        return lambda system, user, schema: schema(is_ai=False)
+        return lambda system, user, schema, reasoning_effort=None: schema(is_ai=False)
 
     monkeypatch.setattr("lib.llm.get_engine", fake_get_engine)
 
@@ -108,7 +108,7 @@ def test_call_prompt_explicit_beats_env_var(monkeypatch):
 
     def fake_get_engine(identifier):
         captured["id"] = identifier
-        return lambda system, user, schema: schema(is_ai=False)
+        return lambda system, user, schema, reasoning_effort=None: schema(is_ai=False)
 
     monkeypatch.setattr("lib.llm.get_engine", fake_get_engine)
 
@@ -132,6 +132,25 @@ def test_call_prompt_rejects_missing_engine(monkeypatch):
 def test_call_prompt_validates_input(monkeypatch):
     register_prompt(_make_cfg())
     monkeypatch.setattr("lib.llm.get_engine",
-                        lambda i: (lambda s, u, sc: sc(is_ai=True)))
+                        lambda i: (lambda s, u, sc, reasoning_effort=None: sc(is_ai=True)))
     with pytest.raises(ValueError):
         call_prompt("test_prompt", {"wrong_field": "x"})
+
+
+def test_call_prompt_passes_reasoning_effort_to_engine(monkeypatch):
+    register_prompt(PromptConfig(
+        name="effort_test",
+        system_prompt="s", user_prompt="u: {title}",
+        input_schema=_In, output_schema=_Out,
+        default_engine="subagent",
+        reasoning_effort=8,
+    ))
+    captured = {}
+
+    def fake_engine(system, user, schema, reasoning_effort=None):
+        captured["effort"] = reasoning_effort
+        return schema(is_ai=True)
+
+    monkeypatch.setattr("lib.llm.get_engine", lambda i: fake_engine)
+    call_prompt("effort_test", {"title": "x"})
+    assert captured["effort"] == 8

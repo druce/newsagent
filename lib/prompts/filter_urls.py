@@ -71,6 +71,7 @@ FILTER_URLS = PromptConfig(
     input_schema=FilterUrlsInput,
     output_schema=FilterUrlsOutput,
     default_engine="subagent",
+    reasoning_effort=4,
 )
 
 register_prompt(FILTER_URLS)
