@@ -9,6 +9,7 @@ from lib.prompts import write_section  # noqa: F401
 from lib.prompts import critique_section  # noqa: F401
 from lib.prompts import improve_section  # noqa: F401
 from lib.prompts import critique_newsletter  # noqa: F401
+from lib.prompts import improve_newsletter  # noqa: F401
 
 __all__ = [
     "filter_urls",
@@ -24,4 +25,5 @@ __all__ = [
     "critique_section",
     "improve_section",
     "critique_newsletter",
+    "improve_newsletter",
 ]
