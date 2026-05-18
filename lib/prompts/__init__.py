@@ -6,6 +6,7 @@ from lib.prompts import name_topic  # noqa: F401
 from lib.prompts import assign_noise  # noqa: F401
 from lib.prompts import merge_clusters  # noqa: F401
 from lib.prompts import write_section  # noqa: F401
+from lib.prompts import critique_section  # noqa: F401
 
 __all__ = [
     "filter_urls",
@@ -18,4 +19,5 @@ __all__ = [
     "assign_noise",
     "merge_clusters",
     "write_section",
+    "critique_section",
 ]
