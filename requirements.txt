@@ -15,6 +15,7 @@ umap-learn>=0.5
 hdbscan>=0.8
 optuna>=3.6
 scikit-learn>=1.5
+Pillow>=10
 pytest>=8.0
 pytest-cov>=5.0
 respx>=0.21
