@@ -23,6 +23,10 @@ dependencies = [
   "choix>=0.3",
   "numpy>=1.26",
   "scipy>=1.13",
+  "umap-learn>=0.5",
+  "hdbscan>=0.8",
+  "optuna>=3.6",
+  "scikit-learn>=1.5",
 ]
 
 [project.optional-dependencies]
