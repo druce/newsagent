@@ -18,8 +18,6 @@ from pathlib import Path
 from typing import List
 
 import click
-import numpy as np
-
 import lib.prompts  # noqa: F401 — register all prompts
 from lib.clustering import apply_umap, load_umap_reducer, optimize_hdbscan
 from lib.embeddings import embed_texts
@@ -57,11 +55,8 @@ def cli(db_path: str, session_id: str, n_trials: int, umap_path: str) -> None:
         for h, v in zip(missing, vectors):
             h["embedding"] = v
 
-    # Stack embeddings
-    embeddings: List[List[float]] = [h["embedding"] for h in candidates]
-    M = np.array(embeddings, dtype=np.float32)
-
     # Apply UMAP
+    embeddings: List[List[float]] = [h["embedding"] for h in candidates]
     reducer = load_umap_reducer(umap_path)
     reduced = apply_umap(embeddings, reducer)
 
