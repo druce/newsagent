@@ -8,6 +8,7 @@ from lib.prompts import merge_clusters  # noqa: F401
 from lib.prompts import write_section  # noqa: F401
 from lib.prompts import critique_section  # noqa: F401
 from lib.prompts import improve_section  # noqa: F401
+from lib.prompts import critique_newsletter  # noqa: F401
 
 __all__ = [
     "filter_urls",
@@ -22,4 +23,5 @@ __all__ = [
     "write_section",
     "critique_section",
     "improve_section",
+    "critique_newsletter",
 ]
