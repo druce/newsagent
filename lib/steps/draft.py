@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 import click
 
 import lib.prompts  # noqa: F401 — register all prompts
-from lib.critic import critic_optimizer_loop
+from lib.critic import critic_optimizer_loop, CriticTranscript
 from lib.llm import call_prompt
 from lib.state import NewsletterAgentState
 
@@ -111,7 +111,7 @@ def cli(
     cats = list(by_cat.keys())
 
     # ----- Parallel drafting -----
-    results: Dict[str, object] = {}  # cat -> CriticTranscript
+    results: Dict[str, CriticTranscript] = {}
 
     def _task(cat):
         return _draft_section(cat, by_cat[cat], max_edits=max_edits, engine=engine)
