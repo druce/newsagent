@@ -1,0 +1,199 @@
+# CLAUDE.md — news_agent
+
+## What this project is
+
+A daily AI newsletter agent, built from scratch as a `news:*` Claude Code skill plugin. **All 9 build phases (0–8) are complete.** Tags: `phase-0-complete` through `phase-8-complete`. 266 tests passing, ~89% coverage on `lib/`.
+
+The legacy implementation at `~/projects/OpenAIAgentsSDK/` is read-only reference — used during porting for prompt text, scraping logic, and Bradley-Terry math. Do not import from it.
+
+**Design spec:** [CLAUDE_REFACTOR.md](CLAUDE_REFACTOR.md) — the original architectural plan (mostly historical now).
+**Per-phase plans:** [docs/superpowers/plans/](docs/superpowers/plans/) — one detailed implementation plan per phase, with full code and tests.
+**Top-level overview:** [README.md](README.md) — end-user docs.
+
+## Hard constraints (locked in via memory)
+
+These were set by the user during the build and are non-negotiable in future work:
+
+1. **No Anthropic direct API.** No `anthropic` SDK, no `ANTHROPIC_API_KEY`. Claude models route through the `subagent` engine (which subprocesses `claude -p` against the user's Claude Code subscription). Allowed engines: `subagent`, `openrouter:<m>`, `openai:<m>`, `google:<m>`.
+2. **Embeddings = OpenAI `text-embedding-3-large`.** Matches the legacy `umap_reducer.pkl` dimensions. Do not substitute another provider.
+3. **PromptConfig per legacy style.** Each prompt binds to a specific `default_engine` and `reasoning_effort` (0–10 scale). Subagent is the implicit fallback default if not specified.
+4. **Adaptive HTML scraping.** `gather` tries `trafilatura+httpx` first, falls back to Playwright on failure, and memoizes the working method per site in `sites.scrape_method`.
+
+See `~/.claude/projects/-Users-drucev-projects-news-agent/memory/` for the full memory store.
+
+## Reading the reference implementation
+
+When tweaking ported behavior, the legacy file is still the source of truth on intent:
+
+| Topic | File in `~/projects/OpenAIAgentsSDK/` |
+|---|---|
+| Workflow orchestration & resume | `run_agent.py`, `news_agent.py` |
+| State schema | `newsletter_state.py`, `db.py` |
+| Prompts | `prompts.py` |
+| Source fetching | `fetch.py`, `sources.yaml` |
+| Playwright scraping | `scrape.py` |
+| Clustering math | `do_cluster.py`, `umap_reducer.pkl` (now copied locally) |
+| Bradley-Terry rating | `do_rating.py` |
+| Dedup | `do_dedupe.py` |
+| Email / HTML format | `utilities.py` |
+| Bluesky digest | `Compose newsletter from BlueSky posts.ipynb` |
+
+Do not import from that path; do not modify it.
+
+## Current architecture
+
+```
+news_agent/
+├── plugin.json                       # Claude Code plugin manifest (publishable shape)
+├── pyproject.toml, requirements.txt  # deps
+├── pyrightconfig.json                # pyright IDE config
+├── lib/
+│   ├── state.py                      # NewsletterAgentState + WorkflowState (11 steps)
+│   ├── db.py                         # SQLite schema + AgentState/Site dataclasses
+│   ├── llm.py                        # call_prompt + registry + call_prompt_batch
+│   ├── critic.py                     # critic-optimizer loop helper
+│   ├── rating.py                     # Swiss pairing + Bradley-Terry (choix)
+│   ├── clustering.py                 # UMAP + Optuna-tuned HDBSCAN
+│   ├── mmr.py                        # MMR diversity selection
+│   ├── embeddings.py                 # OpenAI text-embedding-3-large
+│   ├── run_summary.py                # runs/<SID>/summary.md generator
+│   ├── config.py                     # rating weights
+│   ├── engines/
+│   │   ├── base.py                   # Engine protocol + EngineError
+│   │   ├── subagent.py               # claude -p subprocess
+│   │   ├── openrouter.py             # OpenRouter HTTP
+│   │   ├── openai_chat.py            # OpenAI direct
+│   │   └── google.py                 # Gemini direct
+│   ├── fetch/
+│   │   ├── types.py                  # Article, FetchResult
+│   │   ├── rss.py                    # feedparser via httpx
+│   │   ├── html.py                   # adaptive trafilatura → Playwright
+│   │   ├── rest.py                   # generic JSON API
+│   │   ├── extract.py                # BS4 link extraction
+│   │   └── playwright_runner.py      # minimal Playwright wrapper
+│   ├── prompts/                      # ~17 PromptConfigs, one per file
+│   │   ├── _critic_schemas.py        # shared critic/draft schemas
+│   │   ├── _rating_schemas.py        # shared rating I/O
+│   │   ├── filter_urls.py, extract_summaries.py
+│   │   ├── rate_quality.py, rate_on_topic.py, rate_importance.py, battle.py
+│   │   ├── name_topic.py, assign_noise.py, merge_clusters.py
+│   │   ├── write_section.py, critique_section.py, improve_section.py
+│   │   ├── critique_newsletter.py, improve_newsletter.py, generate_title.py
+│   │   └── bsky_reorder.py, bsky_section_titles.py
+│   ├── steps/                        # 18 step CLIs
+│   │   ├── init.py, gather.py, filter.py, download.py, summarize.py,
+│   │   │   dedupe.py, rate.py, cluster.py, select.py, draft.py,
+│   │   │   rewrite.py, send.py, bluesky.py        # pipeline
+│   │   ├── run.py                                 # orchestrator
+│   │   ├── status.py, sessions.py, show.py        # inspection
+│   │   └── resume.py, reset.py, checkpoint.py,
+│   │       diff.py, gc.py                         # recovery / maintenance
+│   └── bluesky/                      # atproto api, og_tags, image resize
+├── skills/                           # 21 SKILL.md contracts
+├── agents/                           # persona reference docs for draft/rewrite
+├── tests/                            # 266 tests, ~89% coverage
+├── sources.yaml                      # source feeds (copied from legacy)
+├── umap_reducer.pkl                  # 396 MB pretrained UMAP (gitignored)
+└── newsletter_agent.db               # SQLite source of truth
+```
+
+## Workflow
+
+`init → gather → filter → download → summarize → rate → cluster → select → draft → rewrite → send`
+
+Plus the standalone `news:bluesky` and seven recovery/maintenance skills.
+
+`dedupe` runs between `summarize` and `rate` by convention but is NOT in `WORKFLOW_STEPS` — it's a maintenance step.
+
+## Engine layer
+
+`lib.llm.call_prompt(name, inputs, engine=...)` is the only entry point. Resolution precedence:
+1. `engine=` kwarg
+2. `NEWS_PROMPT_<NAME>_ENGINE` env var
+3. `PromptConfig.default_engine`
+4. `"subagent"` (implicit)
+
+Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific knobs (see `lib/engines/*.py`).
+
+`call_prompt_batch` runs the same prompt over many inputs in parallel via `ThreadPoolExecutor` (both engines are blocking I/O).
+
+## Critic-optimizer loop
+
+`lib/critic.py:critic_optimizer_loop` is the generic helper. Both `news:draft` (per section, parallel via ThreadPoolExecutor) and `news:rewrite` (whole newsletter) use it. Short-circuits when critic returns `accept=True` OR `score >= 8.0`. Default `max_edits=2`.
+
+## State and data storage
+
+- `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`.
+- `download/` — article text cache (sha256-of-url filename).
+- `download/bsky-images/` — Bluesky image cache.
+- `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `news:run`.
+- `out/YYYY-MM-DD.html` — final newsletter (+ `out/latest.html` symlink).
+- `out/bsky-YYYY-MM-DD.html` — Bluesky digest (+ `out/latest-bsky.html`).
+
+## Environment
+
+Copy `dot-env.txt` to `.env`. All keys are optional except the ones you actually use:
+
+- `OPENROUTER_API_KEY` — OpenRouter engine
+- `OPENAI_API_KEY` — OpenAI engine + embeddings (required for dedupe/cluster/select)
+- `GOOGLE_API_KEY` — Google engine
+- `NEWSAPI_API_KEY` — only if NewsAPI source is enabled in `sources.yaml`
+- `BSKY_USERNAME` / `BSKY_SECRET` — only for `news:bluesky`
+
+**Do NOT set or expect `ANTHROPIC_API_KEY`.** Claude models go through the `subagent` engine via your Claude Code subscription.
+
+## Commands
+
+```bash
+# Full run (fresh session)
+.venv/bin/python -m lib.steps.run --sources sources.yaml
+
+# Resume
+.venv/bin/python -m lib.steps.run --resume SID
+.venv/bin/python -m lib.steps.run --from cluster --session SID
+
+# Single step
+.venv/bin/python -m lib.steps.filter --session SID
+
+# Inspection / recovery
+.venv/bin/python -m lib.steps.status
+.venv/bin/python -m lib.steps.sessions --limit 10
+.venv/bin/python -m lib.steps.show SID
+.venv/bin/python -m lib.steps.resume SID
+
+# Maintenance
+.venv/bin/python -m lib.steps.diff SID1 SID2
+.venv/bin/python -m lib.steps.gc --older-than 30 --yes
+
+# Tests
+.venv/bin/pytest tests/
+.venv/bin/pytest tests/ --cov=lib --cov-report=term
+
+# Install
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m playwright install chromium
+```
+
+See [README.md](README.md) for full end-user workflows and engine override examples.
+
+## Conventions
+
+- **One `PromptConfig` per file** under `lib/prompts/`. Each declares `default_engine`, `reasoning_effort`, and Pydantic input/output schemas.
+- **Each step CLI** is a Click command at `lib/steps/<step>.py:cli`. The `cli` is what gets invoked when you `python -m lib.steps.<step>`.
+- **SKILL.md** is the agent-facing contract under `skills/<name>/SKILL.md`. Python logic lives in `lib/steps/<name>.py`.
+- **Idempotency:** re-running a step on the same session overwrites that step's outputs but leaves later steps untouched.
+- **Per-run artifacts** go to `runs/<SID>/<step>.json`. Not load-bearing; for observability.
+- **TDD discipline:** every implementation task in the phase plans follows write-tests → confirm-fail → implement → confirm-pass → commit.
+- **`.venv/bin/pytest`** not system pytest. Use the project virtualenv.
+- **Pyright "could not be resolved" warnings** are an IDE config issue, not real bugs. Tests pass via pytest.
+- **Never edit `~/projects/OpenAIAgentsSDK/`.** It's read-only reference.
+
+## Memory
+
+The project has a memory store at `~/.claude/projects/-Users-drucev-projects-news-agent/memory/`. Key entries:
+- `feedback_no_anthropic_api.md` — no Anthropic direct API
+- `feedback_adaptive_scraping.md` — trafilatura→Playwright fallback with per-site memo
+- `feedback_prompt_config_shape.md` — per-prompt model + reasoning_effort binding
+- `project_embeddings_openai.md` — text-embedding-3-large for all embeddings
+
+Future sessions should respect these constraints without re-asking.

@@ -4,14 +4,17 @@ Daily AI newsletter agent built as a Claude Code skill plugin (`news:*`).
 
 Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads + summarizes articles, clusters by topic, scores via multi-axis ratings + Bradley-Terry pairwise battles, picks a diverse top-K per cluster (MMR with LLM noise-assignment and cluster-merge), and writes a polished newsletter through parallel critic-optimizer loops. Plus a standalone Bluesky digest pipeline.
 
-**Design doc:** [CLAUDE_REFACTOR.md](CLAUDE_REFACTOR.md) — full architectural spec.
-**Phase plans:** [docs/superpowers/plans/](docs/superpowers/plans/) — one plan per build phase.
+**Status:** all 9 build phases complete (`phase-0-complete` … `phase-8-complete`). 266 tests, ~89% coverage.
+
+**Design doc:** [CLAUDE_REFACTOR.md](CLAUDE_REFACTOR.md) · **Phase plans:** [docs/superpowers/plans/](docs/superpowers/plans/) · **Conventions:** [CLAUDE.md](CLAUDE.md)
+
+---
 
 ## Quick start
 
 ```bash
 # 1. Install
-cp dot-env.txt .env                          # fill in API keys
+cp dot-env.txt .env                          # fill in API keys (optional, see below)
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m playwright install chromium
@@ -19,7 +22,7 @@ python -m venv .venv
 # 2. Get the pretrained UMAP reducer (~400 MB, gitignored)
 cp ~/projects/OpenAIAgentsSDK/umap_reducer.pkl ./
 
-# 3. Run the full pipeline
+# 3. Run the full pipeline (writes a newsletter to out/<date>.html)
 .venv/bin/python -m lib.steps.run --sources sources.yaml
 ```
 
@@ -39,66 +42,241 @@ The default engine for every prompt is `"subagent"` — that uses your Claude Co
 
 **No Anthropic direct API.** Per project policy, Claude models route through the `subagent` engine, not `ANTHROPIC_API_KEY`.
 
-## Pipeline
+---
+
+## How to run
+
+### Three ways: end-to-end, step-by-step, single-step
+
+#### A. End-to-end (the orchestrator)
+
+```bash
+# Fresh full run — creates a new session, runs all 11 steps, writes out/<date>.html
+.venv/bin/python -m lib.steps.run --sources sources.yaml
+
+# All steps with a specific engine forced for LLM prompts
+.venv/bin/python -m lib.steps.run --sources sources.yaml \
+    --engine openrouter:google/gemini-2.5-flash
+
+# Skip Gmail prompt (default — Phase 2 ships preview-only)
+.venv/bin/python -m lib.steps.run --sources sources.yaml --no-summary
+```
+
+When `run` finishes you get:
+- `out/<YYYY-MM-DD>.html` — final newsletter, plus `out/latest.html` symlink
+- `runs/<SID>/summary.md` — human-readable run report (table of step statuses, counts, draft critic transcripts)
+- `runs/<SID>/*.json` — per-step artifacts (`gather.json`, `filter.json`, `cluster.json`, `draft.json`, etc.)
+
+#### B. Step-by-step (run each step manually)
+
+Useful when developing, debugging, or wanting to inspect state between steps.
+
+```bash
+# Create a session
+.venv/bin/python -m lib.steps.init --sources sources.yaml --session demo-1
+# → "Session created: demo-1"
+
+# Fetch headlines from all enabled sources
+.venv/bin/python -m lib.steps.gather --session demo-1
+# → "Gathered N new headlines from M sources."
+
+# Inspect what we just gathered
+.venv/bin/python -m lib.steps.status --session demo-1
+.venv/bin/python -m lib.steps.show demo-1
+
+# LLM-filter AI-relevant headlines
+.venv/bin/python -m lib.steps.filter --session demo-1
+
+# Download full article HTML, extract text via trafilatura
+.venv/bin/python -m lib.steps.download --session demo-1 --max 50
+
+# Summarize each article (bullet points)
+.venv/bin/python -m lib.steps.summarize --session demo-1
+
+# Cosine-similarity dedup on OpenAI embeddings
+.venv/bin/python -m lib.steps.dedupe --session demo-1
+
+# Rate each article (quality, on-topic, importance + Bradley-Terry)
+.venv/bin/python -m lib.steps.rate --session demo-1
+
+# UMAP + HDBSCAN cluster + LLM cluster naming
+.venv/bin/python -m lib.steps.cluster --session demo-1
+
+# LLM noise assignment + cluster merge + MMR top-K
+.venv/bin/python -m lib.steps.select --session demo-1 --k 5
+
+# Parallel section drafters with critic-optimizer loop
+.venv/bin/python -m lib.steps.draft --session demo-1 --max-edits 2 --parallelism 4
+
+# Whole-newsletter critic-optimizer + title generation
+.venv/bin/python -m lib.steps.rewrite --session demo-1 --max-edits 2
+
+# Render HTML to out/
+.venv/bin/python -m lib.steps.send --session demo-1
+```
+
+#### C. Single step on an existing session
+
+```bash
+# Rerun just one step (overwrites that step's outputs; later steps untouched)
+.venv/bin/python -m lib.steps.filter --session demo-1
+.venv/bin/python -m lib.steps.rate --session demo-1 --engine openai:gpt-4o-mini
+```
+
+### Bluesky digest (standalone)
+
+```bash
+# Requires BSKY_USERNAME + BSKY_SECRET env vars
+.venv/bin/python -m lib.steps.bluesky --user yourhandle.bsky.social --limit 80
+# → writes out/bsky-<date>.html
+```
+
+---
+
+## How to check status
+
+### Quick check (most recent session)
+
+```bash
+.venv/bin/python -m lib.steps.status
+```
+
+Output:
+```
+Session:  2026-05-18-091533
+Progress: 54.5% (6/11 steps)
+Next:     cluster
+Headlines: 412
+Clusters:  0
+Sections:  0
+
+WORKFLOW
+Progress: 54.5% (6/11 complete)
+Next Step: Step 6: Cluster Topics
+...
+```
+
+### List all recent sessions
+
+```bash
+.venv/bin/python -m lib.steps.sessions --limit 10
+```
+
+Output:
+```
+SESSION                      UPDATED                    STEP           PROGRESS
+--------------------------------------------------------------------------------
+2026-05-18-091533            2026-05-18T09:32:14.221      cluster        55%
+2026-05-17-180012            2026-05-17T19:14:02.110      done           100%
+2026-05-17-100503            2026-05-17T10:08:43.882      gather         18%
+```
+
+### Deep dive on one session
+
+```bash
+.venv/bin/python -m lib.steps.show 2026-05-18-091533
+```
+
+Dumps the full state record: workflow report, per-step checkpoints with timestamps, headline/cluster/section counts, newsletter title and length.
+
+### Compare two sessions
+
+```bash
+.venv/bin/python -m lib.steps.diff 2026-05-17-180012 2026-05-18-091533
+```
+
+Shows side-by-side metrics and URL overlap (Jaccard).
+
+---
+
+## Recovering from errors
+
+### A step errored mid-run
+
+```bash
+# See where it stopped
+.venv/bin/python -m lib.steps.status --session demo-1
+
+# Clear error markers and print the next step to invoke
+.venv/bin/python -m lib.steps.resume demo-1
+
+# Re-enter the pipeline from the first incomplete step
+.venv/bin/python -m lib.steps.run --resume demo-1
+```
+
+### Force a specific step to redo
+
+```bash
+# Reset one step and everything after
+.venv/bin/python -m lib.steps.reset demo-1 --from cluster --yes
+
+# Or reset only error steps to NOT_STARTED
+.venv/bin/python -m lib.steps.reset demo-1 --errors --yes
+
+# Or reset everything (rare)
+.venv/bin/python -m lib.steps.reset demo-1 --all --yes
+
+# Then resume
+.venv/bin/python -m lib.steps.run --resume demo-1
+```
+
+### Continue with engine override
+
+```bash
+# E.g. the rate step keeps failing on subagent — try OpenRouter
+.venv/bin/python -m lib.steps.rate --session demo-1 \
+    --engine openrouter:google/gemini-2.5-flash
+```
+
+### Garbage-collect old sessions
+
+```bash
+# Dry-run (shows what would be deleted)
+.venv/bin/python -m lib.steps.gc --older-than 30
+
+# Actually delete
+.venv/bin/python -m lib.steps.gc --older-than 30 --yes
+```
+
+Never touches `articles`, `urls`, `newsletters`, `sites` tables — those are content, not state.
+
+---
+
+## Pipeline reference
 
 ```
 init → gather → filter → download → summarize → rate → cluster → select → draft → rewrite → send
 ```
 
-Plus a standalone Bluesky digest (`news:bluesky`) and seven recovery/maintenance skills.
+Plus the standalone Bluesky digest and recovery/maintenance skills.
 
 ### Per-step reference
 
 | Skill | Phase | What it does |
 |---|---|---|
-| `/news:init` | 0 | Create session, validate `sources.yaml`. |
-| `/news:gather` | 2 | Fetch from RSS/HTML/REST. HTML uses adaptive scraping (trafilatura+httpx → Playwright fallback, memoized in `sites.scrape_method`). |
-| `/news:filter` | 3 | LLM-classify AI relevance; drop non-AI by default. |
-| `/news:download` | 2 | Playwright fetch + trafilatura extract. |
-| `/news:summarize` | 3 | Per-article bullet summary. |
-| `/news:dedupe` | 3 | Cosine-similarity dedup on OpenAI embeddings (`text-embedding-3-large`). |
-| `/news:rate` | 3 | Multi-axis confidence (quality/on-topic/importance) + Swiss-paired Bradley-Terry battles → composite rating. |
-| `/news:cluster` | 4 | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
-| `/news:select` | 4 | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
-| `/news:draft` | 5 | Parallel section drafters; each runs a critic-optimizer loop (`write_section → critique_section → improve_section`). |
-| `/news:rewrite` | 5 | Whole-newsletter critic-optimizer loop + title generation. |
-| `/news:send` | 2 | Render HTML, write `out/<date>.html` + `out/latest.html`. Gmail send not in this version. |
-| `/news:bluesky` | 7 | Standalone Bluesky digest: feed → OG enrichment → LLM reorder → LLM section titles → HTML. |
-| `/news:run` | 6 | Top-level orchestrator. Sequences all 11 steps with `--resume`, `--from`, `--only`, `--engine` flags. |
-| `/news:status`, `sessions`, `show` | 0/2 | State inspection. |
-| `/news:resume`, `reset` | 2 | Error recovery. |
-| `/news:diff`, `gc`, `checkpoint` | 8 | Maintenance. |
+| `news:init` | 0 | Create session, validate `sources.yaml`. |
+| `news:gather` | 2 | Fetch from RSS / HTML / REST. HTML uses adaptive scraping (trafilatura+httpx → Playwright fallback, memoized in `sites.scrape_method`). |
+| `news:filter` | 3 | LLM-classify AI relevance; drop non-AI by default. |
+| `news:download` | 2 | Playwright fetch + trafilatura extract. |
+| `news:summarize` | 3 | Per-article bullet summary. |
+| `news:dedupe` | 3 | Cosine-similarity dedup on OpenAI embeddings. |
+| `news:rate` | 3 | Multi-axis confidence + Swiss-paired Bradley-Terry → composite rating. |
+| `news:cluster` | 4 | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
+| `news:select` | 4 | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
+| `news:draft` | 5 | Parallel section drafters; each runs a critic-optimizer loop. |
+| `news:rewrite` | 5 | Whole-newsletter critic-optimizer + title generation. |
+| `news:send` | 2 | Render HTML, write `out/<date>.html` + `out/latest.html`. |
+| `news:bluesky` | 7 | Standalone Bluesky digest. |
+| `news:run` | 6 | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
+| `news:status`, `sessions`, `show` | 0/2 | State inspection. |
+| `news:resume`, `reset` | 2 | Error recovery. |
+| `news:diff`, `gc`, `checkpoint` | 8 | Maintenance. |
 
-## Common workflows
-
-```bash
-# Full run, fresh session
-.venv/bin/python -m lib.steps.run --sources sources.yaml
-
-# Resume a session that errored mid-pipeline
-.venv/bin/python -m lib.steps.resume SID
-.venv/bin/python -m lib.steps.run --resume SID
-
-# Rerun one step on an existing session
-.venv/bin/python -m lib.steps.filter --session SID
-
-# Force one engine for all LLM calls in a run
-.venv/bin/python -m lib.steps.run --engine openrouter:google/gemini-2.5-flash
-
-# Override a single prompt's engine
-NEWS_PROMPT_RATE_QUALITY_ENGINE=openai:gpt-4o-mini \
-  .venv/bin/python -m lib.steps.run
-
-# Compare two runs
-.venv/bin/python -m lib.steps.diff SID1 SID2
-
-# Garbage-collect sessions older than 30 days
-.venv/bin/python -m lib.steps.gc --older-than 30 --yes
-```
+---
 
 ## Engine configuration
 
-Each `PromptConfig` declares its own `default_engine` and `reasoning_effort` (0–10 scale). Resolution precedence:
+Each `PromptConfig` declares its own `default_engine` and `reasoning_effort` (0–10). Resolution precedence:
 
 1. `--engine <id>` CLI arg (per step)
 2. `NEWS_PROMPT_<NAME>_ENGINE=<id>` env var (per prompt)
@@ -115,10 +293,29 @@ Engine identifier formats:
 | `google:<model>` | `GOOGLE_API_KEY` |
 
 `reasoning_effort` maps to provider-specific knobs:
-- OpenRouter: `extra_body.reasoning.effort` (low/medium/high or disabled at 0)
-- OpenAI: `reasoning_effort` API param (minimal/low/medium/high), silently dropped on non-reasoning models
-- Google: `thinking_config.thinking_budget` (0 / 2048 / 8192 / 24576 tokens)
-- Subagent: embedded as `"Reasoning effort: N/10"` in the prompt
+- **OpenRouter:** `extra_body.reasoning.effort` (low/medium/high or disabled at 0)
+- **OpenAI:** `reasoning_effort` API param (minimal/low/medium/high), silently dropped on non-reasoning models
+- **Google:** `thinking_config.thinking_budget` (0 / 2048 / 8192 / 24576 tokens)
+- **Subagent:** embedded as `"Reasoning effort: N/10"` in the prompt
+
+### Per-prompt override examples
+
+```bash
+# One engine for all LLM prompts in a single run
+.venv/bin/python -m lib.steps.run --engine openai:gpt-4o-mini
+
+# Override a single prompt globally via env var
+NEWS_PROMPT_RATE_QUALITY_ENGINE=openai:gpt-4o-mini \
+  .venv/bin/python -m lib.steps.run
+
+# Stack overrides (rate uses Gemini, everything else default subagent)
+NEWS_PROMPT_RATE_QUALITY_ENGINE=google:gemini-2.5-flash \
+NEWS_PROMPT_RATE_ON_TOPIC_ENGINE=google:gemini-2.5-flash \
+NEWS_PROMPT_RATE_IMPORTANCE_ENGINE=google:gemini-2.5-flash \
+  .venv/bin/python -m lib.steps.run
+```
+
+---
 
 ## Architecture
 
@@ -127,6 +324,7 @@ Engine identifier formats:
 - **Single LLM entry point:** `lib/llm.call_prompt(prompt_name, inputs, engine=...)`. Engines live in `lib/engines/`.
 - **Per-prompt config:** each prompt is a separate module under `lib/prompts/` declaring model + reasoning_effort + schema.
 - **Adaptive HTML scraping:** httpx + trafilatura first, Playwright on failure; per-site working method cached in `sites.scrape_method`.
+- **Critic-optimizer loops** (`lib/critic.py`): generic helper used by both `draft` (per section, parallel) and `rewrite` (whole newsletter).
 
 ## Layout
 
@@ -143,17 +341,27 @@ news_agent/
 │   ├── mmr.py                # MMR diversity selection
 │   ├── embeddings.py         # OpenAI text-embedding-3-large
 │   ├── run_summary.py        # runs/<SID>/summary.md generator
-│   ├── engines/              # openrouter, openai, google, subagent
+│   ├── config.py             # rating weights
+│   ├── engines/              # subagent, openrouter, openai_chat, google
 │   ├── fetch/                # RSS, HTML (adaptive), REST, Playwright runner
-│   ├── prompts/              # PromptConfig per file (~20 prompts)
-│   ├── steps/                # one CLI per workflow step
+│   ├── prompts/              # ~17 PromptConfigs (one per file)
+│   ├── steps/                # one CLI per workflow + recovery skill
 │   └── bluesky/              # api, og_tags, images
-├── skills/                   # SKILL.md per slash command (~20 skills)
+├── skills/                   # SKILL.md per slash command (21 skills)
 ├── agents/                   # persona reference docs
-├── tests/                    # ~270 tests, ~90% coverage
+├── tests/                    # 266 tests, ~89% coverage
+├── docs/superpowers/plans/   # one phase plan per build phase
 ├── sources.yaml              # source feeds
-├── umap_reducer.pkl          # 400 MB, gitignored
+├── umap_reducer.pkl          # 400 MB pretrained UMAP (gitignored)
 └── newsletter_agent.db       # SQLite source of truth
+```
+
+## Tests
+
+```bash
+.venv/bin/pytest tests/                              # all
+.venv/bin/pytest tests/ --cov=lib --cov-report=term  # with coverage
+.venv/bin/pytest tests/test_step_filter.py -v        # one file
 ```
 
 ## Tech stack
