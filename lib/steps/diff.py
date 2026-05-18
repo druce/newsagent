@@ -72,6 +72,7 @@ def cli(session_id_1: str, session_id_2: str, db_path: str) -> None:
     if missing:
         click.echo(f"Error: session(s) not found: {', '.join(missing)}", err=True)
         sys.exit(1)
+    assert s1 is not None and s2 is not None  # narrow for type checker
 
     urls1 = _extract_urls(s1)
     urls2 = _extract_urls(s2)

@@ -1,7 +1,6 @@
 """Tests for lib.steps.diff — compare two sessions."""
-import sqlite3
 from click.testing import CliRunner
-from lib.db import init_db, AgentState
+from lib.db import init_db
 from lib.state import NewsletterAgentState
 
 
