@@ -12,6 +12,7 @@ from lib.prompts import critique_newsletter  # noqa: F401
 from lib.prompts import improve_newsletter  # noqa: F401
 from lib.prompts import generate_title  # noqa: F401
 from lib.prompts import bsky_reorder  # noqa: F401
+from lib.prompts import bsky_section_titles  # noqa: F401
 
 __all__ = [
     "filter_urls",
@@ -30,4 +31,5 @@ __all__ = [
     "improve_newsletter",
     "generate_title",
     "bsky_reorder",
+    "bsky_section_titles",
 ]
