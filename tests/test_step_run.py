@@ -140,10 +140,10 @@ def test_run_from_step(tmp_db, tmp_path, monkeypatch):
     expected_skipped = ["init", "gather", "filter", "download", "summarize", "rate"]
 
     for step_id in expected_called:
-        mock_clis[step_id].main.assert_called_once(), f"{step_id} should have been called"
+        mock_clis[step_id].main.assert_called_once()
 
     for step_id in expected_skipped:
-        mock_clis[step_id].main.assert_not_called(), f"{step_id} should NOT have been called"
+        mock_clis[step_id].main.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
