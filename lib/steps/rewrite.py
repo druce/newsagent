@@ -1,4 +1,4 @@
-"""news:rewrite — whole-newsletter critic-optimizer pass + title generation.
+"""newsagent:rewrite — whole-newsletter critic-optimizer pass + title generation.
 
 Steps:
 1. Load state. Concatenate section_markdown from newsletter_section_data.

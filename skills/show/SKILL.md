@@ -1,9 +1,9 @@
 ---
-name: news:show
+name: show
 description: Dump full state record for a session — workflow status report, per-step checkpoints, headline/section counts, newsletter title and length. Optional --step to show a single step's checkpoint.
 ---
 
-# news:show
+# newsagent:show
 
 ```bash
 python -m lib.steps.show <SID> [--db newsletter_agent.db] [--step STEP]

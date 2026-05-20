@@ -28,6 +28,11 @@ def test_extract_summaries_input_accepts_articles():
 def test_extract_summaries_output_round_trips():
     cfg = get_prompt("extract_summaries")
     out = cfg.output_schema.model_validate({
-        "summaries": [{"id": "h1", "summary": "- bullet one\n- bullet two\n- bullet three"}]
+        "summaries": [{
+            "id": "h1",
+            "short_summary": "OpenAI launches GPT-6 with strong benchmarks",
+            "summary": "- bullet one\n- bullet two\n- bullet three",
+        }]
     })
     assert len(out.summaries) == 1
+    assert out.summaries[0].short_summary.startswith("OpenAI")

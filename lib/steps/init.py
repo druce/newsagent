@@ -1,4 +1,4 @@
-"""news:init — create a new session and validate sources.
+"""newsagent:init — create a new session and validate sources.
 
 CLI entry: python -m lib.steps.init --db PATH --sources sources.yaml [--session SID]
 """
@@ -67,7 +67,7 @@ def cli(db_path: str, sources_path: str, session_id: str | None) -> None:
         stype = cfg.get("type", "?") if isinstance(cfg, dict) else "?"
         click.echo(f"  [{marker}] {name} ({stype})")
     click.echo(f"Workflow: {len(state.steps)} steps registered.")
-    click.echo("Next: /news:gather")
+    click.echo("Next: /newsagent:gather")
 
 
 if __name__ == "__main__":  # pragma: no cover

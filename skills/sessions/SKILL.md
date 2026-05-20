@@ -1,9 +1,9 @@
 ---
-name: news:sessions
+name: sessions
 description: List the N most recent newsletter sessions in the database with session id, last-updated timestamp, current step, and completion percentage.
 ---
 
-# news:sessions
+# newsagent:sessions
 
 Browse recent sessions in `newsletter_agent.db`.
 
@@ -24,7 +24,7 @@ Four-column table:
 
 ## When to use
 
-- Find a session id to feed to `/news:resume`, `/news:status`, or `/news:show`.
+- Find a session id to feed to `/newsagent:resume`, `/newsagent:status`, or `/newsagent:show`.
 - Audit recent runs at a glance.
 
 ## No-op cases

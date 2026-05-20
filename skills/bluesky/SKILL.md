@@ -1,9 +1,9 @@
 ---
-name: news:bluesky
-description: Standalone Bluesky digest pipeline. Fetches recent posts from a Bluesky account, enriches with OG metadata and resized images, reorders by importance via LLM, generates punny section titles, and renders an HTML digest. Independent from the main 11-step newsletter pipeline.
+name: bluesky
+description: Standalone Bluesky digest pipeline. Fetches recent posts from a Bluesky account, enriches with OG metadata and resized images, reorders by importance via LLM, generates punny section titles, and renders an HTML digest. Independent from the main 12-step newsletter pipeline.
 ---
 
-# news:bluesky
+# newsagent:bluesky
 
 ## Invocation
 

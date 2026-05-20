@@ -1,4 +1,4 @@
-"""news:select — LLM noise assignment + cluster merge + MMR diversity selection.
+"""newsagent:select — LLM noise assignment + cluster merge + MMR diversity selection.
 
 Steps:
 1. Load state. Group headlines by cluster_id.

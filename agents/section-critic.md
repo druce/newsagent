@@ -1,6 +1,6 @@
 # Section Critic
 
-Persona embedded in `lib/prompts/critique_section.py`. Used inside the critic-optimizer loop in `news:draft`.
+Persona embedded in `lib/prompts/critique_section.py`. Used inside the critic-optimizer loop in `newsagent:draft`.
 
 ## Role
 

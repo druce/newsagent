@@ -1,11 +1,11 @@
 ---
-name: news:send
+name: send
 description: Render the session's newsletter as styled HTML, write to out/YYYY-MM-DD.html, update out/latest.html symlink, and insert a row in the newsletters table. Phase 2: preview only — no Gmail.
 ---
 
-# news:send
+# newsagent:send
 
-Step 11 (final) of `/news:run`.
+Step 12 (final) of `/newsagent:run`.
 
 ## How to invoke
 

@@ -21,7 +21,7 @@ def test_battle_prompt_registered():
 
 def test_battle_prompt_default_engine():
     cfg = get_prompt("battle_prompt")
-    assert cfg.default_engine == "google:gemini-2.5-flash-lite"
+    assert cfg.default_engine == "google:gemini-3.1-flash-lite"
 
 
 def test_battle_prompt_reasoning_effort():

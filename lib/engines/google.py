@@ -12,15 +12,29 @@ from pydantic import BaseModel, ValidationError
 from lib.engines.base import EngineError
 
 
+# Mirrors legacy _GEMINI_THINKING_MAP in ~/projects/OpenAIAgentsSDK/llm.py:451.
+# Keys are reasoning_effort levels; values are thinking_budget tokens.
+_THINKING_MAP = {0: 0, 1: 512, 2: 1024, 3: 1536,
+                 4: 2048, 5: 3072, 6: 4096, 7: 6144,
+                 8: 8192, 9: 12288, 10: 16384}
+
+# Models that should NOT receive thinking_config at all. Empty by default —
+# every current Gemini model handles thinking_config fine when paired with a
+# generous max_output_tokens cap. Earlier we listed gemini-3.1-flash-lite here
+# after a 92K-char truncation, but that turned out to be a max_output_tokens
+# issue (default ~8K), not a thinking-config incompatibility. Add an entry
+# here only if a model genuinely misbehaves when thinking_config is present.
+_NO_REASONING_MODELS: set[str] = set()
+
+# Match legacy default_max_tokens for Gemini family. Without this explicit cap,
+# the SDK falls back to a much smaller default (~8K) and structured-output
+# responses can get truncated mid-string when the model is verbose.
+_MAX_OUTPUT_TOKENS = 65536
+
+
 def _thinking_budget(effort: int) -> int:
     """Map 0-10 reasoning_effort to Gemini thinking_budget (0 = off)."""
-    if effort <= 0:
-        return 0
-    if effort <= 3:
-        return 2048
-    if effort <= 6:
-        return 8192
-    return 24576
+    return _THINKING_MAP.get(max(0, min(10, effort)), 0)
 
 
 def google_engine(model_id: str) -> Callable[..., BaseModel]:
@@ -32,14 +46,24 @@ def google_engine(model_id: str) -> Callable[..., BaseModel]:
 
         client = genai.Client(api_key=api_key)
 
-        config = genai_types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-            response_schema=schema,
-            thinking_config=genai_types.ThinkingConfig(
-                thinking_budget=_thinking_budget(reasoning_effort)
-            ),
-        )
+        config_kwargs: dict = {
+            "system_instruction": system,
+            "max_output_tokens": _MAX_OUTPUT_TOKENS,
+            "response_mime_type": "application/json",
+            "response_schema": schema,
+        }
+
+        # Only attach thinking_config for reasoning-capable models with a
+        # positive budget. Sending ThinkingConfig to a non-reasoning model
+        # (e.g. gemini-3.1-flash-lite) can cause it to leak reasoning text
+        # into schema string fields and truncate mid-output.
+        thinking_tokens = _thinking_budget(reasoning_effort)
+        if thinking_tokens > 0 and model_id not in _NO_REASONING_MODELS:
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_budget=thinking_tokens
+            )
+
+        config = genai_types.GenerateContentConfig(**config_kwargs)
 
         try:
             resp = client.models.generate_content(
@@ -49,6 +73,15 @@ def google_engine(model_id: str) -> Callable[..., BaseModel]:
             )
         except Exception as exc:
             raise EngineError(f"Google API error: {exc}") from exc
+
+        # Detect truncation explicitly — gives a clearer error than the
+        # cryptic JSON "unterminated string" the parser produces.
+        if resp.candidates and resp.candidates[0].finish_reason == "MAX_TOKENS":
+            raise EngineError(
+                f"Gemini response truncated (finish_reason=MAX_TOKENS, "
+                f"max_output_tokens={_MAX_OUTPUT_TOKENS}). "
+                f"Model produced more tokens than the cap allows."
+            )
 
         try:
             text = resp.text or ""

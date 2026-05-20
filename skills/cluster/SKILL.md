@@ -1,11 +1,16 @@
-# news:cluster
+---
+name: cluster
+description: Group summarized headlines into topical clusters using UMAP dimensionality reduction, Optuna-tuned HDBSCAN, and LLM-based cluster naming. Writes cluster_id and cluster_name onto each headline and populates state.clusters.
+---
+
+# cluster
 
 Group summarized headlines into topical clusters using UMAP dimensionality reduction, Optuna-tuned HDBSCAN, and LLM-based cluster naming.
 
 ## What it does
 
 1. Loads the newsletter agent state for the given session.
-2. Filters to headlines that have a `summary` field set (from `news:summarize`).
+2. Filters to headlines that have a `summary` field set (from `newsagent:summarize`).
 3. For any headlines missing an `embedding`, embeds them now (title + summary concatenated) using `lib/embeddings.py` (OpenAI `text-embedding-3-large`).
 4. Applies the pretrained UMAP reducer (`umap_reducer.pkl`) to project embeddings to a lower-dimensional space.
 5. Runs Optuna-tuned HDBSCAN to find the optimal hyperparameters and assigns a `cluster_id` to each headline (-1 = noise).
@@ -17,9 +22,9 @@ Group summarized headlines into topical clusters using UMAP dimensionality reduc
 
 ## Prerequisites
 
-- `news:summarize` must be complete (headlines need `summary`).
+- `newsagent:summarize` must be complete (headlines need `summary`).
 - `umap_reducer.pkl` must exist at the project root (pretrained on `text-embedding-3-large` 3072-dim embeddings).
-- `news:rate` should ideally be complete so headlines have `rating` for top-5 sampling; falls back to order-of-appearance.
+- `newsagent:rate` should ideally be complete so headlines have `rating` for top-5 sampling; falls back to order-of-appearance.
 
 ## Invocation
 
@@ -51,4 +56,4 @@ python -m lib.steps.cluster --session <SID> --umap-path /path/to/umap_reducer.pk
 
 ## Next step
 
-`news:select` — MMR-diverse top-K per cluster with LLM noise assignment and cluster merging.
+`newsagent:select` — MMR-diverse top-K per cluster with LLM noise assignment and cluster merging.

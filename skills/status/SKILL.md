@@ -1,9 +1,9 @@
 ---
-name: news:status
+name: status
 description: Report workflow progress for the current or specified newsletter session — step list, status per step, error messages, headline/cluster/section counts. Defaults to the most recent session.
 ---
 
-# news:status
+# newsagent:status
 
 Reads the latest checkpoint row for a session and prints a human-readable progress report.
 
@@ -23,9 +23,9 @@ python -m lib.steps.status [--db newsletter_agent.db] [--session SID]
 
 ## When to use
 
-- After `/news:init` to confirm setup.
+- After `/newsagent:init` to confirm setup.
 - During a run to see what's running / errored.
-- Before `/news:resume` to decide what to re-execute.
+- Before `/newsagent:resume` to decide what to re-execute.
 
 ## No-op cases
 

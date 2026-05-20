@@ -1,4 +1,4 @@
-"""SQLite persistence layer for news_agent.
+"""SQLite persistence layer for newsagent.
 
 Schema mirrors legacy ~/projects/OpenAIAgentsSDK/db.py so parity diffs are possible.
 Phase 0 only ports the AgentState dataclass + helpers; other tables are declared
@@ -48,6 +48,7 @@ _SCHEMA_STATEMENTS = [
         name TEXT,
         reputation REAL DEFAULT 0.0,
         scrape_method TEXT,
+        bright_data_enabled INTEGER NOT NULL DEFAULT 0,
         last_seen TEXT
     )
     """,
@@ -76,11 +77,47 @@ _SCHEMA_STATEMENTS = [
 ]
 
 
+# Domains routed through Bright Data Web Unlocker by default (paywalls or
+# aggressive anti-bot). Mirrors legacy config.IGNORE_LIST. Each entry is the
+# bare domain; users can flip the flag in the `sites` row at any time.
+_BRIGHT_DATA_DEFAULT_DOMAINS = (
+    "bloomberg.com", "www.bloomberg.com",
+    "cnn.com", "www.cnn.com",
+    "wsj.com", "www.wsj.com",
+    "fastcompany.com", "www.fastcompany.com",
+    "forbes.com", "www.forbes.com",
+)
+
+
+def _migrate_sites_bright_data_column(conn: sqlite3.Connection) -> None:
+    """Add bright_data_enabled to an existing sites table if missing."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(sites)").fetchall()]
+    if cols and "bright_data_enabled" not in cols:
+        conn.execute(
+            "ALTER TABLE sites ADD COLUMN bright_data_enabled "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+
+
+def _seed_bright_data_defaults(conn: sqlite3.Connection) -> None:
+    """Mark the default Bright-Data-enabled domains. Inserts new rows or
+    flips the flag on existing rows; preserves any other columns."""
+    for domain in _BRIGHT_DATA_DEFAULT_DOMAINS:
+        conn.execute(
+            "INSERT INTO sites (domain, bright_data_enabled) VALUES (?, 1) "
+            "ON CONFLICT(domain) DO UPDATE SET bright_data_enabled = 1",
+            (domain,),
+        )
+
+
 def init_db(db_path: str) -> None:
-    """Create all tables and indexes for a fresh database."""
+    """Create all tables and indexes for a fresh database, migrate existing
+    schemas to the current shape, and seed Bright-Data-enabled domains."""
     with sqlite3.connect(db_path) as conn:
         for stmt in _SCHEMA_STATEMENTS:
             conn.execute(stmt)
+        _migrate_sites_bright_data_column(conn)
+        _seed_bright_data_defaults(conn)
         conn.commit()
 
 
@@ -215,22 +252,33 @@ class Site:
     name: Optional[str] = None
     reputation: float = 0.0
     scrape_method: Optional[str] = None  # None | "http" | "playwright"
+    # Tri-state on upsert: None = "don't touch the column on conflict",
+    # True/False = "set the column to that value". Reads always materialize
+    # as bool.
+    bright_data_enabled: Optional[bool] = None
     last_seen: Optional[str] = None
     id: Optional[int] = None
 
     def upsert(self, conn: sqlite3.Connection) -> None:
+        bd_param = None if self.bright_data_enabled is None else int(
+            self.bright_data_enabled
+        )
+        # Insert path needs a concrete value (NOT NULL column with default 0).
+        bd_insert = 0 if bd_param is None else bd_param
         cur = conn.execute(
             """
-            INSERT INTO sites (domain, name, reputation, scrape_method, last_seen)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO sites (domain, name, reputation, scrape_method,
+                               bright_data_enabled, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(domain) DO UPDATE SET
                 name = COALESCE(excluded.name, name),
                 reputation = excluded.reputation,
                 scrape_method = COALESCE(excluded.scrape_method, scrape_method),
+                bright_data_enabled = COALESCE(?, bright_data_enabled),
                 last_seen = COALESCE(excluded.last_seen, last_seen)
             """,
             (self.domain, self.name, self.reputation,
-             self.scrape_method, self.last_seen),
+             self.scrape_method, bd_insert, self.last_seen, bd_param),
         )
         if cur.lastrowid:
             self.id = cur.lastrowid
@@ -239,12 +287,14 @@ class Site:
     @classmethod
     def get_by_domain(cls, conn: sqlite3.Connection, domain: str) -> Optional["Site"]:
         row = conn.execute(
-            "SELECT id, domain, name, reputation, scrape_method, last_seen "
-            "FROM sites WHERE domain=?",
+            "SELECT id, domain, name, reputation, scrape_method, "
+            "bright_data_enabled, last_seen FROM sites WHERE domain=?",
             (domain,),
         ).fetchone()
         if not row:
             return None
         return cls(id=row[0], domain=row[1], name=row[2],
                    reputation=row[3] or 0.0,
-                   scrape_method=row[4], last_seen=row[5])
+                   scrape_method=row[4],
+                   bright_data_enabled=bool(row[5]),
+                   last_seen=row[6])

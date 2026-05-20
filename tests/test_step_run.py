@@ -33,11 +33,11 @@ def _make_mock_clis() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Test 1: Default run invokes all 11 steps in order
+# Test 1: Default run invokes all 12 steps in order
 # ---------------------------------------------------------------------------
 
 def test_run_all_steps_in_order(tmp_db, tmp_path, monkeypatch, sample_sources_yaml):
-    """Running with --session + --sources calls all 11 step CLIs in workflow order."""
+    """Running with --session + --sources calls all 12 step CLIs in workflow order."""
     monkeypatch.chdir(tmp_path)
     init_db(tmp_db)
 
@@ -61,7 +61,7 @@ def test_run_all_steps_in_order(tmp_db, tmp_path, monkeypatch, sample_sources_ya
 
     assert result.exit_code == 0, result.output
 
-    # All 11 steps called
+    # All 12 steps called
     for step_id in _ALL_STEP_IDS:
         mock_clis[step_id].main.assert_called_once()
 

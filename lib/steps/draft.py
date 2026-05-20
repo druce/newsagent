@@ -1,4 +1,4 @@
-"""news:draft — parallel section drafting with critic-optimizer loop.
+"""newsagent:draft — parallel section drafting with critic-optimizer loop.
 
 Steps:
 1. Load state. Group newsletter_section_data by cat (cluster name).

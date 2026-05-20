@@ -1,4 +1,4 @@
-"""news:show — dump full state record for a session."""
+"""newsagent:show — dump full state record for a session."""
 from __future__ import annotations
 
 import sys

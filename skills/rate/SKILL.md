@@ -1,11 +1,11 @@
 ---
-name: news:rate
+name: rate
 description: Multi-axis confidence rating + Bradley-Terry composite scoring for filtered, summarized articles. Runs three per-axis rating prompts (quality, on-topic, importance) and Swiss-paired Bradley-Terry battles, then combines all signals into a composite `rating` score on each headline.
 ---
 
-# news:rate
+# newsagent:rate
 
-Step 6 of /news:run.
+Step 7 of /newsagent:run.
 
 ## How to invoke
 

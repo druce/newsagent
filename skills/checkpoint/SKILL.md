@@ -1,9 +1,9 @@
 ---
-name: news:checkpoint
+name: checkpoint
 description: Force a manual state checkpoint for a session at a specific step. Escape-hatch for when a step crashed after doing work but before saving its own checkpoint.
 ---
 
-# news:checkpoint
+# newsagent:checkpoint
 
 Loads the most recent state for a session and calls `state.save_checkpoint(STEP)`,
 writing the current in-memory state to the `agent_state` table under the given
@@ -44,7 +44,7 @@ itself, but triggered manually from the CLI.
 
 - A step ran to completion but crashed before its final `save_checkpoint()` call.
 - You manually edited state (e.g. via SQLite CLI) and want to persist the result.
-- You need to re-point `news:resume` to a different step without re-running the step.
+- You need to re-point `newsagent:resume` to a different step without re-running the step.
 
 ## Output
 
@@ -62,5 +62,5 @@ Checkpoint saved: session=my-session, step=gather
 
 - If a row for `(SID, STEP)` already exists it is overwritten (upsert semantics).
 - The `STEP` argument is free-form text — it does not have to be one of the 11
-  canonical workflow step names, but using a canonical name keeps `news:status`
-  and `news:resume` consistent.
+  canonical workflow step names, but using a canonical name keeps `newsagent:status`
+  and `newsagent:resume` consistent.

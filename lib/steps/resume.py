@@ -1,4 +1,4 @@
-"""news:resume — clear errors and report the next step to invoke."""
+"""newsagent:resume — clear errors and report the next step to invoke."""
 from __future__ import annotations
 
 import sys

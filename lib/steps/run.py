@@ -1,4 +1,4 @@
-"""news:run — top-level newsletter orchestrator.
+"""newsagent:run — top-level newsletter orchestrator.
 
 Sequences all 11 pipeline steps in order, supports resume/from/only flags,
 and forwards engine overrides to the appropriate steps.
@@ -24,6 +24,7 @@ from lib.steps import init as step_init
 from lib.steps import gather
 from lib.steps import filter as step_filter
 from lib.steps import download
+from lib.steps import dedupe
 from lib.steps import summarize
 from lib.steps import rate
 from lib.steps import cluster
@@ -37,6 +38,7 @@ _STEP_CLIS: dict = {
     "gather": gather.cli,
     "filter": step_filter.cli,
     "download": download.cli,
+    "dedupe": dedupe.cli,
     "summarize": summarize.cli,
     "rate": rate.cli,
     "cluster": cluster.cli,

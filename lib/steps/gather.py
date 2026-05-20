@@ -1,14 +1,19 @@
-"""news:gather — fetch headlines from configured sources.
+"""newsagent:gather — fetch headlines from configured sources.
 
 Source types:
   - rss   : feedparser via httpx (lib.fetch.rss)
-  - html  : adaptive trafilatura+httpx → Playwright fallback (lib.fetch.html);
-            persists per-site working method in sites.scrape_method
+  - html  : adaptive httpx + BeautifulSoup → Playwright fallback
+            (lib.fetch.html parses <a> tags via lib.fetch.extract);
+            persists per-site working method in sites.scrape_method;
+            raw HTML saved to runs/<SID>/pages/<source>.html for inspection.
+            NB: trafilatura is NOT used here — gather only needs the link graph
+            of the landing page, not article body extraction.
   - rest  : generic JSON API (lib.fetch.rest)
 """
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -29,15 +34,21 @@ def _domain_of(url: str) -> str:
     return urlparse(url).hostname or ""
 
 
-def _fetch_one(source_name: str, cfg: dict, db_path: str) -> tuple[FetchResult, str | None]:
-    """Returns (result, used_method) where used_method is set only for HTML sources."""
+def _safe_filename(source_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", source_name).strip("_") or "source"
+
+
+def _fetch_one(
+    source_name: str, cfg: dict, db_path: str
+) -> tuple[FetchResult, str | None, str | None]:
+    """Returns (result, used_method, raw_html). The latter two are only set for HTML sources."""
     stype = cfg.get("type", "html")
     if stype == "rss":
         rss_url = cfg.get("rss") or cfg.get("url")
         if not rss_url:
             return FetchResult(source=source_name, ok=False,
-                               error="No rss/url in source config"), None
-        return fetch_rss(source_name, rss_url), None
+                               error="No rss/url in source config"), None, None
+        return fetch_rss(source_name, rss_url), None, None
     if stype == "html":
         url = cfg.get("url", "")
         domain = _domain_of(url)
@@ -47,12 +58,12 @@ def _fetch_one(source_name: str, cfg: dict, db_path: str) -> tuple[FetchResult, 
                 site = Site.get_by_domain(conn, domain)
                 if site:
                     prior_method = site.scrape_method
-        result, used = fetch_html(source_name, cfg, scrape_method=prior_method)
-        return result, used
+        result, used, raw_html = fetch_html(source_name, cfg, scrape_method=prior_method)
+        return result, used, raw_html
     if stype == "rest":
-        return fetch_rest(source_name, cfg), None
+        return fetch_rest(source_name, cfg), None, None
     return FetchResult(source=source_name, ok=False,
-                       error=f"Unknown source type: {stype}"), None
+                       error=f"Unknown source type: {stype}"), None, None
 
 
 @click.command()
@@ -74,8 +85,16 @@ def cli(db_path: str, session_id: str) -> None:
     report_sources: list[dict] = []
     all_articles: list[dict] = []
 
+    pages_dir = Path("runs") / session_id / "pages"
+
     for name, cfg in enabled_sources.items():
-        result, used_method = _fetch_one(name, cfg, db_path)
+        result, used_method, raw_html = _fetch_one(name, cfg, db_path)
+        page_path: str | None = None
+        if raw_html is not None:
+            pages_dir.mkdir(parents=True, exist_ok=True)
+            target = pages_dir / f"{_safe_filename(name)}.html"
+            target.write_text(raw_html, encoding="utf-8")
+            page_path = str(target)
         report_sources.append({
             "source": name,
             "type": cfg.get("type", "html") if isinstance(cfg, dict) else "html",
@@ -83,6 +102,7 @@ def cli(db_path: str, session_id: str) -> None:
             "method": used_method,
             "count": len(result.articles),
             "error": result.error,
+            "page_path": page_path,
         })
         if result.ok:
             for a in result.articles:
@@ -99,6 +119,7 @@ def cli(db_path: str, session_id: str) -> None:
 
     # Dedup against urls table; insert new ones
     new_count = 0
+    new_by_source: dict[str, int] = {}
     with sqlite3.connect(db_path) as conn:
         existing = {r[0] for r in conn.execute("SELECT initial_url FROM urls").fetchall()}
         new_articles_for_state: list[dict] = []
@@ -115,7 +136,11 @@ def cli(db_path: str, session_id: str) -> None:
             existing.add(a["url"])
             new_articles_for_state.append(a)
             new_count += 1
+            new_by_source[a["source"]] = new_by_source.get(a["source"], 0) + 1
         conn.commit()
+
+    for s in report_sources:
+        s["new"] = new_by_source.get(s["source"], 0)
 
     state.headline_data.extend(new_articles_for_state)
     state.complete_step(
@@ -135,10 +160,14 @@ def cli(db_path: str, session_id: str) -> None:
     }, indent=2))
 
     click.echo(f"Gathered {new_count} new headlines from {len(enabled_sources)} sources.")
+    click.echo(f"  {'STATUS':<5} {'SOURCE':<24} {'FETCH':>5} {'NEW':>5}  METHOD")
     for s in report_sources:
         status = "OK" if s["ok"] else "FAIL"
-        method = f" [{s['method']}]" if s.get("method") else ""
-        click.echo(f"  {status:<5} {s['source']:<24} {s['count']:>3} headlines{method}")
+        method = f"[{s['method']}]" if s.get("method") else ""
+        click.echo(
+            f"  {status:<5} {s['source']:<24} "
+            f"{s['count']:>5} {s.get('new', 0):>5}  {method}"
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

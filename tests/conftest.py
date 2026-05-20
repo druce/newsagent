@@ -2,6 +2,15 @@ import pytest
 from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _isolate_brightdata_env(monkeypatch):
+    """Tests should never accidentally hit the live Bright Data proxy because
+    BRIGHTDATA_API_KEY happens to be set in the dev shell. Individual tests
+    that exercise BD wiring should set it themselves (and mock the call)."""
+    monkeypatch.delenv("BRIGHTDATA_API_KEY", raising=False)
+    monkeypatch.delenv("BRIGHTDATA_ZONE", raising=False)
+
+
 @pytest.fixture
 def tmp_db(tmp_path: Path) -> str:
     """Return a path to a fresh SQLite DB file in a temp dir."""

@@ -1,31 +1,41 @@
 ---
-name: news:dedupe
-description: Remove near-duplicate headlines using cosine similarity on OpenAI text-embedding-3-large embeddings. Runs between summarize and rate. Keeps the longer-summary article of each near-duplicate pair (similarity >= 0.95). Attaches embeddings to surviving headlines so cluster/select can reuse them.
+name: dedupe
+description: Remove near-duplicate articles by cosine similarity on OpenAI text-embedding-3-large embeddings of the full article body (trafilatura-extracted text). Catches syndicated reprints (e.g. Reuters wire stories republished by multiple sites). Keeps the longest body of each near-duplicate pair (threshold 0.95). Attaches embeddings to survivors for cluster/select reuse.
 ---
 
-# news:dedupe
+# newsagent:dedupe
 
-Maintenance step between summarize and rate in /news:run.
+Step 5 of `/newsagent:run` — runs between `download` and `summarize` so duplicate
+articles never get summarized (saves LLM spend + avoids near-identical sections
+downstream).
 
 ## How to invoke
 
+```bash
 python -m lib.steps.dedupe --db newsletter_agent.db --session SID [--threshold 0.95]
+```
 
 ## Behavior
 
-- Loads the latest session state from the database.
-- Collects all headlines that have a `summary` field.
-- Embeds `title + summary` text via OpenAI text-embedding-3-large (batched, 256 per call).
-- Attaches the embedding vector to each headline as `headline["embedding"]` for reuse by cluster/select.
+- Loads the latest session state.
+- Collects every headline with a readable `text_path` (i.e. download succeeded).
+- Reads the trafilatura-extracted body and truncates to 24,000 chars (≤ embedding model context).
+- Embeds `title + body` via OpenAI `text-embedding-3-large` (batched, 256 per call).
+- Attaches the vector to each headline as `headline["embedding"]` so cluster/select can skip re-embedding.
 - Computes the full pairwise cosine similarity matrix (numpy).
-- For each pair with similarity >= threshold (default 0.95): drops the headline with the shorter summary; ties keep the first.
-- Persists updated state via `state.serialize_to_db("dedupe")` (not a registered workflow step — no start_step/complete_step).
-- Writes runs/<SID>/dedupe.json with counts: total_candidates, dropped, kept, threshold.
-- Prints a summary line to stdout.
+- For each pair with similarity ≥ threshold (default 0.95) drops the headline with the shorter body; ties break on summary length, then insertion order.
+- Marks the `dedupe` step COMPLETE in workflow state.
+- Writes `runs/<SID>/dedupe.json` with counts.
+
+## Why full text (not title+summary)
+
+Wire stories (Reuters, AP, Bloomberg) get reprinted across many sites with
+minor edits — different titles, different lead paragraphs, but the body
+overlaps heavily. Embedding the body catches these; embedding `title+summary`
+does not.
 
 ## Notes
 
-- `dedupe` is NOT in WORKFLOW_STEPS — it is a maintenance checkpoint between summarize and rate.
-- Requires OPENAI_API_KEY in environment (used by embed_texts).
-- Threshold can be tuned via --threshold; 0.95 matches legacy behavior.
-- If no headlines have summaries, exits immediately with "Nothing to dedupe" message.
+- Requires `OPENAI_API_KEY` in environment.
+- If no headlines have a downloaded body, marks the step complete with
+  "nothing to dedupe" and exits.

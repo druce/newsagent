@@ -1,4 +1,4 @@
-"""Tests for lib/steps/bluesky.py — news:bluesky digest pipeline."""
+"""Tests for lib/steps/bluesky.py — newsagent:bluesky digest pipeline."""
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 

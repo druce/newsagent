@@ -1,9 +1,9 @@
 ---
-name: news:run
-description: Top-level newsletter orchestrator. Runs all 11 pipeline steps (init → send) in sequence with resume/from/only flags and per-step engine overrides. Writes a session summary to runs/<SID>/summary.md.
+name: run
+description: Top-level newsletter orchestrator. Runs all 12 pipeline steps (init → send) in sequence with resume/from/only flags and per-step engine overrides. Writes a session summary to runs/<SID>/summary.md.
 ---
 
-# news:run
+# newsagent:run
 
 ## Invocation
 
@@ -54,7 +54,7 @@ NEWS_PROMPT_RATE_QUALITY_ENGINE=openai:gpt-4o-mini \
 1. `--only STEP` → run exactly that one step.
 2. `--from STEP` → run STEP and every step that follows it in workflow order.
 3. `--resume SID` → load state, find the first non-complete step, run from there.
-4. Default → run all 11 steps starting from init.
+4. Default → run all 12 steps starting from init.
 
 ## Engine Override Semantics
 
@@ -97,7 +97,7 @@ python -m lib.steps.run --resume SID
 ## Workflow Order
 
 ```
-init → gather → filter → download → summarize → rate → cluster → select → draft → rewrite → send
+init → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send
 ```
 
 Each step is responsible for its own state checkpoint. The orchestrator invokes each step's Click CLI programmatically (no subprocess) and aborts on any non-zero exit.

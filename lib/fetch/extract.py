@@ -68,11 +68,18 @@ def extract_article_links(
             url=absolute,
         ))
 
-    # Dedup within this page by URL, preserving order
-    seen: set[str] = set()
-    unique: list[Article] = []
+    # Dedup within this page by URL. When the same href appears in multiple
+    # <a> tags (common pattern: one anchor wraps a hero <img>+<figcaption>,
+    # another wraps the actual headline text), keep the one with the LONGEST
+    # title — the headline is almost always longer than image-caption strings
+    # like "Credit: VentureBeat made with Midjourney".
+    best: dict[str, Article] = {}
+    order: list[str] = []
     for a in candidates:
-        if a.url not in seen:
-            seen.add(a.url)
-            unique.append(a)
-    return unique
+        existing = best.get(a.url)
+        if existing is None:
+            best[a.url] = a
+            order.append(a.url)
+        elif len(a.title) > len(existing.title):
+            best[a.url] = a
+    return [best[u] for u in order]

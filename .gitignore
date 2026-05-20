@@ -13,3 +13,12 @@ umap_reducer.pkl
 venv/
 .coverage
 htmlcov/
+.playwright-profile/
+
+# macOS
+.DS_Store
+
+# Python build artifacts
+*.egg-info/
+build/
+dist/

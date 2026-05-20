@@ -1,6 +1,6 @@
 # Newsletter Critic
 
-Persona embedded in `lib/prompts/critique_newsletter.py`. Used inside the critic-optimizer loop in `news:rewrite`.
+Persona embedded in `lib/prompts/critique_newsletter.py`. Used inside the critic-optimizer loop in `newsagent:rewrite`.
 
 ## Role
 
@@ -39,4 +39,4 @@ Distilled into one `score`, but the critic considers:
 ## Tuning knobs
 
 - `default_engine="subagent"`, `reasoning_effort=8`.
-- `news:rewrite --max-edits` controls the iteration cap (default 2).
+- `newsagent:rewrite --max-edits` controls the iteration cap (default 2).

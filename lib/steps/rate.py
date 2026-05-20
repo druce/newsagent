@@ -1,4 +1,4 @@
-"""news:rate — multi-axis confidence ratings + Bradley-Terry composite score.
+"""newsagent:rate — multi-axis confidence ratings + Bradley-Terry composite score.
 
 For each article with a summary:
   1. Run three per-axis confidence prompts (rate_quality, rate_on_topic, rate_importance).

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "news-agent"
+name = "newsagent"
 version = "0.1.0"
 description = "Daily AI newsletter agent as a Claude Code skill plugin"
 readme = "README.md"
@@ -18,6 +18,7 @@ dependencies = [
   "feedparser>=6.0",
   "beautifulsoup4>=4.12",
   "playwright>=1.49",
+  "playwright-stealth>=2.0",
   "openai>=1.50",
   "google-genai>=0.4",
   "choix>=0.3",
@@ -28,6 +29,8 @@ dependencies = [
   "optuna>=3.6",
   "scikit-learn>=1.5",
   "Pillow>=10",
+  "python-dotenv>=1.0",
+  "brightdata-sdk>=2.3",
 ]
 
 [project.optional-dependencies]

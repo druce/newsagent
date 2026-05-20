@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
+
 import httpx
 
 from lib.fetch.types import Article, FetchResult
@@ -16,17 +18,28 @@ def fetch_rest(source_name: str, source_cfg: dict) -> FetchResult:
         return FetchResult(source=source_name, ok=False, error="No URL in source config")
 
     headers: dict[str, str] = {}
+    params: dict[str, str] = dict(source_cfg.get("params") or {})
+
     api_key_env = source_cfg.get("api_key_env")
     if api_key_env:
         key = os.environ.get(api_key_env)
         if not key:
             return FetchResult(source=source_name, ok=False,
                                error=f"Env var {api_key_env} not set")
-        headers[source_cfg.get("api_key_header", "Authorization")] = key
+        api_key_param = source_cfg.get("api_key_param")
+        if api_key_param:
+            params[api_key_param] = key
+        else:
+            headers[source_cfg.get("api_key_header", "Authorization")] = key
+
+    from_hours_ago = source_cfg.get("from_hours_ago")
+    if from_hours_ago is not None:
+        ts = datetime.now(timezone.utc) - timedelta(hours=int(from_hours_ago))
+        params[source_cfg.get("from_param", "from")] = ts.strftime("%Y-%m-%dT%H:%M:%S")
 
     try:
         with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-            resp = client.get(url, headers=headers)
+            resp = client.get(url, headers=headers, params=params or None)
     except httpx.HTTPError as exc:
         return FetchResult(source=source_name, ok=False, error=f"HTTP error: {exc}")
 

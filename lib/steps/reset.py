@@ -1,4 +1,4 @@
-"""news:reset — reset workflow step(s) for a session."""
+"""newsagent:reset — reset workflow step(s) for a session."""
 from __future__ import annotations
 
 import sys

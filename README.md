@@ -1,6 +1,6 @@
-# news_agent
+# newsagent
 
-Daily AI newsletter agent built as a Claude Code skill plugin (`news:*`).
+Daily AI newsletter agent built as a Claude Code skill plugin (`newsagent:*`).
 
 Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads + summarizes articles, clusters by topic, scores via multi-axis ratings + Bradley-Terry pairwise battles, picks a diverse top-K per cluster (MMR with LLM noise-assignment and cluster-merge), and writes a polished newsletter through parallel critic-optimizer loops. Plus a standalone Bluesky digest pipeline.
 
@@ -13,16 +13,19 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 ## Quick start
 
 ```bash
-# 1. Install
+# 1. Install Python deps
 cp dot-env.txt .env                          # fill in API keys (optional, see below)
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m playwright install chromium
 
-# 2. Get the pretrained UMAP reducer (~400 MB, gitignored)
+# 2. Install Playwright's Firefox build (required — used by gather, download, and Bluesky image fetch).
+#    Firefox is used instead of Chromium because Google SSO flags Chromium as insecure.
+.venv/bin/python -m playwright install firefox
+
+# 3. Get the pretrained UMAP reducer (~400 MB, gitignored)
 cp ~/projects/OpenAIAgentsSDK/umap_reducer.pkl ./
 
-# 3. Run the full pipeline (writes a newsletter to out/<date>.html)
+# 4. Run the full pipeline (writes a newsletter to out/<date>.html)
 .venv/bin/python -m lib.steps.run --sources sources.yaml
 ```
 
@@ -36,7 +39,7 @@ All optional except where you actually use the corresponding feature.
 | `OPENAI_API_KEY` | OpenAI engine (GPT-4o, GPT-5, o-series) + embeddings (required for dedupe/cluster/select) |
 | `GOOGLE_API_KEY` | Google engine (Gemini direct) |
 | `NEWSAPI_API_KEY` | Only if the `NewsAPI` source is enabled in `sources.yaml` |
-| `BSKY_USERNAME` / `BSKY_SECRET` | Only for `news:bluesky` |
+| `BSKY_USERNAME` / `BSKY_SECRET` | Only for `newsagent:bluesky` |
 
 The default engine for every prompt is `"subagent"` — that uses your Claude Code subscription (no API key). The other engines are opt-in.
 
@@ -51,7 +54,7 @@ The default engine for every prompt is `"subagent"` — that uses your Claude Co
 #### A. End-to-end (the orchestrator)
 
 ```bash
-# Fresh full run — creates a new session, runs all 11 steps, writes out/<date>.html
+# Fresh full run — creates a new session, runs all 12 steps, writes out/<date>.html
 .venv/bin/python -m lib.steps.run --sources sources.yaml
 
 # All steps with a specific engine forced for LLM prompts
@@ -144,15 +147,15 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 Output:
 ```
 Session:  2026-05-18-091533
-Progress: 54.5% (6/11 steps)
+Progress: 58.3% (7/12 steps)
 Next:     cluster
 Headlines: 412
 Clusters:  0
 Sections:  0
 
 WORKFLOW
-Progress: 54.5% (6/11 complete)
-Next Step: Step 6: Cluster Topics
+Progress: 58.3% (7/12 complete)
+Next Step: Step 8: Cluster Topics
 ...
 ```
 
@@ -245,7 +248,7 @@ Never touches `articles`, `urls`, `newsletters`, `sites` tables — those are co
 ## Pipeline reference
 
 ```
-init → gather → filter → download → summarize → rate → cluster → select → draft → rewrite → send
+init → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send
 ```
 
 Plus the standalone Bluesky digest and recovery/maintenance skills.
@@ -254,23 +257,23 @@ Plus the standalone Bluesky digest and recovery/maintenance skills.
 
 | Skill | Phase | What it does |
 |---|---|---|
-| `news:init` | 0 | Create session, validate `sources.yaml`. |
-| `news:gather` | 2 | Fetch from RSS / HTML / REST. HTML uses adaptive scraping (trafilatura+httpx → Playwright fallback, memoized in `sites.scrape_method`). |
-| `news:filter` | 3 | LLM-classify AI relevance; drop non-AI by default. |
-| `news:download` | 2 | Playwright fetch + trafilatura extract. |
-| `news:summarize` | 3 | Per-article bullet summary. |
-| `news:dedupe` | 3 | Cosine-similarity dedup on OpenAI embeddings. |
-| `news:rate` | 3 | Multi-axis confidence + Swiss-paired Bradley-Terry → composite rating. |
-| `news:cluster` | 4 | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
-| `news:select` | 4 | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
-| `news:draft` | 5 | Parallel section drafters; each runs a critic-optimizer loop. |
-| `news:rewrite` | 5 | Whole-newsletter critic-optimizer + title generation. |
-| `news:send` | 2 | Render HTML, write `out/<date>.html` + `out/latest.html`. |
-| `news:bluesky` | 7 | Standalone Bluesky digest. |
-| `news:run` | 6 | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
-| `news:status`, `sessions`, `show` | 0/2 | State inspection. |
-| `news:resume`, `reset` | 2 | Error recovery. |
-| `news:diff`, `gc`, `checkpoint` | 8 | Maintenance. |
+| `newsagent:init` | 0 | Create session, validate `sources.yaml`. |
+| `newsagent:gather` | 2 | Fetch from RSS / HTML / REST. HTML uses adaptive scraping (httpx + BeautifulSoup → Playwright fallback, memoized in `sites.scrape_method`). |
+| `newsagent:filter` | 3 | LLM-classify AI relevance; drop non-AI by default. |
+| `newsagent:download` | 2 | Playwright fetch + trafilatura extract. |
+| `newsagent:dedupe` | 3 | Cosine-similarity dedup on OpenAI embeddings (runs before `summarize` so duplicates aren't summarized). |
+| `newsagent:summarize` | 3 | Per-article bullet summary. |
+| `newsagent:rate` | 3 | Multi-axis confidence + Swiss-paired Bradley-Terry → composite rating. |
+| `newsagent:cluster` | 4 | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
+| `newsagent:select` | 4 | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
+| `newsagent:draft` | 5 | Parallel section drafters; each runs a critic-optimizer loop. |
+| `newsagent:rewrite` | 5 | Whole-newsletter critic-optimizer + title generation. |
+| `newsagent:send` | 2 | Render HTML, write `out/<date>.html` + `out/latest.html`. |
+| `newsagent:bluesky` | 7 | Standalone Bluesky digest. |
+| `newsagent:run` | 6 | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
+| `newsagent:status`, `sessions`, `show` | 0/2 | State inspection. |
+| `newsagent:resume`, `reset` | 2 | Error recovery. |
+| `newsagent:diff`, `gc`, `checkpoint` | 8 | Maintenance. |
 
 ---
 
@@ -320,17 +323,19 @@ NEWS_PROMPT_RATE_IMPORTANCE_ENGINE=google:gemini-2.5-flash \
 ## Architecture
 
 - **SQLite source of truth:** `newsletter_agent.db` with tables `urls`, `articles`, `sites`, `newsletters`, `agent_state`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`.
-- **Pydantic state:** `NewsletterAgentState` extends a generic `WorkflowState` (11 ordered steps with status + timing).
+- **Pydantic state:** `NewsletterAgentState` extends a generic `WorkflowState` (12 ordered steps with status + timing).
 - **Single LLM entry point:** `lib/llm.call_prompt(prompt_name, inputs, engine=...)`. Engines live in `lib/engines/`.
 - **Per-prompt config:** each prompt is a separate module under `lib/prompts/` declaring model + reasoning_effort + schema.
-- **Adaptive HTML scraping:** httpx + trafilatura first, Playwright on failure; per-site working method cached in `sites.scrape_method`.
+- **Adaptive HTML scraping:** httpx first, Playwright on failure; per-site working method cached in `sites.scrape_method`. Parser differs by step — `gather` uses BeautifulSoup to harvest `<a>` tags from landing pages; `download` uses trafilatura to extract the main article body.
 - **Critic-optimizer loops** (`lib/critic.py`): generic helper used by both `draft` (per section, parallel) and `rewrite` (whole newsletter).
 
 ## Layout
 
 ```
-news_agent/
-├── plugin.json
+newsagent/
+├── .claude-plugin/
+│   ├── plugin.json
+│   └── marketplace.json
 ├── lib/
 │   ├── state.py              # NewsletterAgentState + WorkflowState
 │   ├── db.py                 # SQLite schema + dataclasses
@@ -371,3 +376,29 @@ Python 3.11 · Pydantic v2 · SQLite (stdlib) · Click · httpx · trafilatura �
 ## License
 
 MIT
+
+
+
+  # 1. Rename project directory
+  mv ~/projects/news_agent ~/projects/newsagent
+
+  # 2. Rename the CC memory store so it stays linked to this project
+  mv ~/.claude/projects/-Users-drucev-projects-news-agent \
+     ~/.claude/projects/-Users-drucev-projects-newsagent
+
+  # 3. Reinstall the package in the new path (regenerates egg-info as 'newsagent')
+  cd ~/projects/newsagent
+  .venv/bin/pip install -e ".[dev]"     # the [dev] also fixes the missing pytest in your venv
+
+  # 4. Start a new Claude Code session
+  cd ~/projects/newsagent
+  claude
+
+  Then inside the new CC session:
+
+  /plugin marketplace add /Users/drucev/projects/newsagent
+  /plugin install newsagent@newsagent-dev
+
+  Verify with a typed slash command:
+
+  /newsagent:status

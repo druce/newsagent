@@ -103,7 +103,8 @@ def test_gather_updates_scrape_method_for_html_sources(tmp_path, tmp_db):
     html_result = FetchResult(source="Site1", ok=True, articles=[
         Article(source="Site1", title="Long enough headline X", url="https://news.example.com/a"),
     ])
-    with patch("lib.steps.gather.fetch_html", return_value=(html_result, "playwright")):
+    with patch("lib.steps.gather.fetch_html",
+               return_value=(html_result, "playwright", "<html>raw</html>")):
         runner = CliRunner()
         runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
 
@@ -111,6 +112,30 @@ def test_gather_updates_scrape_method_for_html_sources(tmp_path, tmp_db):
         s = Site.get_by_domain(conn, "news.example.com")
     assert s is not None
     assert s.scrape_method == "playwright"
+
+
+def test_gather_persists_front_page_html(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n  Site 1:\n    type: html\n    url: https://news.example.com/\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    html_result = FetchResult(source="Site 1", ok=True, articles=[
+        Article(source="Site 1", title="Long enough headline X", url="https://news.example.com/a"),
+    ])
+    with patch("lib.steps.gather.fetch_html",
+               return_value=(html_result, "http", "<html>FRONT</html>")):
+        runner = CliRunner()
+        runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
+
+    page = Path("runs/g1/pages/Site_1.html")
+    assert page.exists()
+    assert page.read_text() == "<html>FRONT</html>"
+
+    report = json.loads(Path("runs/g1/gather.json").read_text())
+    assert any(s.get("page_path", "").endswith("Site_1.html") for s in report["sources"])
 
 
 def test_gather_writes_report_json(tmp_path, tmp_db, monkeypatch):

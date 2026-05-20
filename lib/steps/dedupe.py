@@ -1,4 +1,9 @@
-"""news:dedupe — cosine-similarity near-duplicate removal."""
+"""newsagent:dedupe — cosine-similarity near-duplicate removal on full article text.
+
+Embeds the trafilatura-extracted body (truncated) instead of title+summary so
+syndicated reprints (e.g. Reuters wire stories republished by multiple sites
+with minor edits) cluster together correctly.
+"""
 from __future__ import annotations
 
 import json
@@ -15,6 +20,16 @@ from lib.state import NewsletterAgentState
 
 
 _SIM_THRESHOLD = 0.95
+# text-embedding-3-large supports up to 8192 tokens; ~4 chars/token ⇒ truncate
+# bodies to ~24k chars to leave headroom and keep payloads small.
+_MAX_TEXT_CHARS = 24_000
+
+
+def _read_body(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _cosine_matrix(vectors: List[List[float]]) -> np.ndarray:
@@ -28,8 +43,14 @@ def _cosine_matrix(vectors: List[List[float]]) -> np.ndarray:
     return N @ N.T
 
 
-def _drop_near_duplicates(headlines: List[dict], sim: np.ndarray, threshold: float) -> List[int]:
-    """Return indices to drop. Keep the longer-text headline of each near-duplicate pair."""
+def _drop_near_duplicates(
+    headlines: List[dict], texts: List[str], sim: np.ndarray, threshold: float
+) -> List[int]:
+    """Return indices to drop. Keep the longer-bodied headline of each pair.
+
+    Tie-breaks on body length first (more complete article wins); falls back
+    to summary length then to insertion order (keep earlier).
+    """
     n = len(headlines)
     drop: set[int] = set()
     for i in range(n):
@@ -39,9 +60,12 @@ def _drop_near_duplicates(headlines: List[dict], sim: np.ndarray, threshold: flo
             if j in drop:
                 continue
             if sim[i, j] >= threshold:
-                li = len(headlines[i].get("summary", ""))
-                lj = len(headlines[j].get("summary", ""))
-                # Keep the longer; if tied keep i
+                li = len(texts[i])
+                lj = len(texts[j])
+                if li == lj:
+                    li = len(headlines[i].get("summary", ""))
+                    lj = len(headlines[j].get("summary", ""))
+                # Keep the longer; if tied keep i (earlier wins)
                 drop.add(j if li >= lj else i)
                 if i in drop:
                     break
@@ -57,29 +81,46 @@ def cli(db_path: str, session_id: str, threshold: float) -> None:
     if state is None:
         raise click.ClickException(f"No state found for session {session_id}")
 
-    candidates = [h for h in state.headline_data if h.get("summary")]
+    # Candidates need a downloaded body; readable text_path is required.
+    candidates: list[dict] = []
+    texts: list[str] = []
+    for h in state.headline_data:
+        path = h.get("text_path")
+        if not path:
+            continue
+        body = _read_body(path)
+        if not body:
+            continue
+        candidates.append(h)
+        # Prepend title so very short bodies still get topical signal.
+        texts.append((h.get("title", "") + "\n\n" + body)[:_MAX_TEXT_CHARS])
+
+    state.start_step("dedupe")
+    state.save_checkpoint("dedupe")
+
     if not candidates:
-        click.echo("Nothing to dedupe (no summaries yet).")
-        # NB: dedupe is not a canonical workflow step in WORKFLOW_STEPS.
-        # Skip step transitions; just return.
+        state.complete_step("dedupe", message="nothing to dedupe")
+        state.save_checkpoint("dedupe")
+        click.echo("Nothing to dedupe (no downloaded article bodies).")
         return
 
-    texts = [(h.get("title", "") + " " + h.get("summary", "")) for h in candidates]
     vectors = embed_texts(texts)
 
-    # Attach embeddings to headlines
+    # Attach embeddings to headlines for downstream cluster/select reuse.
     for h, v in zip(candidates, vectors):
         h["embedding"] = v
 
     sim = _cosine_matrix(vectors)
-    drop_indices = _drop_near_duplicates(candidates, sim, threshold)
+    drop_indices = _drop_near_duplicates(candidates, texts, sim, threshold)
 
     drop_urls = {candidates[i]["url"] for i in drop_indices}
     state.headline_data = [h for h in state.headline_data if h["url"] not in drop_urls]
 
-    # Persist via serialize_to_db — dedupe is not a registered workflow step,
-    # so we can't call start_step/complete_step. Use a custom checkpoint row.
-    state.serialize_to_db("dedupe")
+    state.complete_step(
+        "dedupe",
+        message=f"dropped {len(drop_indices)}/{len(candidates)} duplicates",
+    )
+    state.save_checkpoint("dedupe")
 
     runs_dir = Path("runs") / session_id
     runs_dir.mkdir(parents=True, exist_ok=True)

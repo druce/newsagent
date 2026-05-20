@@ -80,7 +80,7 @@ BATTLE_PROMPT = PromptConfig(
     user_prompt=_USER,
     input_schema=BattleInput,
     output_schema=BattleOutput,
-    default_engine="google:gemini-2.5-flash-lite",
+    default_engine="google:gemini-3.1-flash-lite",
     reasoning_effort=2,
 )
 

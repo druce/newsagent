@@ -21,6 +21,25 @@ def _effort_level(effort: int) -> str:
     return "high"
 
 
+def _strictify_schema(schema):
+    """Recursively add `additionalProperties: false` to every object in the
+    schema and ensure every property appears in `required`.
+
+    OpenAI's structured-output strict mode rejects schemas without these.
+    """
+    if isinstance(schema, dict):
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+            if "properties" in schema:
+                schema["required"] = list(schema["properties"].keys())
+        for v in schema.values():
+            _strictify_schema(v)
+    elif isinstance(schema, list):
+        for v in schema:
+            _strictify_schema(v)
+    return schema
+
+
 def openai_chat_engine(model_id: str) -> Callable[..., BaseModel]:
     def _call(system: str, user: str, schema: Type[BaseModel],
               reasoning_effort: int = 4) -> BaseModel:
@@ -41,7 +60,7 @@ def openai_chat_engine(model_id: str) -> Callable[..., BaseModel]:
                 "json_schema": {
                     "name": "structured_output",
                     "strict": True,
-                    "schema": schema.model_json_schema(),
+                    "schema": _strictify_schema(schema.model_json_schema()),
                 },
             },
             "reasoning_effort": _effort_level(reasoning_effort),

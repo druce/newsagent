@@ -1,4 +1,4 @@
-"""Generic critic-optimizer loop used by news:draft and news:rewrite."""
+"""Generic critic-optimizer loop used by newsagent:draft and newsagent:rewrite."""
 from __future__ import annotations
 
 from dataclasses import dataclass

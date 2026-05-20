@@ -1,16 +1,16 @@
 ---
-name: news:init
-description: Create a new newsletter session — initialize SQLite DB if needed, load and validate sources.yaml, and register the 11-step workflow. First step of /news:run. Idempotent for a given --session SID.
+name: init
+description: Create a new newsletter session — initialize SQLite DB if needed, load and validate sources.yaml, and register the 12-step workflow. First step of /newsagent:run. Idempotent for a given --session SID.
 ---
 
-# news:init
+# newsagent:init
 
 Creates a new newsletter session and writes its initial state to `newsletter_agent.db`.
 
 ## When to use
 
-- At the start of `/news:run` (orchestrator calls this first).
-- Standalone to create a session you'll resume later via `/news:run --resume`.
+- At the start of `/newsagent:run` (orchestrator calls this first).
+- Standalone to create a session you can resume later via `/newsagent:run --resume`.
 
 ## How to invoke
 
@@ -26,7 +26,7 @@ python -m lib.steps.init [--db newsletter_agent.db] [--sources sources.yaml] [--
 
 1. `init_db()` — creates tables (`urls`, `articles`, `sites`, `newsletters`, `agent_state`) if missing.
 2. Loads `sources.yaml` and validates it's a non-empty mapping under a top-level `sources:` key (or top-level mapping).
-3. Constructs a `NewsletterAgentState` with the 11 workflow steps in NOT_STARTED.
+3. Constructs a `NewsletterAgentState` with all workflow steps initialized to state NOT_STARTED.
 4. Marks the `init` step COMPLETE, writes the state to `agent_state` keyed by `(session_id, "init")`.
 5. Prints a dry-run summary: session id, source count, enabled/disabled per source, step count.
 

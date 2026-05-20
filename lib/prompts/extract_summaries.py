@@ -1,6 +1,12 @@
-"""extract_summaries — bullet-point article summaries.
+"""extract_summaries — bullet-point article summary + one-line headline.
 
-Ported from ~/projects/OpenAIAgentsSDK/prompts.py:284 (EXTRACT_SUMMARIES).
+Merges two legacy prompts:
+  - EXTRACT_SUMMARIES (~/projects/OpenAIAgentsSDK/prompts.py:284)
+  - ITEM_DISTILLER     (~/projects/OpenAIAgentsSDK/prompts.py:326)
+
+Bundling both into a single call avoids a second LLM pass per article — the
+model is already reading the full text for the bullet summary, so producing
+a headline-style one-liner alongside is essentially free.
 """
 from __future__ import annotations
 
@@ -29,23 +35,41 @@ class ExtractSummariesInput(BaseModel):
 
 class ArticleSummary(BaseModel):
     id: str
-    summary: str
+    short_summary: str  # ONE headline-style sentence, <=25 words, sentence case
+    summary: str        # 3-bullet article summary
 
 
 class ExtractSummariesOutput(BaseModel):
     summaries: List[ArticleSummary]
 
 
-# Verbatim from legacy prompts.py:292-324
 _SYSTEM = """\
-You are an expert AI news analyst. Your task is to create concise, informative bullet-point summaries of AI and technology articles for a professional newsletter audience.
+You are an expert AI news analyst and headline writer. For each article you receive, produce TWO outputs:
+  1. `short_summary` — ONE crisp, headline-style sentence (<=25 words, sentence case) that captures the key facts.
+  2. `summary` — a 3-bullet article summary capturing the newsworthy content.
 
-You will receive a list of JSON objects with fields "id" and "title"
+You will receive a list of JSON objects with fields "id", "title", and "text".
 Return **only** a JSON object that satisfies the provided schema.
-For each article provided, you MUST return one element with the same id, and the summary.
+For each article provided, you MUST return exactly one element with the same id, the short_summary, and the summary.
 Return elements in the same order they were provided.
 No markdown, no markdown fences, no extra keys, no comments.
 
+# short_summary requirements
+- Length: <=25 words.
+- Form: ONE crisp, headline-style sentence.
+- Front-load the actor and the event; cut hedging clauses.
+- Sentence case ONLY: capitalize the first word and proper nouns. No Title Case, no ALL-CAPS.
+- Tone: objective, factual, specific. No hype, adjectives, speculation, or clickbait words ("groundbreaking", "revolutionary", "stunning", etc.).
+- Active voice.
+- Never start with "Secondary source reports..." or "Commentary argues...".
+- No emojis or exclamation points.
+- Content priority (in strict order, drop from the bottom if word limit forces omission):
+    1. Concrete facts, figures, or statistics.
+    2. Primary source attribution (people, institutions, reports cited within the article — not the news outlet).
+    3. Timeframe or year, if stated.
+    4. Comparisons or trends (e.g., "up from 17%").
+
+# summary requirements
 Write a summary with 3 bullet points (-) that capture ONLY the newsworthy content.
 
 Include
@@ -63,11 +87,11 @@ Rules
 - Accurately summarize original meaning
 - Contents only, no additional commentary or opinion, no "the article discusses", "the author states"
 - Maintain factual & neutral tone
-- If no substantive news, return one bullet: "no content"
-- Output raw bullets (no code fences, no headings, no extra text--only the bullet strings)"""
+- If no substantive news, return short_summary "no content" and summary "- no content"
+- Output raw bullets (no code fences, no headings, no extra text — only the bullet strings)"""
 
 _USER = """\
-Summarize the articles below:
+For each article below, produce a short_summary (one headline-style sentence) and a 3-bullet summary, per the schema:
 
 {input_text}"""
 

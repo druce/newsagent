@@ -1,8 +1,8 @@
-# CLAUDE.md — news_agent
+# CLAUDE.md — newsagent
 
 ## What this project is
 
-A daily AI newsletter agent, built from scratch as a `news:*` Claude Code skill plugin. **All 9 build phases (0–8) are complete.** Tags: `phase-0-complete` through `phase-8-complete`. 266 tests passing, ~89% coverage on `lib/`.
+A daily AI newsletter agent, built from scratch as a `newsagent:*` Claude Code skill plugin. **All 9 build phases (0–8) are complete.** Tags: `phase-0-complete` through `phase-8-complete`. 266 tests passing, ~89% coverage on `lib/`.
 
 The legacy implementation at `~/projects/OpenAIAgentsSDK/` is read-only reference — used during porting for prompt text, scraping logic, and Bradley-Terry math. Do not import from it.
 
@@ -17,9 +17,9 @@ These were set by the user during the build and are non-negotiable in future wor
 1. **No Anthropic direct API.** No `anthropic` SDK, no `ANTHROPIC_API_KEY`. Claude models route through the `subagent` engine (which subprocesses `claude -p` against the user's Claude Code subscription). Allowed engines: `subagent`, `openrouter:<m>`, `openai:<m>`, `google:<m>`.
 2. **Embeddings = OpenAI `text-embedding-3-large`.** Matches the legacy `umap_reducer.pkl` dimensions. Do not substitute another provider.
 3. **PromptConfig per legacy style.** Each prompt binds to a specific `default_engine` and `reasoning_effort` (0–10 scale). Subagent is the implicit fallback default if not specified.
-4. **Adaptive HTML scraping.** `gather` tries `trafilatura+httpx` first, falls back to Playwright on failure, and memoizes the working method per site in `sites.scrape_method`.
+4. **Adaptive HTML scraping.** `gather` tries `httpx + BeautifulSoup` first (extracts `<a>` tags from landing pages), falls back to Playwright on failure, and memoizes the working method per site in `sites.scrape_method`. `download` follows the same `httpx → Playwright` shape but uses trafilatura to pull article body text from each article page. Domains marked `sites.bright_data_enabled=1` (Bloomberg, WSJ, CNN, Forbes, Fast Company by default) skip httpx/Playwright and route through the Bright Data Web Unlocker (`BRIGHTDATA_API_KEY` required); URLs that fail both http and Playwright also get a final BD attempt as a fallback.
 
-See `~/.claude/projects/-Users-drucev-projects-news-agent/memory/` for the full memory store.
+See `~/.claude/projects/-Users-drucev-projects-newsagent/memory/` for the full memory store.
 
 ## Reading the reference implementation
 
@@ -43,12 +43,14 @@ Do not import from that path; do not modify it.
 ## Current architecture
 
 ```
-news_agent/
-├── plugin.json                       # Claude Code plugin manifest (publishable shape)
+newsagent/
+├── .claude-plugin/
+│   ├── plugin.json                   # Claude Code plugin manifest (name: newsagent)
+│   └── marketplace.json              # local-dev marketplace
 ├── pyproject.toml, requirements.txt  # deps
 ├── pyrightconfig.json                # pyright IDE config
 ├── lib/
-│   ├── state.py                      # NewsletterAgentState + WorkflowState (11 steps)
+│   ├── state.py                      # NewsletterAgentState + WorkflowState (12 steps)
 │   ├── db.py                         # SQLite schema + AgentState/Site dataclasses
 │   ├── llm.py                        # call_prompt + registry + call_prompt_batch
 │   ├── critic.py                     # critic-optimizer loop helper
@@ -67,10 +69,11 @@ news_agent/
 │   ├── fetch/
 │   │   ├── types.py                  # Article, FetchResult
 │   │   ├── rss.py                    # feedparser via httpx
-│   │   ├── html.py                   # adaptive trafilatura → Playwright
+│   │   ├── html.py                   # adaptive httpx+BeautifulSoup → Playwright
 │   │   ├── rest.py                   # generic JSON API
 │   │   ├── extract.py                # BS4 link extraction
-│   │   └── playwright_runner.py      # minimal Playwright wrapper
+│   │   ├── playwright_runner.py      # minimal Playwright wrapper
+│   │   └── brightdata.py             # Web Unlocker via brightdata-sdk
 │   ├── prompts/                      # ~17 PromptConfigs, one per file
 │   │   ├── _critic_schemas.py        # shared critic/draft schemas
 │   │   ├── _rating_schemas.py        # shared rating I/O
@@ -99,11 +102,11 @@ news_agent/
 
 ## Workflow
 
-`init → gather → filter → download → summarize → rate → cluster → select → draft → rewrite → send`
+`init → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send`
 
-Plus the standalone `news:bluesky` and seven recovery/maintenance skills.
+Plus the standalone `newsagent:bluesky` and seven recovery/maintenance skills.
 
-`dedupe` runs between `summarize` and `rate` by convention but is NOT in `WORKFLOW_STEPS` — it's a maintenance step.
+`dedupe` runs between `download` and `summarize` so duplicate articles aren't summarized twice. It's a full member of `WORKFLOW_STEPS` (see `lib/state.py:25`).
 
 ## Engine layer
 
@@ -119,14 +122,14 @@ Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific
 
 ## Critic-optimizer loop
 
-`lib/critic.py:critic_optimizer_loop` is the generic helper. Both `news:draft` (per section, parallel via ThreadPoolExecutor) and `news:rewrite` (whole newsletter) use it. Short-circuits when critic returns `accept=True` OR `score >= 8.0`. Default `max_edits=2`.
+`lib/critic.py:critic_optimizer_loop` is the generic helper. Both `newsagent:draft` (per section, parallel via ThreadPoolExecutor) and `newsagent:rewrite` (whole newsletter) use it. Short-circuits when critic returns `accept=True` OR `score >= 8.0`. Default `max_edits=2`.
 
 ## State and data storage
 
 - `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`.
 - `download/` — article text cache (sha256-of-url filename).
 - `download/bsky-images/` — Bluesky image cache.
-- `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `news:run`.
+- `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `newsagent:run`.
 - `out/YYYY-MM-DD.html` — final newsletter (+ `out/latest.html` symlink).
 - `out/bsky-YYYY-MM-DD.html` — Bluesky digest (+ `out/latest-bsky.html`).
 
@@ -138,7 +141,8 @@ Copy `dot-env.txt` to `.env`. All keys are optional except the ones you actually
 - `OPENAI_API_KEY` — OpenAI engine + embeddings (required for dedupe/cluster/select)
 - `GOOGLE_API_KEY` — Google engine
 - `NEWSAPI_API_KEY` — only if NewsAPI source is enabled in `sources.yaml`
-- `BSKY_USERNAME` / `BSKY_SECRET` — only for `news:bluesky`
+- `BSKY_USERNAME` / `BSKY_SECRET` — only for `newsagent:bluesky`
+- `BRIGHTDATA_API_KEY` — only needed if any domain has `sites.bright_data_enabled=1` (paywall routing in `download`). Optional `BRIGHTDATA_ZONE` overrides the Web Unlocker zone.
 
 **Do NOT set or expect `ANTHROPIC_API_KEY`.** Claude models go through the `subagent` engine via your Claude Code subscription.
 
@@ -171,7 +175,7 @@ Copy `dot-env.txt` to `.env`. All keys are optional except the ones you actually
 
 # Install
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m playwright install chromium
+.venv/bin/python -m playwright install firefox
 ```
 
 See [README.md](README.md) for full end-user workflows and engine override examples.
@@ -190,9 +194,9 @@ See [README.md](README.md) for full end-user workflows and engine override examp
 
 ## Memory
 
-The project has a memory store at `~/.claude/projects/-Users-drucev-projects-news-agent/memory/`. Key entries:
+The project has a memory store at `~/.claude/projects/-Users-drucev-projects-newsagent/memory/`. Key entries:
 - `feedback_no_anthropic_api.md` — no Anthropic direct API
-- `feedback_adaptive_scraping.md` — trafilatura→Playwright fallback with per-site memo
+- `feedback_adaptive_scraping.md` — httpx→Playwright fallback with per-site memo (parser is BeautifulSoup in `gather`, trafilatura in `download`)
 - `feedback_prompt_config_shape.md` — per-prompt model + reasoning_effort binding
 - `project_embeddings_openai.md` — text-embedding-3-large for all embeddings
 

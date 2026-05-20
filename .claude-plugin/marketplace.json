@@ -1,0 +1,20 @@
+{
+  "name": "newsagent-dev",
+  "description": "Local development marketplace for the newsagent plugin",
+  "owner": {
+    "name": "Druce Vertes",
+    "email": "drucev@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "newsagent",
+      "description": "Daily AI newsletter agent: gather, filter, summarize, rate, cluster, and draft an AI-focused newsletter from RSS/HTML/REST sources.",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "Druce Vertes",
+        "email": "drucev@gmail.com"
+      }
+    }
+  ]
+}

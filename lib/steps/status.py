@@ -1,4 +1,4 @@
-"""news:status — show workflow progress for a session.
+"""newsagent:status — show workflow progress for a session.
 
 CLI entry: python -m lib.steps.status [--db PATH] [--session SID]
 """
@@ -21,7 +21,7 @@ def cli(db_path: str, session_id: str | None) -> None:
     if session_id is None:
         recents = NewsletterAgentState.list_recent_sessions(db_path, limit=1)
         if not recents:
-            click.echo("No sessions found. Run /news:init to create one.")
+            click.echo("No sessions found. Run /newsagent:init to create one.")
             return
         session_id = recents[0]
 

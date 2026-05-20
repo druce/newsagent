@@ -1,4 +1,4 @@
-"""news:checkpoint — force a manual state checkpoint for a session.
+"""newsagent:checkpoint — force a manual state checkpoint for a session.
 
 CLI entry: python -m lib.steps.checkpoint <SID> <STEP> [--db PATH]
 

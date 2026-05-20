@@ -1,4 +1,4 @@
-"""news:diff — compare two sessions side-by-side.
+"""newsagent:diff — compare two sessions side-by-side.
 
 CLI entry: python -m lib.steps.diff <SID1> <SID2> [--db PATH]
 

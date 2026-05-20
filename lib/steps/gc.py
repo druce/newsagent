@@ -1,4 +1,4 @@
-"""news:gc — garbage-collect old sessions from the database and filesystem.
+"""newsagent:gc — garbage-collect old sessions from the database and filesystem.
 
 CLI entry: python -m lib.steps.gc [--older-than DAYS] [--db PATH] [--yes]
 

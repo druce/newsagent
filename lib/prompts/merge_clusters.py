@@ -1,6 +1,6 @@
 """merge_clusters — decide whether two clusters should be merged.
 
-New prompt (no legacy equivalent): used in news:select to deduplicate clusters
+New prompt (no legacy equivalent): used in newsagent:select to deduplicate clusters
 that cover the same story or theme before MMR selection.
 """
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""news:sessions — list recent sessions in the database.
+"""newsagent:sessions — list recent sessions in the database.
 
 CLI entry: python -m lib.steps.sessions [--db PATH] [--limit N]
 """

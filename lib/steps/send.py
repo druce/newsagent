@@ -1,4 +1,4 @@
-"""news:send — render newsletter as HTML and write to out/."""
+"""newsagent:send — render newsletter as HTML and write to out/."""
 from __future__ import annotations
 
 import sqlite3

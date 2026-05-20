@@ -1,4 +1,4 @@
-"""OpenAI text-embedding-3-large helper for news_agent.
+"""OpenAI text-embedding-3-large helper for newsagent.
 
 Used by dedup (cosine similarity), cluster (UMAP+HDBSCAN), and select (MMR).
 Matches the legacy ~/projects/OpenAIAgentsSDK/ workflow so the existing

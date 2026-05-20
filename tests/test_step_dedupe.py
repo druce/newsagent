@@ -5,25 +5,33 @@ from lib.state import NewsletterAgentState
 from lib.steps.dedupe import cli as dedupe_cli
 
 
-def _seed(tmp_db):
+def _seed(tmp_db, tmp_path):
     init_db(tmp_db)
+    from pathlib import Path
+    dl = Path(tmp_path) / "download"
+    dl.mkdir(exist_ok=True)
+    body_a = dl / "a.txt"; body_a.write_text("Story A about chip supply chain " * 50)
+    body_b = dl / "b.txt"; body_b.write_text("Story A about chip supply chain " * 50)
+    body_c = dl / "c.txt"; body_c.write_text("Different story about coral reefs " * 50)
     state = NewsletterAgentState(session_id="d1", db_path=tmp_db)
     state.complete_step("init")
     state.complete_step("gather")
     state.complete_step("filter")
     state.complete_step("download")
-    state.complete_step("summarize")
     state.headline_data = [
-        {"id": 0, "title": "T1", "url": "https://e.com/a", "summary": "alpha beta gamma"},
-        {"id": 1, "title": "T1b", "url": "https://e.com/b", "summary": "alpha beta gamma"},  # near-dupe
-        {"id": 2, "title": "T2", "url": "https://e.com/c", "summary": "completely different topic"},
+        {"id": 0, "title": "T1", "url": "https://e.com/a",
+         "summary": "alpha beta gamma", "text_path": str(body_a)},
+        {"id": 1, "title": "T1b", "url": "https://e.com/b",
+         "summary": "alpha beta gamma", "text_path": str(body_b)},  # near-dupe body
+        {"id": 2, "title": "T2", "url": "https://e.com/c",
+         "summary": "different topic", "text_path": str(body_c)},
     ]
-    state.save_checkpoint("summarize")
+    state.save_checkpoint("download")
 
 
 def test_dedupe_drops_near_duplicates(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _seed(tmp_db)
+    _seed(tmp_db, tmp_path)
     # First two are identical vectors; third is orthogonal
     vectors = [[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
     with patch("lib.steps.dedupe.embed_texts", return_value=vectors):
@@ -38,7 +46,7 @@ def test_dedupe_drops_near_duplicates(tmp_db, monkeypatch, tmp_path):
 
 def test_dedupe_preserves_embeddings(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _seed(tmp_db)
+    _seed(tmp_db, tmp_path)
     vectors = [[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]]  # none near-duplicate
     with patch("lib.steps.dedupe.embed_texts", return_value=vectors):
         runner = CliRunner()

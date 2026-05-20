@@ -53,7 +53,11 @@ def test_summarize_writes_summaries(tmp_db, monkeypatch, tmp_path):
         assert name == "extract_summaries"
         ids = [it["id"] for it in inputs["items"]]
         return ExtractSummariesOutput(summaries=[
-            ArticleSummary(id=ids[0], summary="- GPT-6 launched\n- Strong market impact\n- Future outlook positive"),
+            ArticleSummary(
+                id=ids[0],
+                short_summary="OpenAI ships GPT-6 with strong market impact",
+                summary="- GPT-6 launched\n- Strong market impact\n- Future outlook positive",
+            ),
         ])
 
     with patch("lib.steps.summarize.call_prompt", side_effect=fake_call_prompt):
@@ -63,10 +67,11 @@ def test_summarize_writes_summaries(tmp_db, monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
 
     state = NewsletterAgentState(session_id="s1", db_path=tmp_db).load_latest_from_db()
-    # Headline with text_path should have summary
+    # Headline with text_path should have both summary and short_summary
     headlines_with_summary = [h for h in state.headline_data if "summary" in h]
     assert len(headlines_with_summary) == 1
     assert "GPT-6" in headlines_with_summary[0]["summary"]
+    assert "GPT-6" in headlines_with_summary[0]["short_summary"]
 
 
 def test_summarize_skips_no_text_path(tmp_db, monkeypatch, tmp_path):
@@ -80,7 +85,7 @@ def test_summarize_skips_no_text_path(tmp_db, monkeypatch, tmp_path):
         call_count += 1
         ids = [it["id"] for it in inputs["items"]]
         return ExtractSummariesOutput(summaries=[
-            ArticleSummary(id=i, summary="- bullet") for i in ids
+            ArticleSummary(id=i, short_summary="One-line headline", summary="- bullet") for i in ids
         ])
 
     with patch("lib.steps.summarize.call_prompt", side_effect=fake_call_prompt):
@@ -101,7 +106,11 @@ def test_summarize_writes_report(tmp_db, monkeypatch, tmp_path):
     def fake_call_prompt(name, inputs, *, engine=None):
         ids = [it["id"] for it in inputs["items"]]
         return ExtractSummariesOutput(summaries=[
-            ArticleSummary(id=i, summary="- bullet one\n- bullet two\n- bullet three") for i in ids
+            ArticleSummary(
+                id=i,
+                short_summary="One-line headline for testing",
+                summary="- bullet one\n- bullet two\n- bullet three",
+            ) for i in ids
         ])
 
     with patch("lib.steps.summarize.call_prompt", side_effect=fake_call_prompt):

@@ -1,9 +1,9 @@
 ---
-name: news:gc
+name: gc
 description: Garbage-collect agent_state rows and runs/<SID>/ directories for sessions older than N days. Dry-run by default — requires --yes to actually delete.
 ---
 
-# news:gc
+# newsagent:gc
 
 Identifies sessions that have not been updated within the last N days and
 (optionally) deletes their workflow state rows and scratch directories.
@@ -44,7 +44,7 @@ python -m lib.steps.gc --older-than 30 --yes [--db newsletter_agent.db]
 
 - Weekly or monthly maintenance to keep the database small.
 - After a long experiment phase where many throwaway sessions were created.
-- Before a fresh round of production runs to reduce noise in `news:sessions`.
+- Before a fresh round of production runs to reduce noise in `newsagent:sessions`.
 
 ## Dry-run output example
 

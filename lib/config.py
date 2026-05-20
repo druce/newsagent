@@ -1,4 +1,4 @@
-"""Central configuration constants for news_agent.
+"""Central configuration constants for newsagent.
 
 Rating weights control how per-axis signals combine into a composite score.
 Weights should sum to approximately 1.0 for interpretability.

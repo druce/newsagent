@@ -1,4 +1,4 @@
-"""Pydantic workflow state for news_agent.
+"""Pydantic workflow state for newsagent.
 
 Ported from legacy ~/projects/OpenAIAgentsSDK/newsletter_state.py with the
 following deliberate omissions:
@@ -27,6 +27,7 @@ WORKFLOW_STEPS: list[tuple[str, str, str]] = [
     ("gather",    "Gather URLs",       "Fetch headlines/URLs from configured sources"),
     ("filter",    "Filter URLs",       "Classify AI-relevance and drop dupes vs DB"),
     ("download",  "Download Articles", "Fetch full article HTML and extract text"),
+    ("dedupe",    "Dedupe Articles",   "Cosine-similarity dedup on full article bodies"),
     ("summarize", "Summarize",         "Bullet-point summaries + one-line headlines"),
     ("rate",      "Rate Articles",     "Multi-axis rating + Bradley-Terry composite"),
     ("cluster",   "Cluster Topics",    "UMAP+HDBSCAN clustering and naming"),

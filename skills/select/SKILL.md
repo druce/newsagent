@@ -1,10 +1,15 @@
-# news:select
+---
+name: select
+description: Select a diverse top-K set of headlines per topic cluster. Runs LLM noise assignment for cluster_id=-1 headlines, embedding-based cluster merge for similar clusters, and MMR selection per surviving cluster to balance rating with embedding diversity.
+---
+
+# select
 
 Select a diverse top-K set of headlines per topic cluster for newsletter sections.
 
 ## What it does
 
-Runs three substeps against the clustered headline data produced by `news:cluster`:
+Runs three substeps against the clustered headline data produced by `newsagent:cluster`:
 
 1. **LLM noise assignment** — For each headline that HDBSCAN marked as noise
    (`cluster_id=-1`), calls `assign_noise` to decide whether it belongs to an
@@ -35,7 +40,7 @@ to pick headlines per cluster. The new step adds:
 ## Invocation
 
 ```bash
-# Standard invocation (after news:cluster)
+# Standard invocation (after newsagent:cluster)
 python -m lib.steps.select --session SID
 
 # Override defaults
@@ -62,7 +67,7 @@ python -m lib.steps.select --session SID --engine openrouter:anthropic/claude-3-
 
 ## Prerequisites
 
-- `news:cluster` must be complete for the session (headlines must have `cluster_id`
+- `newsagent:cluster` must be complete for the session (headlines must have `cluster_id`
   and `embedding` fields)
 - `OPENAI_API_KEY` — used by `embed_texts` for cluster-name embeddings (merge step)
 - `ANTHROPIC_API_KEY` or configured engine — for assign_noise + merge_clusters prompts
@@ -83,4 +88,4 @@ selected headline:
 }
 ```
 
-The `news:draft` step consumes `newsletter_section_data` to produce per-section drafts.
+The `newsagent:draft` step consumes `newsletter_section_data` to produce per-section drafts.

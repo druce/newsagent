@@ -1,7 +1,11 @@
-# news:rewrite
+---
+name: rewrite
+description: Assemble section drafts into a whole newsletter, run a whole-newsletter critic-optimizer pass, generate the title, and store state.final_newsletter. Iterates up to --max-edits times with early exit at score >= 8.0.
+---
 
-**Name:** `news:rewrite`
-**Step in pipeline:** 10 of 11 (after `draft`, before `send`)
+# rewrite
+
+**Step in pipeline:** 11 of 12 (after `draft`, before `send`)
 
 ## What it does
 

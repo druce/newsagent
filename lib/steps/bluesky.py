@@ -1,4 +1,4 @@
-"""news:bluesky — fetch a Bluesky account's recent posts and render an HTML digest.
+"""newsagent:bluesky — fetch a Bluesky account's recent posts and render an HTML digest.
 
 Usage:
     python -m lib.steps.bluesky --user <handle> [--limit 80] [--group-size 5] [--engine ENGINE]

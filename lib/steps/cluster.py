@@ -1,4 +1,4 @@
-"""news:cluster — UMAP+HDBSCAN topic clustering with LLM-based cluster naming.
+"""newsagent:cluster — UMAP+HDBSCAN topic clustering with LLM-based cluster naming.
 
 Steps:
 1. Load state. Filter to headlines with summary set.

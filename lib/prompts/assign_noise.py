@@ -1,6 +1,6 @@
 """assign_noise — assign a noise headline to an existing cluster.
 
-New prompt (no legacy equivalent): used in news:select to assign HDBSCAN noise
+New prompt (no legacy equivalent): used in newsagent:select to assign HDBSCAN noise
 points (cluster_id=-1) to the nearest thematically relevant cluster, create a
 new cluster, or discard the headline.
 """

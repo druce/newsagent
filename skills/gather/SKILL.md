@@ -1,11 +1,11 @@
 ---
-name: news:gather
-description: Fetch headlines from all configured sources (RSS/HTML/REST). HTML sources use adaptive scraping — trafilatura+httpx first, Playwright fallback, with per-site working method memoized in sites.scrape_method. Inserts new URLs into the `urls` table and updates session headline_data.
+name: gather
+description: Fetch headlines from all configured sources (RSS/HTML/REST). HTML sources use adaptive scraping — httpx first, Playwright fallback, with per-site working method memoized in sites.scrape_method. Inserts new URLs into the `urls` table and updates session headline_data.
 ---
 
-# news:gather
+# newsagent:gather
 
-Step 2 of `/news:run`. Fetches headlines and dedups against `urls`.
+Step 2 of `/newsagent:run`. Fetches headlines and dedups against `urls`.
 
 ## How to invoke
 
@@ -17,11 +17,11 @@ python -m lib.steps.gather --db newsletter_agent.db --session SID
 
 For each enabled source in `sources.yaml`:
 - `type: rss` → feedparser via httpx
-- `type: html` → trafilatura+httpx first; on failure or thin content (<3 links), fall back to Playwright. Persists the working method in `sites.scrape_method` for next run.
+- `type: html` → httpx + BeautifulSoup first (parses `<a>` tags from the landing page); on failure or thin content (<3 links), fall back to Playwright. Persists the working method in `sites.scrape_method` for next run. Note: trafilatura is NOT used here — that's only for `download`, which extracts article body text.
 - `type: rest` → JSON API (NewsAPI-style)
 
 After all sources fetched:
-- Dedups against `urls.initial_url`
+- Dedups previously seen urls against `urls.initial_url`
 - Inserts new URLs into `urls` table
 - Appends new headlines to `headline_data`
 - Writes per-source report to `runs/<SID>/gather.json`

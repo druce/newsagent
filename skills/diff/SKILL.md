@@ -1,9 +1,9 @@
 ---
-name: news:diff
+name: diff
 description: Compare two newsletter sessions side-by-side — step statuses, headline/section counts, newsletter titles, and Jaccard URL overlap of selected articles.
 ---
 
-# news:diff
+# newsagent:diff
 
 Loads the latest checkpoint for each of two sessions and outputs a markdown
 comparison table. Useful for understanding how two runs diverged (e.g. after

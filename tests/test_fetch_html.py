@@ -27,9 +27,10 @@ def test_fetch_html_uses_httpx_when_method_is_none_or_http():
     respx.get("https://news.example.com/").mock(
         return_value=httpx.Response(200, text=_HTML_GOOD)
     )
-    result, method = fetch_html("Example", _CFG_GOOD, scrape_method=None)
+    result, method, raw = fetch_html("Example", _CFG_GOOD, scrape_method=None)
     assert result.ok is True
     assert method == "http"
+    assert raw == _HTML_GOOD
     assert len(result.articles) >= 3
 
 
@@ -39,9 +40,10 @@ def test_fetch_html_falls_back_to_playwright_on_thin_content():
         return_value=httpx.Response(200, text=_HTML_THIN)
     )
     with patch("lib.fetch.html.fetch_url_html", return_value=_HTML_GOOD) as mock_pw:
-        result, method = fetch_html("Example", _CFG_GOOD, scrape_method=None)
+        result, method, raw = fetch_html("Example", _CFG_GOOD, scrape_method=None)
     assert method == "playwright"
     assert mock_pw.called
+    assert raw == _HTML_GOOD
     assert len(result.articles) >= 3
 
 
@@ -51,7 +53,7 @@ def test_fetch_html_falls_back_to_playwright_on_http_error():
         return_value=httpx.Response(500, text="explode")
     )
     with patch("lib.fetch.html.fetch_url_html", return_value=_HTML_GOOD) as mock_pw:
-        _result, method = fetch_html("Example", _CFG_GOOD, scrape_method=None)
+        _result, method, _raw = fetch_html("Example", _CFG_GOOD, scrape_method=None)
     assert method == "playwright"
     assert mock_pw.called
 
@@ -59,10 +61,11 @@ def test_fetch_html_falls_back_to_playwright_on_http_error():
 def test_fetch_html_goes_straight_to_playwright_when_pinned():
     with patch("lib.fetch.html.fetch_url_html", return_value=_HTML_GOOD) as mock_pw:
         with respx.mock:  # ensure no HTTP call is made
-            result, method = fetch_html("Example", _CFG_GOOD, scrape_method="playwright")
+            result, method, raw = fetch_html("Example", _CFG_GOOD, scrape_method="playwright")
     assert method == "playwright"
     assert mock_pw.called
     assert result.ok is True
+    assert raw == _HTML_GOOD
 
 
 @respx.mock
@@ -72,6 +75,7 @@ def test_fetch_html_reports_failure_if_both_methods_fail():
     )
     with patch("lib.fetch.html.fetch_url_html",
                side_effect=RuntimeError("pw broken")):
-        result, method = fetch_html("Example", _CFG_GOOD, scrape_method=None)
+        result, method, raw = fetch_html("Example", _CFG_GOOD, scrape_method=None)
     assert result.ok is False
     assert method == "playwright"  # last attempted
+    assert raw is None  # both methods failed, nothing to save

@@ -1,7 +1,11 @@
-# news:draft
+---
+name: draft
+description: Draft markdown newsletter sections in parallel with a critic-optimizer loop. For each topic cluster, writes a section via write_section, then iteratively critiques and improves it (max-edits N, early exit at score >= 8.0).
+---
 
-**Name:** `news:draft`
-**Step in pipeline:** 9 of 11 (after `select`, before `rewrite`)
+# draft
+
+**Step in pipeline:** 10 of 12 (after `select`, before `rewrite`)
 
 ## What it does
 
@@ -37,7 +41,7 @@ python -m lib.steps.draft --session SID [--db PATH] [--max-edits N] [--paralleli
 
 ## Error cases
 
-- **No state found for session**: session ID not in DB — run `news:init` first.
+- **No state found for session**: session ID not in DB — run `newsagent:init` first.
 - **LLM engine failure**: propagated as exit code 1. Re-run after fixing engine config.
 - **Empty newsletter_section_data**: step runs with zero sections; no LLM calls made.
 
