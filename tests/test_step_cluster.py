@@ -182,3 +182,83 @@ def test_cluster_prepare_writes_single_batch(tmp_db, monkeypatch, tmp_path):
     assert "user_prompt" in payload and payload["user_prompt"]
     # Schema embedded
     assert payload["output_schema"]["properties"].get("names") is not None
+
+
+def test_cluster_apply_reads_results_and_names_clusters(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed(tmp_db, session_id="c3", n=4)
+
+    # Prepare path needs the UMAP+HDBSCAN stubs first
+    monkeypatch.setattr("lib.steps.cluster.load_umap_reducer", lambda _: _fake_reducer())
+    monkeypatch.setattr(
+        "lib.steps.cluster.apply_umap",
+        lambda embeddings, reducer: [[float(i % 2), 0.0] for i in range(len(embeddings))],
+    )
+    monkeypatch.setattr(
+        "lib.steps.cluster.optimize_hdbscan",
+        lambda reduced, n_trials: ([0, 1, 0, 1], {"noise_ratio": 0.0, "best_params": {}}),
+    )
+
+    runner = CliRunner()
+    prep = runner.invoke(cluster_cli, [
+        "--db", tmp_db, "--session", "c3", "--prepare-batches",
+    ])
+    assert prep.exit_code == 0, prep.output
+
+    # Write fake Agent result
+    results_dir = Path("runs/c3/cluster-results")
+    results_dir.mkdir(parents=True)
+    (results_dir / "batch-000.json").write_text(json.dumps({
+        "names": [
+            {"cluster_id": "0", "name": "OpenAI ships GPT-6"},
+            {"cluster_id": "1", "name": "EU passes the AI Act"},
+        ]
+    }))
+
+    apply_res = runner.invoke(cluster_cli, [
+        "--db", tmp_db, "--session", "c3",
+        "--apply-results", str(results_dir),
+    ])
+    assert apply_res.exit_code == 0, apply_res.output
+
+    state = NewsletterAgentState(session_id="c3", db_path=tmp_db).load_latest_from_db()
+    assert state is not None
+    assert "OpenAI ships GPT-6" in state.clusters
+    assert "EU passes the AI Act" in state.clusters
+
+    # Each non-noise headline got a cluster_name
+    named = [h for h in state.headline_data if h.get("cluster_name")]
+    assert len(named) == 4
+
+
+def test_cluster_apply_reports_missing_names(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed(tmp_db, session_id="c4", n=4)
+
+    monkeypatch.setattr("lib.steps.cluster.load_umap_reducer", lambda _: _fake_reducer())
+    monkeypatch.setattr(
+        "lib.steps.cluster.apply_umap",
+        lambda embeddings, reducer: [[float(i % 2), 0.0] for i in range(len(embeddings))],
+    )
+    monkeypatch.setattr(
+        "lib.steps.cluster.optimize_hdbscan",
+        lambda reduced, n_trials: ([0, 1, 0, 1], {"noise_ratio": 0.0, "best_params": {}}),
+    )
+
+    runner = CliRunner()
+    runner.invoke(cluster_cli, ["--db", tmp_db, "--session", "c4", "--prepare-batches"])
+
+    results_dir = Path("runs/c4/cluster-results")
+    results_dir.mkdir(parents=True)
+    (results_dir / "batch-000.json").write_text(json.dumps({
+        "names": [{"cluster_id": "0", "name": "Only cluster 0"}]
+    }))
+
+    result = runner.invoke(cluster_cli, [
+        "--db", tmp_db, "--session", "c4",
+        "--apply-results", str(results_dir),
+    ])
+    # Partial apply still succeeds
+    assert result.exit_code == 0, result.output
+    combined = result.output + (result.stderr if result.stderr_bytes else "")
+    assert "missing names" in combined
