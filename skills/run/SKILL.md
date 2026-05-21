@@ -1,36 +1,103 @@
 ---
 name: run
-description: Top-level newsletter orchestrator. Runs all 12 pipeline steps (init → send) in sequence with resume/from/only flags and per-step engine overrides. Writes a session summary to runs/<SID>/summary.md.
+description: Top-level newsletter orchestrator. Drives the 12-step pipeline (init → send) end-to-end from a parent Claude Code session, dispatching parallel Agents for the seven LLM-using steps. Writes a session summary to runs/<SID>/summary.md.
 ---
 
 # newsagent:run
 
-## Invocation
+This SKILL drives the full newsletter pipeline from a parent Claude Code
+session. For no-LLM steps it invokes the step's Python CLI. For LLM-using
+steps it follows the `--prepare-batches → parallel Agents → --apply-results`
+pattern, dispatching all batches as parallel Agents in a single message.
 
-```bash
-# Fresh full run (autogenerates session id)
-python -m lib.steps.run --sources sources.yaml
+For non-interactive use (cron, CI, or any context outside Claude Code), use
+the Python orchestrator `lib.steps.run` directly with an `--engine` override.
+See "Non-interactive fallback" below.
 
-# Use a specific session id
-python -m lib.steps.run --session 2026-05-17-120000 --sources sources.yaml
+## Step plan
 
-# Resume an incomplete session from its first incomplete step
-python -m lib.steps.run --resume 2026-05-17-120000
+The pipeline runs these 12 steps in order:
 
-# Restart from a specific step (and all steps after it)
-python -m lib.steps.run --session 2026-05-17-120000 --from cluster
-
-# Run a single step on an existing session
-python -m lib.steps.run --session 2026-05-17-120000 --only rate
-
-# Force one engine for all LLM steps
-python -m lib.steps.run --engine openrouter:google/gemini-2.5-flash
-
-# Override individual prompts via env vars (any number)
-NEWS_PROMPT_FILTER_URLS_ENGINE=openrouter:deepseek/deepseek-v3-chat \
-NEWS_PROMPT_RATE_QUALITY_ENGINE=openai:gpt-4o-mini \
-  python -m lib.steps.run
 ```
+init → gather → filter → download → dedupe → summarize →
+rate → cluster → select → draft → rewrite → send
+```
+
+## Per-step model & batch table
+
+| Step | Mode | Model | Batches |
+|---|---|---|---|
+| init | Python CLI | — | — |
+| gather | Python CLI | — | — |
+| filter | prepare/dispatch/apply | haiku | 25 headlines per batch |
+| download | Python CLI | — | — |
+| dedupe | Python CLI | — | — |
+| summarize | prepare/dispatch/apply | sonnet | 15 articles per batch |
+| rate | Python CLI (uses openai:gpt-4o-mini by default) | — | — |
+| cluster | prepare/dispatch/apply | haiku | 1 batch (all clusters) |
+| select | prepare/dispatch/apply | haiku | 25 noise per assign batch; 1 merge batch |
+| draft | prepare/dispatch/apply | sonnet | 1 batch per section |
+| rewrite | prepare/dispatch/apply | sonnet | 1 batch (whole newsletter) |
+| send | Python CLI | — | — |
+
+## Driver loop (what parent Claude does)
+
+For each step in the plan:
+
+1. **No-LLM steps** (init, gather, download, dedupe, rate, send):
+   Run the Python CLI:
+   ```bash
+   python -m lib.steps.<step> --session SID [step-specific args]
+   ```
+   Abort the orchestrator on non-zero exit.
+
+2. **LLM-using steps** (filter, summarize, cluster, select, draft, rewrite):
+   ```bash
+   python -m lib.steps.<step> --session SID --prepare-batches [step-specific args]
+   ```
+   Then dispatch ALL `runs/SID/<step>-batches/batch-*.json` files as Agents
+   in a SINGLE parent message (one Agent tool call per batch file). Use the
+   model from the table above for that step. Each Agent's prompt instructs
+   it to read the batch file, run the step's logic in its own context, and
+   write the result to `runs/SID/<step>-results/batch-NNN.json`.
+
+   (For `select` there are two batch subdirs — `select-assign-batches/` and
+   `select-merge-batches/` — dispatch Agents for both in the same message.)
+
+   Wait for all Agents to return. Then:
+   ```bash
+   python -m lib.steps.<step> --session SID --apply-results runs/SID/<step>-results
+   ```
+   (For `select` use `--apply-results runs/SID` so it can find both result
+   subdirs.)
+
+   If apply reports problems on stderr (`missing ...`, `schema mismatch`),
+   identify the failing batch numbers, re-dispatch only those Agents
+   (overwriting their result files), and re-run apply.
+
+After the `send` step completes, write `runs/SID/summary.md` (unless
+`--no-summary` was passed) by calling `lib.run_summary.write_summary(SID)`.
+
+## Per-step Agent prompt skeletons
+
+See the individual SKILL.md files for the exact instructions each Agent
+should receive:
+- `skills/filter/SKILL.md`
+- `skills/summarize/SKILL.md`
+- `skills/cluster/SKILL.md`
+- `skills/select/SKILL.md`
+- `skills/draft/SKILL.md`
+- `skills/rewrite/SKILL.md`
+
+For every Agent dispatch:
+- `subagent_type: "general-purpose"`
+- `model:` from the table above
+- `description:` brief, e.g. `"Classify headline batch 003"`
+- `prompt:` skeleton from the step's SKILL.md, with the actual batch file
+  path filled in
+
+Dispatch ALL batches for a step in one parent message (multiple Agent tool
+calls in the same message) so they run in parallel.
 
 ## Flags
 
@@ -39,65 +106,56 @@ NEWS_PROMPT_RATE_QUALITY_ENGINE=openai:gpt-4o-mini \
 | `--db PATH` | `newsletter_agent.db` | SQLite DB path |
 | `--sources PATH` | `sources.yaml` | YAML source list (used by init step) |
 | `--session SID` | autogenerated | Session id to use or create |
-| `--new` | off | Force a new session (autogenerate id even if --session not given) |
+| `--new` | off | Force a new session id |
 | `--resume SID` | — | Resume an existing session from its first incomplete step |
 | `--from STEP` | — | Start from STEP and run everything after it |
 | `--only STEP` | — | Run exactly one step |
-| `--max-edits N` | 2 | Critic-optimizer iterations for draft and rewrite steps |
-| `--parallelism N` | 4 | Parallel section drafters in the draft step |
-| `--engine ID` | — | Override LLM engine for all prompt-enabled steps |
+| `--max-edits N` | 2 | Critic-optimizer iterations for draft and rewrite |
+| `--parallelism N` | 4 | Section drafters for classic-mode draft only |
 | `--notify` | off | Send newsletter via email after the send step |
 | `--no-summary` | off | Skip writing runs/<SID>/summary.md |
 
-## Step Plan Resolution
+`--engine` from `lib.steps.run` is NOT supported in the interactive flow —
+the model is fixed per step (table above). For full-pipeline engine override
+use the non-interactive fallback below.
+
+## Step plan resolution
 
 1. `--only STEP` → run exactly that one step.
 2. `--from STEP` → run STEP and every step that follows it in workflow order.
-3. `--resume SID` → load state, find the first non-complete step, run from there.
+3. `--resume SID` → load state via `python -m lib.steps.status --session SID`,
+   find the first non-complete step, run from there.
 4. Default → run all 12 steps starting from init.
 
-## Engine Override Semantics
+## Resuming / recovery
 
-`--engine` is forwarded only to steps that accept it: `filter`, `summarize`, `rate`, `cluster`, `select`, `draft`, `rewrite`. The steps `init`, `gather`, `download`, and `send` do not accept `--engine` and it is not passed to them.
+If a step fails mid-run, the orchestrator aborts. To recover:
 
-Fine-grained per-prompt overrides are available via environment variables:
-
-```
-NEWS_PROMPT_<PROMPT_NAME_UPPER>_ENGINE=<engine_id>
-```
-
-For example:
 ```bash
-NEWS_PROMPT_RATE_QUALITY_ENGINE=openai:gpt-4o python -m lib.steps.run
+python -m lib.steps.status --session SID
+python -m lib.steps.reset --session SID --errors
+# Then re-invoke /newsagent:run --resume SID
 ```
 
 ## Output
 
-- `runs/<SID>/*.json` — intermediate artifacts from each step (gather.json, filter.json, etc.)
-- `runs/<SID>/summary.md` — human-readable run report with step statuses, timings, and counts (skipped if `--no-summary`)
-- `out/YYYY-MM-DD.html` — final newsletter HTML (written by the send step)
-- `out/latest.html` — symlink to the most recently written newsletter
+- `runs/<SID>/<step>-batches/` — prepared batch JSONs (per LLM step)
+- `runs/<SID>/<step>-results/` — Agent result JSONs (per LLM step)
+- `runs/<SID>/<step>.json` — per-step summary
+- `runs/<SID>/summary.md` — top-level human-readable run report
+- `out/YYYY-MM-DD.html` — final newsletter HTML (from send step)
+- `out/latest.html` — symlink to latest
 
-## Errors
+## Non-interactive fallback (cron / CI)
 
-If any step fails, the orchestrator aborts immediately. The partial session state is checkpointed in the DB. To recover:
+For automation outside Claude Code, run the Python orchestrator directly with
+an `--engine` override (`subagent` is forbidden — it falls back to `claude -p`
+which is not covered by the Max plan):
 
 ```bash
-# Inspect where it stopped
-python -m lib.steps.status --session SID
-
-# Resume from the first incomplete step
-python -m lib.steps.run --resume SID
-
-# Or reset errors and retry
-python -m lib.steps.reset --session SID --errors
-python -m lib.steps.run --resume SID
+python -m lib.steps.run --sources sources.yaml \
+  --engine openrouter:google/gemini-2.5-flash
 ```
 
-## Workflow Order
-
-```
-init → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send
-```
-
-Each step is responsible for its own state checkpoint. The orchestrator invokes each step's Click CLI programmatically (no subprocess) and aborts on any non-zero exit.
+This bypasses the Agent-dispatch flow entirely and uses classic mode on every
+LLM step.
