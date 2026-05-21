@@ -166,3 +166,37 @@ def test_rewrite_writes_artifact_json(tmp_db, monkeypatch, tmp_path):
     assert "accepted" in transcript
     assert "scores" in transcript
     assert data["title"] == "AI and Robotics Weekly Digest"
+
+
+# ---------------------------------------------------------------------------
+# Test 4: --prepare-batches writes single batch JSON with all prompts embedded
+# ---------------------------------------------------------------------------
+
+def test_rewrite_prepare_writes_single_batch(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="r_prep")  # existing helper
+
+    from lib.steps.rewrite import cli as rewrite_cli
+
+    runner = CliRunner()
+    result = runner.invoke(rewrite_cli, [
+        "--db", tmp_db, "--session", "r_prep", "--prepare-batches",
+        "--max-edits", "2",
+    ])
+    assert result.exit_code == 0, result.output
+
+    files = sorted(Path("runs/r_prep/rewrite-batches").glob("batch-*.json"))
+    assert len(files) == 1
+
+    payload = json.loads(files[0].read_text())
+    assert "initial_draft" in payload and payload["initial_draft"]
+    assert payload["max_edits"] == 2
+    for key in (
+        "critique_system_prompt", "critique_user_prompt",
+        "improve_system_prompt", "improve_user_prompt",
+        "title_system_prompt", "title_user_prompt",
+    ):
+        assert key in payload and payload[key]
+    schema = payload["output_schema"]
+    assert "final_newsletter_markdown" in schema["properties"]
+    assert "title" in schema["properties"]
