@@ -1,7 +1,14 @@
-"""newsagent:run — top-level newsletter orchestrator.
+"""newsagent:run — non-interactive newsletter orchestrator (cron / CI).
 
-Sequences all 11 pipeline steps in order, supports resume/from/only flags,
-and forwards engine overrides to the appropriate steps.
+Sequences all 12 pipeline steps in order, supports resume/from/only flags,
+and forwards engine overrides to the appropriate steps. Use this entry point
+when you cannot drive parent-Claude Agent dispatch (cron, CI, headless
+scripts). Requires --engine to avoid the subagent engine (which calls
+claude -p and is not covered by the Max plan).
+
+For interactive use from a parent Claude Code session, invoke /newsagent:run
+(the SKILL at skills/run/SKILL.md) instead — that drives the Agent-dispatch
+pattern across all LLM steps without using claude -p.
 
 CLI: python -m lib.steps.run [--db ...] [--session SID] [--sources sources.yaml]
          [--from STEP] [--only STEP] [--resume SID]
