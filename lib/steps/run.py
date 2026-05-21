@@ -134,7 +134,7 @@ def cli(
     notify: bool,
     no_summary: bool,
 ) -> None:
-    """Top-level newsletter orchestrator. Sequences all 11 pipeline steps."""
+    """Non-interactive newsletter orchestrator (cron / CI). Sequences all 12 pipeline steps."""
 
     # ---- Resolve session ----
     if resume_sid:

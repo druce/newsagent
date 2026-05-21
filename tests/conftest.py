@@ -1,3 +1,5 @@
+import importlib
+import sys
 import pytest
 from pathlib import Path
 
@@ -9,6 +11,32 @@ def _isolate_brightdata_env(monkeypatch):
     that exercise BD wiring should set it themselves (and mock the call)."""
     monkeypatch.delenv("BRIGHTDATA_API_KEY", raising=False)
     monkeypatch.delenv("BRIGHTDATA_ZONE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_prompts_registered():
+    """Re-register all prompts before each test if the registry was cleared.
+
+    `tests/test_batching.py` has an autouse `_clean_registry` fixture that
+    clears `lib.llm._registry` for its own tests. Without this fixture, any
+    test running after a test_batching test would see an empty registry and
+    fail with `KeyError: 'Prompt not registered'`.
+
+    Re-register the EXISTING PromptConfig instances (don't reload modules)
+    so class identity is preserved — tests that use `cfg.input_schema is X`
+    keep working.
+    """
+    from lib.llm import _registry, register_prompt, PromptConfig
+    if not _registry:
+        importlib.import_module("lib.prompts")  # ensure top-level prompt package loaded
+        for modname, mod in list(sys.modules.items()):
+            if not modname.startswith("lib.prompts.") or mod is None:
+                continue
+            for attr in dir(mod):
+                obj = getattr(mod, attr, None)
+                if isinstance(obj, PromptConfig) and obj.name not in _registry:
+                    register_prompt(obj)
+    yield
 
 
 @pytest.fixture
