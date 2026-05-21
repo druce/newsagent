@@ -3,89 +3,79 @@ name: select
 description: Select a diverse top-K set of headlines per topic cluster. Runs LLM noise assignment for cluster_id=-1 headlines, embedding-based cluster merge for similar clusters, and MMR selection per surviving cluster to balance rating with embedding diversity.
 ---
 
-# select
+# newsagent:select
 
-Select a diverse top-K set of headlines per topic cluster for newsletter sections.
+Step 9 of /newsagent:run. Two execution paths.
 
-## What it does
+## Interactive mode — Haiku subagent dispatch
 
-Runs three substeps against the clustered headline data produced by `newsagent:cluster`:
-
-1. **LLM noise assignment** — For each headline that HDBSCAN marked as noise
-   (`cluster_id=-1`), calls `assign_noise` to decide whether it belongs to an
-   existing cluster, deserves its own new cluster, or should be dropped entirely.
-
-2. **LLM cluster merge** — Embeds cluster names, finds pairs whose name embeddings
-   have cosine similarity >= 0.85, then calls `merge_clusters` for each candidate
-   pair. If confirmed, all headlines from cluster B are reassigned to cluster A
-   under the merged name.
-
-3. **MMR selection** — For each surviving cluster, runs Maximal Marginal Relevance
-   (`mmr_select`) to pick the top-K headlines that balance rating (relevance) with
-   embedding diversity. Default K=5, lambda=0.7.
-
-Writes:
-- `state.newsletter_section_data` — list of `{cat, headline, link, rating, summary, id}` dicts
-- `state.clusters` — updated `{cluster_name: [idx, ...]}` map
-- `runs/<SID>/select.json` — summary artifact
-
-## Design vs legacy
-
-The legacy `do_cluster.py` / `newsletter_state.py` pipeline used plain top-K-by-rating
-to pick headlines per cluster. The new step adds:
-- LLM-assisted noise classification (no legacy equivalent)
-- LLM-assisted cluster deduplication (no legacy equivalent)
-- MMR diversity selection instead of greedy top-K
-
-## Invocation
+### Step 1: prepare batches
 
 ```bash
-# Standard invocation (after newsagent:cluster)
-python -m lib.steps.select --session SID
-
-# Override defaults
-python -m lib.steps.select --session SID --k 8 --lambda 0.5
-
-# Skip LLM substeps (faster, for debugging)
-python -m lib.steps.select --session SID --no-noise-assign --no-merge
-
-# Force a specific LLM engine
-python -m lib.steps.select --session SID --engine openrouter:anthropic/claude-3-haiku
+python -m lib.steps.select --session SID --prepare-batches
 ```
 
-## Options
+Writes two subdirs under `runs/<SID>/`:
+- `select-assign-batches/batch-NNN.json` — noise headlines sharded 25 per
+  batch. Each batch carries the same cluster descriptors plus the headlines
+  to assign.
+- `select-merge-batches/batch-000.json` — all candidate near-duplicate cluster
+  pairs (post-cosine filter). Skipped if no candidates exist.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--session` | required | Session ID |
-| `--db` | `newsletter_agent.db` | SQLite DB path |
-| `--k` | `5` | Max headlines per cluster |
-| `--lambda` | `0.7` | MMR trade-off (1.0=relevance, 0.0=diversity) |
-| `--engine` | from PromptConfig | Override LLM engine |
-| `--no-noise-assign` | off | Skip LLM noise assignment |
-| `--no-merge` | off | Skip LLM cluster merge |
+Each batch file is self-contained (system_prompt + user_prompt + output_schema
++ items). No further `lib/prompts/` access needed by subagents.
 
-## Prerequisites
+### Step 2: dispatch Haiku subagents (all in ONE parent message)
 
-- `newsagent:cluster` must be complete for the session (headlines must have `cluster_id`
-  and `embedding` fields)
-- `OPENAI_API_KEY` — used by `embed_texts` for cluster-name embeddings (merge step)
-- `ANTHROPIC_API_KEY` or configured engine — for assign_noise + merge_clusters prompts
+For each assign batch and (if present) the merge batch, dispatch one Agent
+with `model: "haiku"`. Dispatch all of them in the same message so they run
+in parallel.
 
-## Outputs
+Per-Agent prompt skeleton:
 
-`state.newsletter_section_data` is a list of section-headline records, one per
-selected headline:
-
-```python
-{
-    "cat": "AI Safety",          # cluster/section name
-    "headline": "OpenAI...",     # article title
-    "link": "https://...",       # article URL
-    "rating": 4.2,               # composite Bradley-Terry rating
-    "summary": "Short summary",  # from summarize step
-    "id": 7,                     # index into state.headline_data
-}
+```
+Read runs/<SID>/select-assign-batches/batch-NNN.json
+  (or runs/<SID>/select-merge-batches/batch-000.json).
+The file contains system_prompt, user_prompt, output_schema, and the items.
+Follow system_prompt + user_prompt. Return ONLY a JSON object matching
+output_schema, with exactly one entry per id (no duplicates, no extras).
+Write to runs/<SID>/select-assign-results/batch-NNN.json
+  (or runs/<SID>/select-merge-results/batch-000.json)
+using the Write tool. Then report the path.
 ```
 
-The `newsagent:draft` step consumes `newsletter_section_data` to produce per-section drafts.
+### Step 3: apply results
+
+```bash
+python -m lib.steps.select --session SID --apply-results runs/<SID>
+```
+
+Note: `--apply-results` takes the **session runs dir** (e.g. `runs/<SID>`),
+not a specific subdir. The step looks for both
+`select-assign-results/` and `select-merge-results/` inside it.
+
+Applies assignments (`none` → drop, `new` → new singleton cluster,
+`<cid>` → attach), applies merges, then runs MMR top-K per surviving cluster.
+
+### Step 4: retry on failure
+
+Per the filter/summarize pattern: re-dispatch only the failing batch(es) and
+re-run `--apply-results`. Partial application is idempotent.
+
+## Classic mode (non-interactive)
+
+```bash
+python -m lib.steps.select --session SID --engine openai:gpt-4o-mini
+```
+
+In-process calls for each noise headline and each candidate merge pair.
+
+## Output contract
+
+- HDBSCAN noise headlines either attached to an existing cluster, promoted to
+  a new singleton, or dropped from `state.headline_data`.
+- Similar clusters merged according to `merge_clusters_batch` decisions.
+- `state.newsletter_section_data` populated by MMR top-K per cluster.
+- `state.clusters` populated with `{name: [headline_index_str, ...]}`.
+- `runs/<SID>/select.json` written with counts.
+- `select` step marked COMPLETE.
