@@ -3,6 +3,7 @@ from lib.prompts import filter_urls, extract_summaries  # noqa: F401
 from lib.prompts import rate_quality, rate_on_topic, rate_importance  # noqa: F401
 from lib.prompts import battle  # noqa: F401
 from lib.prompts import name_topic  # noqa: F401
+from lib.prompts import name_topic_batch  # noqa: F401
 from lib.prompts import assign_noise  # noqa: F401
 from lib.prompts import merge_clusters  # noqa: F401
 from lib.prompts import write_section  # noqa: F401
@@ -23,6 +24,7 @@ __all__ = [
     "rate_importance",
     "battle",
     "name_topic",
+    "name_topic_batch",
     "assign_noise",
     "merge_clusters",
     "write_section",
