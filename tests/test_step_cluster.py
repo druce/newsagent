@@ -1,4 +1,6 @@
 """Tests for lib/steps/cluster.py — UMAP+HDBSCAN+NAME_TOPIC."""
+import json
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
 import numpy as np
@@ -6,6 +8,7 @@ import lib.prompts  # noqa: F401 — register prompts
 from lib.db import init_db
 from lib.state import NewsletterAgentState
 from lib.steps.cluster import cli as cluster_cli
+from lib.prompts.name_topic_batch import NameTopicBatchOutput
 
 
 def _seed(tmp_db, session_id="c1", n=6, with_embeddings=True, with_ratings=True):
@@ -144,3 +147,38 @@ def test_cluster_handles_all_noise(tmp_db, monkeypatch, tmp_path):
     # All headlines should have cluster_id = -1
     for h in state.headline_data:
         assert h.get("cluster_id") == -1
+
+
+def test_cluster_prepare_writes_single_batch(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed(tmp_db, session_id="c2", n=6)
+
+    # Stub UMAP reducer + HDBSCAN to force 2 clusters
+    monkeypatch.setattr("lib.steps.cluster.load_umap_reducer", lambda _: _fake_reducer())
+    monkeypatch.setattr(
+        "lib.steps.cluster.apply_umap",
+        lambda embeddings, reducer: [[float(i % 2), 0.0] for i in range(len(embeddings))],
+    )
+    monkeypatch.setattr(
+        "lib.steps.cluster.optimize_hdbscan",
+        lambda reduced, n_trials: ([0, 1, 0, 1, 0, 1], {"noise_ratio": 0.0, "best_params": {}}),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cluster_cli, [
+        "--db", tmp_db, "--session", "c2", "--prepare-batches",
+    ])
+    assert result.exit_code == 0, result.output
+
+    batches_dir = Path("runs/c2/cluster-batches")
+    files = sorted(batches_dir.glob("batch-*.json"))
+    assert len(files) == 1  # single batch for all clusters
+
+    payload = json.loads(files[0].read_text())
+    assert payload["batch_id"] == 0
+    cluster_ids = sorted(c["cluster_id"] for c in payload["clusters"])
+    assert cluster_ids == ["0", "1"]
+    assert "system_prompt" in payload and payload["system_prompt"]
+    assert "user_prompt" in payload and payload["user_prompt"]
+    # Schema embedded
+    assert payload["output_schema"]["properties"].get("names") is not None
