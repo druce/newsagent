@@ -200,3 +200,43 @@ def test_rewrite_prepare_writes_single_batch(tmp_db, monkeypatch, tmp_path):
     schema = payload["output_schema"]
     assert "final_newsletter_markdown" in schema["properties"]
     assert "title" in schema["properties"]
+
+
+# ---------------------------------------------------------------------------
+# Test 5: --apply-results writes final newsletter and title
+# ---------------------------------------------------------------------------
+
+def test_rewrite_apply_writes_final_newsletter(tmp_db, monkeypatch, tmp_path):
+    """--apply-results loads batch result and writes final newsletter + title."""
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="r_apply")
+
+    from lib.steps.rewrite import cli as rewrite_cli
+
+    runner = CliRunner()
+    prep = runner.invoke(rewrite_cli, [
+        "--db", tmp_db, "--session", "r_apply", "--prepare-batches",
+    ])
+    assert prep.exit_code == 0, prep.output
+
+    results_dir = Path("runs/r_apply/rewrite-results")
+    results_dir.mkdir(parents=True)
+    (results_dir / "batch-000.json").write_text(json.dumps({
+        "final_newsletter_markdown": "## OpenAI\n- ships GPT-6\n\n## EU\n- AI Act",
+        "title": "AI Weekly Roundup",
+        "iterations": 1,
+        "scores": [8.5],
+        "feedbacks": ["good"],
+        "accepted": True,
+    }))
+
+    apply_res = runner.invoke(rewrite_cli, [
+        "--db", tmp_db, "--session", "r_apply",
+        "--apply-results", str(results_dir),
+    ])
+    assert apply_res.exit_code == 0, apply_res.output
+
+    state = NewsletterAgentState(session_id="r_apply", db_path=tmp_db).load_latest_from_db()
+    assert state.newsletter_title == "AI Weekly Roundup"
+    assert state.final_newsletter.startswith("# AI Weekly Roundup")
+    assert "## OpenAI" in state.final_newsletter
