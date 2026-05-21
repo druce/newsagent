@@ -219,3 +219,40 @@ def test_draft_engine_override_propagates(tmp_db, monkeypatch, tmp_path):
     assert all(e == "openrouter:test-model" for e in engines_used), (
         f"Some calls used wrong engine: {engine_log}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: --prepare-batches writes one batch file per section
+# ---------------------------------------------------------------------------
+
+def test_draft_prepare_writes_one_batch_per_section(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="d_prep")
+
+    from lib.steps.draft import cli as draft_cli
+
+    runner = CliRunner()
+    result = runner.invoke(draft_cli, [
+        "--db", tmp_db, "--session", "d_prep", "--prepare-batches",
+        "--max-edits", "2",
+    ])
+    assert result.exit_code == 0, result.output
+
+    batches_dir = Path("runs/d_prep/draft-batches")
+    files = sorted(batches_dir.glob("batch-*.json"))
+    # One batch per cat in the seeded state
+    assert len(files) >= 1
+
+    payload = json.loads(files[0].read_text())
+    assert "cat" in payload
+    assert "stories" in payload
+    assert payload["max_edits"] == 2
+    # All three prompts pre-rendered + present
+    for key in ("write_system_prompt", "write_user_prompt",
+                "critique_system_prompt", "critique_user_prompt",
+                "improve_system_prompt", "improve_user_prompt"):
+        assert key in payload and payload[key]
+    # Output schema is DraftSectionResult
+    schema = payload["output_schema"]
+    assert "final_section_markdown" in schema["properties"]
+    assert "iterations" in schema["properties"]
