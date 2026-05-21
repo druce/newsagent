@@ -397,3 +397,66 @@ def test_select_prepare_writes_both_subdirs(tmp_db, monkeypatch, tmp_path):
         # If anything was written it must be a single batch
         merge_files = sorted(merge_dir.glob("batch-*.json"))
         assert len(merge_files) <= 1
+
+
+# ---------------------------------------------------------------------------
+# Test 6: --apply-results reads both subdirs and runs MMR
+# ---------------------------------------------------------------------------
+
+def test_select_apply_assigns_noise_and_runs_mmr(tmp_db, monkeypatch, tmp_path):
+    """When --apply-results reads assign and merge batches, noise is reassigned
+    and MMR is run to select final headlines."""
+    monkeypatch.chdir(tmp_path)
+    _seed_state(
+        tmp_db,
+        session_id="s_apply",
+        headlines=[
+            {"title": "GPT-6 ships", "summary": "OpenAI", "cluster_id": 0,
+             "cluster_name": "OpenAI", "url": "https://x.com/1", "rating": 0.9,
+             "embedding": [1.0, 0.0]},
+            {"title": "OpenAI roadmap", "summary": "More", "cluster_id": 0,
+             "cluster_name": "OpenAI", "url": "https://x.com/2", "rating": 0.8,
+             "embedding": [0.9, 0.1]},
+            {"title": "Lone noise", "summary": "OpenAI-related", "cluster_id": -1,
+             "url": "https://x.com/3", "rating": 0.7,
+             "embedding": [0.8, 0.2]},
+        ],
+    )
+
+    monkeypatch.setattr(
+        "lib.steps.select.embed_texts",
+        lambda texts: [[0.0] * 8 for _ in texts],
+    )
+
+    from lib.steps.select import cli as select_cli
+
+    runner = CliRunner()
+    prep = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_apply", "--prepare-batches",
+    ])
+    assert prep.exit_code == 0, prep.output
+
+    # Fake Agent assigns the noise headline (state index 2) to cluster 0
+    assign_dir = Path("runs/s_apply/select-assign-results")
+    assign_dir.mkdir(parents=True)
+    (assign_dir / "batch-000.json").write_text(json.dumps({
+        "assignments": [{"id": "2", "assignment": "0"}]
+    }))
+
+    apply_res = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_apply",
+        "--apply-results", "runs/s_apply",
+    ])
+    assert apply_res.exit_code == 0, apply_res.output
+
+    state = NewsletterAgentState(session_id="s_apply", db_path=tmp_db).load_latest_from_db()
+    # Noise headline now part of cluster 0
+    by_cluster = defaultdict(list)
+    for h in state.headline_data:
+        by_cluster[h.get("cluster_id", -1)].append(h)
+    assert len(by_cluster[0]) == 3
+    assert -1 not in by_cluster
+
+    # newsletter_section_data populated
+    assert len(state.newsletter_section_data) > 0
+    assert state.newsletter_section_data[0]["cat"] == "OpenAI"
