@@ -3,51 +3,100 @@ name: draft
 description: Draft markdown newsletter sections in parallel with a critic-optimizer loop. For each topic cluster, writes a section via write_section, then iteratively critiques and improves it (max-edits N, early exit at score >= 8.0).
 ---
 
-# draft
+# newsagent:draft
 
-**Step in pipeline:** 10 of 12 (after `select`, before `rewrite`)
+Step 10 of /newsagent:run. Two execution paths.
 
-## What it does
+## Interactive mode — Sonnet subagent dispatch
 
-For each topic cluster in `state.newsletter_section_data`, drafts a markdown newsletter section using a parallel critic-optimizer loop:
+The Agent runs the **entire critic-optimizer loop** inside its own context:
+write → critique → if accept or score>=8.0 stop, else improve → next iteration,
+up to `max_edits` iterations. Parent Claude just dispatches one Agent per
+section in parallel and applies results when they're all back.
 
-1. **Group** `newsletter_section_data` rows by `cat` (cluster name).
-2. **Write** each section via the `write_section` prompt: inputs are the section title and the list of selected stories (headline, URL, summary, source hostname, rating).
-3. **Critique + improve** each section via the `critique_section` / `improve_section` prompts, up to `--max-edits` iterations. Exits early if the critic scores >= 8.0 or sets `accept=True`.
-4. **Parallel dispatch**: all sections run concurrently via `ThreadPoolExecutor(max_workers=--parallelism)`.
-5. **Replaces** `state.newsletter_section_data` with one row per cluster: `{cat, section_markdown}`.
-6. **Writes** `runs/<SID>/draft.json` with per-section transcript (iterations, scores, feedbacks, accepted).
-
-## Invocation
+### Step 1: prepare batches
 
 ```bash
-python -m lib.steps.draft --session SID [--db PATH] [--max-edits N] [--parallelism K] [--engine ENGINE]
+python -m lib.steps.draft --session SID --prepare-batches [--max-edits 2]
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--session` | required | Session ID to load/save state |
-| `--db` | `newsletter_agent.db` | Path to SQLite database |
-| `--max-edits` | `2` | Max critic-optimizer iterations per section |
-| `--parallelism` | `4` | Concurrent section drafters |
-| `--engine` | prompt default | Override LLM engine for all prompts |
+Writes one self-contained batch per section under
+`runs/<SID>/draft-batches/batch-NNN.json`. Each batch contains:
+- `cat`, `stories`
+- `max_edits`, `accept_threshold`
+- Three pre-rendered prompts: `write_*`, `critique_*`, `improve_*`
+- `output_schema` (`DraftSectionResult`)
 
-## Expected output
+### Step 2: dispatch one Sonnet subagent per batch (all in ONE message)
 
-- `state.newsletter_section_data` becomes a list of `{cat: str, section_markdown: str}` dicts (one per cluster).
-- `runs/<SID>/draft.json` exists and contains `sections` array with transcript fields.
-- Step `draft` marked COMPLETE in workflow state.
-- Console: `Draft: N sections (max_edits=M, parallelism=K).`
+Per-Agent config:
 
-## Error cases
+- `subagent_type: "general-purpose"`
+- `model: "sonnet"`
+- `description: "Draft section <cat>"`
+- `prompt:` instructions of the shape:
 
-- **No state found for session**: session ID not in DB — run `newsagent:init` first.
-- **LLM engine failure**: propagated as exit code 1. Re-run after fixing engine config.
-- **Empty newsletter_section_data**: step runs with zero sections; no LLM calls made.
+  ```
+  Read runs/<SID>/draft-batches/batch-NNN.json. It contains:
+    - stories: the source material
+    - max_edits, accept_threshold
+    - write_system_prompt, write_user_prompt (already rendered, ready to send)
+    - critique_system_prompt, critique_user_prompt (template; you will substitute
+      {section_markdown} and {critique} as needed)
+    - improve_system_prompt, improve_user_prompt (template; same)
+    - output_schema: required JSON shape (DraftSectionResult)
 
-## Artifacts written
+  Run this loop in your own context:
+    1. Call write: system_prompt=write_system_prompt, user_prompt=write_user_prompt
+       → initial section markdown.
+    2. For up to max_edits iterations:
+       a. Substitute {section_markdown} into critique_user_prompt and call critique
+          (system_prompt=critique_system_prompt). Read score (float) and accept (bool).
+       b. If accept is true OR score >= accept_threshold: stop, record this iteration,
+          mark accepted=true.
+       c. Otherwise substitute {section_markdown} + {critique} into improve_user_prompt
+          and call improve → new section markdown. Continue.
 
-| Path | Contents |
-|---|---|
-| `runs/<SID>/draft.json` | Per-section drafting transcripts |
-| `newsletter_agent.db` | Updated `agent_state` row at step `draft` |
+  Return ONLY a JSON object matching output_schema with:
+    cat, final_section_markdown, iterations, scores, feedbacks, accepted.
+
+  Write that JSON object to:
+    runs/<SID>/draft-results/batch-NNN.json
+  using the Write tool. Then report the path.
+  ```
+
+Dispatch all N section Agents in a single parent message so they run in
+parallel.
+
+### Step 3: apply results
+
+```bash
+python -m lib.steps.draft --session SID \
+  --apply-results runs/<SID>/draft-results
+```
+
+Validates each result file against `DraftSectionResult`, writes
+`{cat, section_markdown}` entries into `state.newsletter_section_data`,
+writes `runs/<SID>/draft.json` with the per-section transcripts.
+
+### Step 4: retry on failure
+
+If apply reports `missing sections: [...]` or `schema mismatch`:
+re-dispatch only the failing section Agent(s), re-run apply.
+
+## Classic mode (non-interactive)
+
+```bash
+python -m lib.steps.draft --session SID --engine openai:gpt-4o-mini \
+  --max-edits 2 --parallelism 4
+```
+
+In-process `ThreadPoolExecutor` runs the critic loop via
+`critic_optimizer_loop`. Do not use `--engine subagent` — it falls back to
+`claude -p`.
+
+## Output contract
+
+- `state.newsletter_section_data` replaced with `[{cat, section_markdown}, ...]`.
+- `runs/<SID>/draft.json` written with per-section transcript metadata.
+- `draft` step marked COMPLETE.
