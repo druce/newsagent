@@ -1,10 +1,17 @@
-"""Tests for lib/steps/select.py — MMR + LLM noise-assign + cluster-merge."""
+"""Tests for the redesigned lib/steps/select.py.
+
+Three prepare phases + apply + classic mode:
+  Phase A: --prepare-repechage  (LLM mines HDBSCAN noise for new themes)
+  Phase B: --prepare-consolidate (LLM unifies HDBSCAN + repechage names)
+  Phase C: --prepare-reassign   (LLM assigns every headline to a final name)
+  Apply:   --apply-results       (load reassign results → global MMR → sections)
+  Classic: in-process pipeline through call_prompt
+"""
 import json
 from collections import defaultdict
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 from click.testing import CliRunner
 
@@ -17,55 +24,46 @@ from lib.state import NewsletterAgentState
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_embedding(x: float, y: float) -> list:
-    """Return a simple 2-D embedding as a list."""
+def _emb(x: float, y: float) -> list:
     return [x, y]
 
 
 def _seed_state(
-    tmp_db: str,
-    session_id: str = "s1",
-    prior_steps: list | None = None,
+    tmp_db: str, session_id: str = "s1",
     headlines: list | None = None,
 ) -> NewsletterAgentState:
-    """Return a state with two clusters + two noise headlines, saved to DB.
-
-    If `headlines` is provided, use it verbatim as state.headline_data and
-    auto-derive state.clusters from it (grouping by cluster_name for non-noise).
-    If `headlines` is None, use the default 10-headline seed (4+4 clustered + 2 noise).
-    """
     init_db(tmp_db)
-    if prior_steps is None:
-        prior_steps = ["init", "gather", "filter", "download", "dedupe", "summarize", "rate", "cluster"]
-
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
-    for s in prior_steps:
+    for s in ["init", "gather", "filter", "download", "dedupe",
+              "summarize", "rate", "cluster"]:
         state.complete_step(s)
 
     if headlines is None:
         headlines = []
-        # Cluster 0 — 4 headlines (embedding: near [1,0])
+        # Cluster 0: 4 AI headlines
         for i in range(4):
             headlines.append({
                 "id": i,
                 "title": f"AI headline {i}",
                 "url": f"https://ai.com/{i}",
                 "summary": f"AI summary {i}",
+                "short_summary": f"AI s{i}",
                 "cluster_id": 0,
                 "cluster_name": "Artificial Intelligence",
-                "embedding": _make_embedding(1.0 + i * 0.01, 0.0),
-                "rating": float(4 - i),  # 4,3,2,1
+                "embedding": _emb(1.0 + i * 0.01, 0.0),
+                "rating": float(4 - i),
             })
-        # Cluster 1 — 4 headlines (embedding: near [0,1])
+        # Cluster 1: 4 robotics
         for i in range(4):
             headlines.append({
                 "id": 4 + i,
                 "title": f"Robotics headline {i}",
                 "url": f"https://robotics.com/{i}",
                 "summary": f"Robotics summary {i}",
+                "short_summary": f"Rob s{i}",
                 "cluster_id": 1,
                 "cluster_name": "Robotics",
-                "embedding": _make_embedding(0.0, 1.0 + i * 0.01),
+                "embedding": _emb(0.0, 1.0 + i * 0.01),
                 "rating": float(4 - i),
             })
         # Two noise headlines (cluster_id=-1)
@@ -74,9 +72,10 @@ def _seed_state(
             "title": "Noise headline about AI chips",
             "url": "https://noise.com/0",
             "summary": "About AI chip developments",
+            "short_summary": "AI chip story",
             "cluster_id": -1,
             "cluster_name": "",
-            "embedding": _make_embedding(1.0, 0.01),
+            "embedding": _emb(1.0, 0.01),
             "rating": 3.0,
         })
         headlines.append({
@@ -84,344 +83,264 @@ def _seed_state(
             "title": "Completely unrelated noise",
             "url": "https://noise.com/1",
             "summary": "Off-topic content",
+            "short_summary": "off topic",
             "cluster_id": -1,
             "cluster_name": "",
-            "embedding": _make_embedding(0.5, 0.5),
+            "embedding": _emb(0.5, 0.5),
             "rating": 1.0,
         })
-        state.headline_data = headlines
-        state.clusters = {
-            "Artificial Intelligence": [str(i) for i in range(4)],
-            "Robotics": [str(4 + i) for i in range(4)],
-        }
-    else:
-        state.headline_data = headlines
-        # Auto-derive clusters from the provided headlines
-        by_name: dict = defaultdict(list)
-        for i, h in enumerate(headlines):
-            cid = h.get("cluster_id", -1)
-            if cid >= 0:
-                cname = h.get("cluster_name", f"Cluster {cid}")
-                by_name[cname].append(h.get("url", str(i)))
-        state.clusters = {name: urls for name, urls in by_name.items()}
-
+    state.headline_data = headlines
+    by_name: dict = defaultdict(list)
+    for h in headlines:
+        cid = h.get("cluster_id", -1)
+        if cid >= 0:
+            by_name[h.get("cluster_name", "")].append(h.get("url", ""))
+    state.clusters = dict(by_name)
     state.save_checkpoint("cluster")
     return state
 
 
 # ---------------------------------------------------------------------------
-# Test 1: noise points are assigned to existing clusters
+# Phase A: --prepare-repechage
 # ---------------------------------------------------------------------------
 
-def test_noise_assigned_to_existing_cluster(tmp_db, monkeypatch, tmp_path):
-    """When assign_noise returns a valid cluster id, the noise headline is
-    reassigned to that cluster and appears in newsletter_section_data."""
+def test_prepare_repechage_writes_batches_for_noise_only(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _seed_state(tmp_db, session_id="s1")
+    _seed_state(tmp_db, session_id="s_rep")
 
     from lib.steps.select import cli as select_cli
-
-    def fake_call_prompt(name, inputs, *, engine=None):
-        out = MagicMock()
-        if name == "assign_noise":
-            # Always assign noise to cluster 0
-            out.assignment = "0"
-        elif name == "merge_clusters":
-            out.merge = False
-            out.merged_name = None
-        return out
-
-    with patch("lib.steps.select.call_prompt", side_effect=fake_call_prompt), \
-         patch("lib.steps.select.embed_texts", return_value=[
-             [1.0, 0.0], [0.0, 1.0]  # two cluster-name embeddings (AI + Robotics)
-         ]):
-        runner = CliRunner()
-        result = runner.invoke(select_cli, ["--db", tmp_db, "--session", "s1"])
-
-    assert result.exit_code == 0, result.output
-
-    state = NewsletterAgentState(session_id="s1", db_path=tmp_db).load_latest_from_db()
-    # The formerly-noise headline (id=8 assigned to cluster 0) should appear in sections
-    section_headlines = [s["headline"] for s in state.newsletter_section_data]
-    # "Noise headline about AI chips" was assigned to cluster 0; with k=5 and only
-    # 4 original + 1 assigned = 5, it should be picked by MMR
-    ai_section_urls = [s["link"] for s in state.newsletter_section_data
-                       if s["cat"] == "Artificial Intelligence"]
-    assert "https://noise.com/0" in ai_section_urls, (
-        f"Assigned noise URL not found in AI section. All section links: "
-        f"{[s['link'] for s in state.newsletter_section_data]}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 2: "none" assignment drops the noise headline
-# ---------------------------------------------------------------------------
-
-def test_none_assignment_drops_headline(tmp_db, monkeypatch, tmp_path):
-    """When assign_noise returns 'none', the headline is removed from headline_data."""
-    monkeypatch.chdir(tmp_path)
-    _seed_state(tmp_db, session_id="s2")
-
-    from lib.steps.select import cli as select_cli
-
-    def fake_call_prompt(name, inputs, *, engine=None):
-        out = MagicMock()
-        if name == "assign_noise":
-            out.assignment = "none"
-        elif name == "merge_clusters":
-            out.merge = False
-            out.merged_name = None
-        return out
-
-    with patch("lib.steps.select.call_prompt", side_effect=fake_call_prompt), \
-         patch("lib.steps.select.embed_texts", return_value=[
-             [1.0, 0.0], [0.0, 1.0]
-         ]):
-        runner = CliRunner()
-        result = runner.invoke(select_cli, ["--db", tmp_db, "--session", "s2"])
-
-    assert result.exit_code == 0, result.output
-
-    state = NewsletterAgentState(session_id="s2", db_path=tmp_db).load_latest_from_db()
-    # Noise headline URLs must NOT appear anywhere
-    all_links = [s["link"] for s in state.newsletter_section_data]
-    assert "https://noise.com/0" not in all_links, "Dropped noise URL found in sections"
-    assert "https://noise.com/1" not in all_links, "Dropped noise URL found in sections"
-    # All remaining headlines should have non-negative cluster_ids
-    for h in state.headline_data:
-        assert h.get("cluster_id", -2) >= 0, f"Headline with negative cluster_id survived: {h}"
-
-
-# ---------------------------------------------------------------------------
-# Test 3: MMR selects top-K per cluster (with --no-noise-assign)
-# ---------------------------------------------------------------------------
-
-def test_mmr_selects_top_k_per_cluster(tmp_db, monkeypatch, tmp_path):
-    """With k=3 and each cluster having 4 headlines, MMR picks exactly 3 per cluster."""
-    monkeypatch.chdir(tmp_path)
-
-    # Seed with 6 headlines per cluster (so there's something to trim)
-    init_db(tmp_db)
-    state = NewsletterAgentState(session_id="s3", db_path=tmp_db)
-    for s in ["init", "gather", "filter", "download", "summarize", "rate", "cluster"]:
-        state.complete_step(s)
-
-    headlines = []
-    for i in range(6):
-        headlines.append({
-            "id": i,
-            "title": f"AI h{i}",
-            "url": f"https://ai.com/{i}",
-            "summary": f"AI s{i}",
-            "cluster_id": 0,
-            "cluster_name": "Artificial Intelligence",
-            "embedding": _make_embedding(1.0 + i * 0.05, float(i) * 0.01),
-            "rating": float(6 - i),
-        })
-    for i in range(6):
-        headlines.append({
-            "id": 6 + i,
-            "title": f"Robotics h{i}",
-            "url": f"https://robotics.com/{i}",
-            "summary": f"Robotics s{i}",
-            "cluster_id": 1,
-            "cluster_name": "Robotics",
-            "embedding": _make_embedding(float(i) * 0.01, 1.0 + i * 0.05),
-            "rating": float(6 - i),
-        })
-    state.headline_data = headlines
-    state.clusters = {
-        "Artificial Intelligence": [str(i) for i in range(6)],
-        "Robotics": [str(6 + i) for i in range(6)],
-    }
-    state.save_checkpoint("cluster")
-
-    from lib.steps.select import cli as select_cli
-
-    with patch("lib.steps.select.embed_texts", return_value=[
-        [1.0, 0.0], [0.0, 1.0]
-    ]):
-        runner = CliRunner()
-        result = runner.invoke(
-            select_cli,
-            ["--db", tmp_db, "--session", "s3",
-             "--k", "3",
-             "--no-noise-assign",
-             "--no-merge"],
-        )
-
-    assert result.exit_code == 0, result.output
-
-    state = NewsletterAgentState(session_id="s3", db_path=tmp_db).load_latest_from_db()
-    # Count per cluster
-    ai_count = sum(1 for s in state.newsletter_section_data if s["cat"] == "Artificial Intelligence")
-    robotics_count = sum(1 for s in state.newsletter_section_data if s["cat"] == "Robotics")
-    assert ai_count == 3, f"Expected 3 AI headlines, got {ai_count}"
-    assert robotics_count == 3, f"Expected 3 Robotics headlines, got {robotics_count}"
-    assert len(state.newsletter_section_data) == 6
-
-
-# ---------------------------------------------------------------------------
-# Test 4: cluster merge combines two clusters (with --no-noise-assign)
-# ---------------------------------------------------------------------------
-
-def test_cluster_merge_combines_clusters(tmp_db, monkeypatch, tmp_path):
-    """When merge_clusters returns merge=True, both clusters become one section."""
-    monkeypatch.chdir(tmp_path)
-
-    init_db(tmp_db)
-    state = NewsletterAgentState(session_id="s4", db_path=tmp_db)
-    for s in ["init", "gather", "filter", "download", "summarize", "rate", "cluster"]:
-        state.complete_step(s)
-
-    # Two clusters with very similar names (so embedding sim >= threshold)
-    headlines = []
-    for i in range(3):
-        headlines.append({
-            "id": i,
-            "title": f"AI chips headline {i}",
-            "url": f"https://chips.com/{i}",
-            "summary": f"Chips s{i}",
-            "cluster_id": 0,
-            "cluster_name": "AI Chips",
-            "embedding": _make_embedding(1.0, float(i) * 0.01),
-            "rating": float(3 - i),
-        })
-    for i in range(3):
-        headlines.append({
-            "id": 3 + i,
-            "title": f"Artificial intelligence chips {i}",
-            "url": f"https://aichips.com/{i}",
-            "summary": f"AI chips s{i}",
-            "cluster_id": 1,
-            "cluster_name": "Artificial Intelligence Chips",
-            "embedding": _make_embedding(1.0, 0.1 + float(i) * 0.01),
-            "rating": float(3 - i),
-        })
-    state.headline_data = headlines
-    state.clusters = {
-        "AI Chips": ["0", "1", "2"],
-        "Artificial Intelligence Chips": ["3", "4", "5"],
-    }
-    state.save_checkpoint("cluster")
-
-    from lib.steps.select import cli as select_cli
-
-    def fake_call_prompt(name, inputs, *, engine=None):
-        out = MagicMock()
-        if name == "merge_clusters":
-            out.merge = True
-            out.merged_name = "AI Chips"
-        return out
-
-    # Return embeddings that are very similar (cosine sim >= 0.85) for both cluster names
-    # Two nearly-identical unit vectors -> sim ~1.0
-    similar_embs = [[1.0, 0.01], [1.0, 0.02]]
-
-    with patch("lib.steps.select.call_prompt", side_effect=fake_call_prompt), \
-         patch("lib.steps.select.embed_texts", return_value=similar_embs):
-        runner = CliRunner()
-        result = runner.invoke(
-            select_cli,
-            ["--db", tmp_db, "--session", "s4",
-             "--no-noise-assign",
-             "--k", "10"],  # k large enough to get all
-        )
-
-    assert result.exit_code == 0, result.output
-
-    state = NewsletterAgentState(session_id="s4", db_path=tmp_db).load_latest_from_db()
-
-    # After merge, there should be only one section name
-    section_names = {s["cat"] for s in state.newsletter_section_data}
-    assert len(section_names) == 1, (
-        f"Expected 1 merged section, got {len(section_names)}: {section_names}"
-    )
-    assert "AI Chips" in section_names
-
-    # All 6 headlines should appear (k=10, only 6 available)
-    assert len(state.newsletter_section_data) == 6
-
-    # state.clusters should reflect the merge
-    assert len(state.clusters) == 1
-
-
-# ---------------------------------------------------------------------------
-# Test 5: --prepare-batches writes both assign and merge subdirs
-# ---------------------------------------------------------------------------
-
-def test_select_prepare_writes_both_subdirs(tmp_db, monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    # Seed with: 2 named clusters + 3 noise headlines
-    _seed_state(
-        tmp_db,
-        session_id="s_prep",
-        headlines=[
-            {"title": "GPT-6 ships", "summary": "OpenAI", "cluster_id": 0,
-             "cluster_name": "OpenAI", "url": "https://x.com/1", "rating": 0.9},
-            {"title": "AI Act passes", "summary": "EU", "cluster_id": 1,
-             "cluster_name": "AI Act", "url": "https://x.com/2", "rating": 0.8},
-            {"title": "Lone story 1", "summary": "X", "cluster_id": -1,
-             "url": "https://x.com/3", "rating": 0.5},
-            {"title": "Lone story 2", "summary": "Y", "cluster_id": -1,
-             "url": "https://x.com/4", "rating": 0.4},
-            {"title": "Lone story 3", "summary": "Z", "cluster_id": -1,
-             "url": "https://x.com/5", "rating": 0.3},
-        ],
-    )
-    monkeypatch.setattr(
-        "lib.steps.select.embed_texts",
-        lambda texts: [[0.0] * 8 for _ in texts],
-    )
-
-    from lib.steps.select import cli as select_cli
-
     runner = CliRunner()
     result = runner.invoke(select_cli, [
-        "--db", tmp_db, "--session", "s_prep", "--prepare-batches",
+        "--db", tmp_db, "--session", "s_rep",
+        "--prepare-repechage", "--repechage-batch-size", "10",
     ])
     assert result.exit_code == 0, result.output
 
-    # Noise-assign subdir: one batch with all 3 noise headlines (batch-size default 25)
-    assign_dir = Path("runs/s_prep/select-assign-batches")
-    assign_files = sorted(assign_dir.glob("batch-*.json"))
-    assert len(assign_files) == 1
-    assign_payload = json.loads(assign_files[0].read_text())
-    assert len(assign_payload["headlines"]) == 3
-    assert assign_payload["clusters"][0]["name"] in ("OpenAI", "AI Act")
-
-    # Merge-pairs subdir: written only if cosine cluster-name similarities yield candidates;
-    # for this seed the two cluster names differ, so 0 pairs → no merge batch file written.
-    merge_dir = Path("runs/s_prep/select-merge-batches")
-    if merge_dir.exists():
-        # If anything was written it must be a single batch
-        merge_files = sorted(merge_dir.glob("batch-*.json"))
-        assert len(merge_files) <= 1
+    batches_dir = Path("runs/s_rep/select-repechage-batches")
+    files = sorted(batches_dir.glob("batch-*.json"))
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text())
+    assert len(payload["headlines"]) == 2  # only the two noise headlines
+    # ids should be the state.headline_data indices of the noise points
+    assert set(payload["ids"]) == {"8", "9"}
+    assert "system_prompt" in payload
+    assert "user_prompt" in payload
+    assert "output_schema" in payload
 
 
-# ---------------------------------------------------------------------------
-# Test 6: --apply-results reads both subdirs and runs MMR
-# ---------------------------------------------------------------------------
-
-def test_select_apply_assigns_noise_and_runs_mmr(tmp_db, monkeypatch, tmp_path):
-    """When --apply-results reads assign and merge batches, noise is reassigned
-    and MMR is run to select final headlines."""
+def test_prepare_repechage_no_noise_writes_nothing(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _seed_state(
-        tmp_db,
-        session_id="s_apply",
-        headlines=[
-            {"title": "GPT-6 ships", "summary": "OpenAI", "cluster_id": 0,
-             "cluster_name": "OpenAI", "url": "https://x.com/1", "rating": 0.9,
-             "embedding": [1.0, 0.0]},
-            {"title": "OpenAI roadmap", "summary": "More", "cluster_id": 0,
-             "cluster_name": "OpenAI", "url": "https://x.com/2", "rating": 0.8,
-             "embedding": [0.9, 0.1]},
-            {"title": "Lone noise", "summary": "OpenAI-related", "cluster_id": -1,
-             "url": "https://x.com/3", "rating": 0.7,
-             "embedding": [0.8, 0.2]},
+    headlines = [
+        {"title": "h", "url": "u", "summary": "s", "short_summary": "ss",
+         "cluster_id": 0, "cluster_name": "X", "embedding": [1.0, 0.0],
+         "rating": 1.0},
+    ]
+    _seed_state(tmp_db, session_id="s_rep0", headlines=headlines)
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_rep0", "--prepare-repechage",
+    ])
+    assert result.exit_code == 0, result.output
+    batches_dir = Path("runs/s_rep0/select-repechage-batches")
+    assert not list(batches_dir.glob("batch-*.json"))
+
+
+# ---------------------------------------------------------------------------
+# Phase B: --prepare-consolidate
+# ---------------------------------------------------------------------------
+
+def test_prepare_consolidate_combines_hdbscan_plus_repechage(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_con")
+
+    # Pretend Phase A ran: write a single repechage result that proposes one new cluster.
+    rep_dir = Path("runs/s_con/select-repechage-results")
+    rep_dir.mkdir(parents=True)
+    (rep_dir / "batch-000.json").write_text(json.dumps({
+        "proposed_clusters": [
+            {"name": "Noise-Mined Theme", "member_ids": ["8", "9"]}
         ],
+        "unclustered_ids": [],
+    }))
+
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_con", "--prepare-consolidate",
+    ])
+    assert result.exit_code == 0, result.output
+
+    cbatch = Path("runs/s_con/select-consolidate-batches/batch-000.json")
+    assert cbatch.exists()
+    payload = json.loads(cbatch.read_text())
+    cluster_names = [c["name"] for c in payload["clusters"]]
+    cluster_ids = [c["cluster_id"] for c in payload["clusters"]]
+    # 2 HDBSCAN + 1 repechage = 3 entries
+    assert "Artificial Intelligence" in cluster_names
+    assert "Robotics" in cluster_names
+    assert "Noise-Mined Theme" in cluster_names
+    assert any(cid.startswith("hdbscan-") for cid in cluster_ids)
+    assert any(cid.startswith("repechage-") for cid in cluster_ids)
+
+
+# ---------------------------------------------------------------------------
+# Phase C: --prepare-reassign
+# ---------------------------------------------------------------------------
+
+def test_prepare_reassign_writes_per_headline_batches(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_rea")
+
+    # Seed repechage + consolidate results.
+    Path("runs/s_rea/select-repechage-results").mkdir(parents=True)
+    Path("runs/s_rea/select-repechage-results/batch-000.json").write_text(json.dumps({
+        "proposed_clusters": [],
+        "unclustered_ids": ["8", "9"],
+    }))
+    # Run prepare-consolidate so the consolidate input batch is on disk.
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    pc = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_rea", "--prepare-consolidate",
+    ])
+    assert pc.exit_code == 0, pc.output
+    # Now write a consolidate result mapping both HDBSCAN clusters to one final name.
+    cres_dir = Path("runs/s_rea/select-consolidate-results")
+    cres_dir.mkdir(parents=True)
+    (cres_dir / "batch-000.json").write_text(json.dumps({
+        "final_names": ["AI & Robotics"],
+        "mapping": [
+            {"cluster_id": "hdbscan-0", "final_name": "AI & Robotics"},
+            {"cluster_id": "hdbscan-1", "final_name": "AI & Robotics"},
+        ],
+    }))
+
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_rea",
+        "--prepare-reassign", "--reassign-batch-size", "4",
+    ])
+    assert result.exit_code == 0, result.output
+
+    batches = sorted(Path("runs/s_rea/select-reassign-batches").glob("batch-*.json"))
+    # 10 headlines / batch-size 4 = 3 batches (4+4+2)
+    assert len(batches) == 3
+    payload0 = json.loads(batches[0].read_text())
+    assert len(payload0["headlines"]) == 4
+    # Every batch carries the same cluster_choices list.
+    cluster_names = [c["name"] for c in payload0["clusters"]]
+    assert cluster_names == ["AI & Robotics"]
+
+
+# ---------------------------------------------------------------------------
+# Apply: --apply-results runs/<SID>
+# ---------------------------------------------------------------------------
+
+def test_apply_results_runs_global_mmr_and_builds_sections(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_app")
+
+    # Write a reassign result that puts everything into one section.
+    rdir = Path("runs/s_app/select-reassign-results")
+    rdir.mkdir(parents=True)
+    assignments = [{"id": str(i), "assignment": "AI & Robotics"} for i in range(10)]
+    (rdir / "batch-000.json").write_text(json.dumps({"assignments": assignments}))
+
+    # Stub embed_texts so any missing-embedding path is harmless.
+    monkeypatch.setattr(
+        "lib.steps.select.embed_texts",
+        lambda texts: [[0.0] * 8 for _ in texts],
     )
+
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_app",
+        "--apply-results", "runs/s_app",
+        "--k", "5",  # global top-K
+    ])
+    assert result.exit_code == 0, result.output
+
+    state = NewsletterAgentState(session_id="s_app", db_path=tmp_db).load_latest_from_db()
+    assert len(state.newsletter_section_data) == 5
+    # All sections share the assigned label.
+    cats = {s["cat"] for s in state.newsletter_section_data}
+    assert cats == {"AI & Robotics"}
+    # state.clusters reflects survivors only.
+    assert set(state.clusters.keys()) == {"AI & Robotics"}
+
+
+def test_apply_routes_unmapped_to_other(tmp_db, monkeypatch, tmp_path):
+    """Headlines whose ids aren't in the reassign results land in 'Other'."""
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_other")
+    # Only assign half the headlines explicitly.
+    rdir = Path("runs/s_other/select-reassign-results")
+    rdir.mkdir(parents=True)
+    (rdir / "batch-000.json").write_text(json.dumps({
+        "assignments": [
+            {"id": "0", "assignment": "Cluster A"},
+            {"id": "1", "assignment": "Other"},
+        ]
+    }))
+    monkeypatch.setattr(
+        "lib.steps.select.embed_texts",
+        lambda texts: [[0.0] * 8 for _ in texts],
+    )
+
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_other",
+        "--apply-results", "runs/s_other",
+        "--k", "10",
+    ])
+    assert result.exit_code == 0, result.output
+
+    state = NewsletterAgentState(session_id="s_other", db_path=tmp_db).load_latest_from_db()
+    cats = {s["cat"] for s in state.newsletter_section_data}
+    # Unassigned items default to "Other".
+    assert "Other" in cats
+    assert "Cluster A" in cats
+
+
+# ---------------------------------------------------------------------------
+# Classic mode (in-process)
+# ---------------------------------------------------------------------------
+
+def test_classic_runs_three_phases_and_finalizes(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_classic")
+
+    def fake_call_prompt(name, inputs, *, engine=None):
+        out = MagicMock()
+        if name == "extract_noise_clusters":
+            # Pretend we found one new cluster covering both noise headlines.
+            out.proposed_clusters = [
+                MagicMock(name="AI Chips", member_ids=["8", "9"])
+            ]
+            # MagicMock(name=...) sets the mock's repr name, not an attribute.
+            # Use a tiny adapter:
+            out.proposed_clusters = [
+                type("PC", (), {"name": "AI Chips", "member_ids": ["8", "9"]})()
+            ]
+            out.unclustered_ids = []
+            return out
+        if name == "consolidate_cluster_names":
+            out.final_names = ["AI & Robotics"]
+            out.mapping = [
+                type("CM", (), {"cluster_id": "hdbscan-0", "final_name": "AI & Robotics"})(),
+                type("CM", (), {"cluster_id": "hdbscan-1", "final_name": "AI & Robotics"})(),
+                type("CM", (), {"cluster_id": "repechage-0", "final_name": "AI & Robotics"})(),
+            ]
+            return out
+        if name == "reassign_to_clusters":
+            ids = [h["id"] for h in inputs["headlines"]]
+            out.assignments = [
+                type("HA", (), {"id": i, "assignment": "AI & Robotics"})() for i in ids
+            ]
+            return out
+        raise AssertionError(f"unexpected prompt {name!r}")
 
     monkeypatch.setattr(
         "lib.steps.select.embed_texts",
@@ -429,34 +348,45 @@ def test_select_apply_assigns_noise_and_runs_mmr(tmp_db, monkeypatch, tmp_path):
     )
 
     from lib.steps.select import cli as select_cli
-
     runner = CliRunner()
-    prep = runner.invoke(select_cli, [
-        "--db", tmp_db, "--session", "s_apply", "--prepare-batches",
+    with patch("lib.steps.select.call_prompt", side_effect=fake_call_prompt):
+        result = runner.invoke(select_cli, [
+            "--db", tmp_db, "--session", "s_classic",
+            "--engine", "subagent",
+            "--k", "4",
+            "--repechage-batch-size", "10",
+            "--reassign-batch-size", "5",
+        ])
+    assert result.exit_code == 0, result.output
+
+    state = NewsletterAgentState(session_id="s_classic", db_path=tmp_db).load_latest_from_db()
+    assert len(state.newsletter_section_data) == 4
+    assert {s["cat"] for s in state.newsletter_section_data} == {"AI & Robotics"}
+
+
+# ---------------------------------------------------------------------------
+# CLI guardrails
+# ---------------------------------------------------------------------------
+
+def test_mutually_exclusive_prepare_flags(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_excl")
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_excl",
+        "--prepare-repechage", "--prepare-consolidate",
     ])
-    assert prep.exit_code == 0, prep.output
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
 
-    # Fake Agent assigns the noise headline (state index 2) to cluster 0
-    assign_dir = Path("runs/s_apply/select-assign-results")
-    assign_dir.mkdir(parents=True)
-    (assign_dir / "batch-000.json").write_text(json.dumps({
-        "assignments": [{"id": "2", "assignment": "0"}]
-    }))
 
-    apply_res = runner.invoke(select_cli, [
-        "--db", tmp_db, "--session", "s_apply",
-        "--apply-results", "runs/s_apply",
+def test_prepare_consolidate_errors_without_repechage_results(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_missing")
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_missing", "--prepare-consolidate",
     ])
-    assert apply_res.exit_code == 0, apply_res.output
-
-    state = NewsletterAgentState(session_id="s_apply", db_path=tmp_db).load_latest_from_db()
-    # Noise headline now part of cluster 0
-    by_cluster = defaultdict(list)
-    for h in state.headline_data:
-        by_cluster[h.get("cluster_id", -1)].append(h)
-    assert len(by_cluster[0]) == 3
-    assert -1 not in by_cluster
-
-    # newsletter_section_data populated
-    assert len(state.newsletter_section_data) > 0
-    assert state.newsletter_section_data[0]["cat"] == "OpenAI"
+    assert result.exit_code != 0

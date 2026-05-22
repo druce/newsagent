@@ -22,3 +22,13 @@ htmlcov/
 *.egg-info/
 build/
 dist/
+
+# Local Claude Code overrides
+.claude/settings.local.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Emacs autosave/lock files
+\#*\#
+.\#*

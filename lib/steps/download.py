@@ -31,7 +31,6 @@ import trafilatura
 
 import lib.prompts  # noqa: F401 — register SITENAME
 
-from lib.db import Site
 from lib.fetch.brightdata import scrape_urls_brightdata
 from lib.fetch.playwright_runner import fetch_urls_html_batch
 from lib.llm import call_prompt
@@ -127,28 +126,20 @@ def _load_bright_data_domains(db_path: str) -> set[str]:
 def _commit_results(
     db_path: str,
     successes: list[tuple[str, str, str]],  # (initial_url, final_url, text_path)
-    domain_method: dict[str, str],
 ) -> None:
-    """Update urls.final_url and sites.scrape_method in one commit.
+    """Update urls.final_url for successful fetches.
 
-    `domain_method` may carry the synthetic value 'bright_data' for domains
-    routed via the Web Unlocker — we do NOT write that to sites.scrape_method
-    (BD routing is governed by the bright_data_enabled flag, not by
-    scrape_method). Such rows still get last_seen bumped.
+    Does NOT touch sites.scrape_method — that column is user-curated config
+    (a hard pin), not a heuristic cache. Operators decide which domains need
+    Playwright by setting it manually; the runtime adapts via the
+    httpx → Playwright → BD fallback chain regardless.
     """
-    now_iso = datetime.now().isoformat()
     with sqlite3.connect(db_path) as conn:
         for initial_url, final_url, _ in successes:
             conn.execute(
                 "UPDATE urls SET final_url=? WHERE initial_url=?",
                 (final_url, initial_url),
             )
-        for domain, method in domain_method.items():
-            if not domain:
-                continue
-            persisted = method if method in ("http", "playwright") else None
-            Site(domain=domain, scrape_method=persisted,
-                 last_seen=now_iso).upsert(conn)
         conn.commit()
 
 
@@ -326,7 +317,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
     # thread-safe.
     bd_failed_initial: list[str] = []
     if bd_urls:
-        click.echo(f"Phase 0 (bright_data): {len(bd_urls)} URLs (sequential)")
+        click.echo(f"Phase 0 (bright_data): {len(bd_urls)} URLs (async, concurrency 8)")
         bd_results = scrape_urls_brightdata(bd_urls)
         for url, (text, html, final_url, err) in bd_results.items():
             if text is None or html is None:
@@ -400,7 +391,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
         last_error_by_url.setdefault(u, "bright_data: initial attempt failed")
     if bd_retry_urls:
         click.echo(
-            f"Phase 3 (bright_data fallback): {len(bd_retry_urls)} URLs (sequential)"
+            f"Phase 3 (bright_data fallback): {len(bd_retry_urls)} URLs (async, concurrency 8)"
         )
         bd_retry_results = scrape_urls_brightdata(bd_retry_urls)
         for url, (text, html, final_url, err) in bd_retry_results.items():
@@ -416,7 +407,23 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
             _persist(url, text, html, final)
             domain_method.setdefault(_domain_of(final) or "", "bright_data")
 
-    _commit_results(db_path, successes, domain_method)
+    _commit_results(db_path, successes)
+
+    # Surface httpx→Playwright fallback domains so the operator can pin them
+    # in sites.scrape_method='playwright' if it's a persistent pattern.
+    pw_fallback_domains: set[str] = set()
+    for url in http_failed:
+        d = _domain_of(url)
+        if d and domain_method.get(d) == "playwright":
+            pw_fallback_domains.add(d)
+    if pw_fallback_domains:
+        click.echo(
+            "Note: httpx failed → Playwright recovered for these domains; "
+            "consider pinning them with "
+            "UPDATE sites SET scrape_method='playwright' WHERE domain IN (...):"
+        )
+        for d in sorted(pw_fallback_domains):
+            click.echo(f"  - {d}")
 
     # Resolve and store h['site_name'] on every headline. LLM-fill any
     # aggregator-sourced domains we don't recognize.

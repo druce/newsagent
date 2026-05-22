@@ -40,6 +40,8 @@ All optional except where you actually use the corresponding feature.
 | `GOOGLE_API_KEY` | Google engine (Gemini direct) |
 | `NEWSAPI_API_KEY` | Only if the `NewsAPI` source is enabled in `sources.yaml` |
 | `BSKY_USERNAME` / `BSKY_SECRET` | Only for `newsagent:bluesky` |
+| `GMAIL_USER` / `GMAIL_PASSWORD` | Only if you want the post-rate email digest (`rate` always writes the HTML; email send falls back to a warning when these are missing) |
+| `BRIGHTDATA_API_KEY` (+ optional `BRIGHTDATA_ZONE`) | Only if any domain in the `sites` table has `bright_data_enabled=1` (paywall routing in `download`) |
 
 The default engine for every prompt is `"subagent"` — that uses your Claude Code subscription (no API key). The other engines are opt-in.
 
@@ -99,7 +101,10 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 # Cosine-similarity dedup on OpenAI embeddings
 .venv/bin/python -m lib.steps.dedupe --session demo-1
 
-# Rate each article (quality, on-topic, importance + Bradley-Terry)
+# Rate each article (quality, on-topic, importance + Bradley-Terry).
+# Also writes out/<date>_short.html + out/latest_short.html and emails the
+# digest via Gmail SMTP (uses GMAIL_USER / GMAIL_PASSWORD; pass --no-email
+# to skip sending, --to ADDR to override the recipient).
 .venv/bin/python -m lib.steps.rate --session demo-1
 
 # UMAP + HDBSCAN cluster + LLM cluster naming

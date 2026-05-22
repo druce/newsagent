@@ -88,30 +88,70 @@ def test_interactive_pipeline_chains(tmp_db, monkeypatch, tmp_path):
     state = NewsletterAgentState(session_id="e2e", db_path=tmp_db).load_latest_from_db()
     assert set(state.clusters.keys()) == {"Cluster Zero", "Cluster One"}
 
-    # --- select: prepare + apply (assign 2 noise → one to cluster 0, drop one) ---
-    r = runner.invoke(select_cli, ["--db", tmp_db, "--session", "e2e", "--prepare-batches"])
+    # --- select: three-round prepare + apply ---
+    # Round 1: repechage (mines the 2 noise headlines for new themes).
+    r = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "e2e", "--prepare-repechage",
+    ])
     assert r.exit_code == 0, r.output
 
-    # Find noise headline indices from the prepared batch
-    assign_batch = json.loads(Path("runs/e2e/select-assign-batches/batch-000.json").read_text())
-    noise_ids = assign_batch["ids"]
+    rep_batch = json.loads(Path("runs/e2e/select-repechage-batches/batch-000.json").read_text())
+    noise_ids = rep_batch["ids"]
     assert len(noise_ids) == 2
-    Path("runs/e2e/select-assign-results").mkdir(parents=True)
-    Path("runs/e2e/select-assign-results/batch-000.json").write_text(json.dumps({
-        "assignments": [
-            {"id": noise_ids[0], "assignment": "0"},
-            {"id": noise_ids[1], "assignment": "none"},
-        ]
+    # Pretend repechage proposes no new clusters (both noise IDs left unclustered).
+    Path("runs/e2e/select-repechage-results").mkdir(parents=True)
+    Path("runs/e2e/select-repechage-results/batch-000.json").write_text(json.dumps({
+        "proposed_clusters": [],
+        "unclustered_ids": list(noise_ids),
     }))
+
+    # Round 2: consolidate (just two HDBSCAN clusters → keep both).
+    r = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "e2e", "--prepare-consolidate",
+    ])
+    assert r.exit_code == 0, r.output
+
+    consolidate_batch = json.loads(
+        Path("runs/e2e/select-consolidate-batches/batch-000.json").read_text()
+    )
+    input_cids = [c["cluster_id"] for c in consolidate_batch["clusters"]]
+    Path("runs/e2e/select-consolidate-results").mkdir(parents=True)
+    Path("runs/e2e/select-consolidate-results/batch-000.json").write_text(json.dumps({
+        "final_names": ["Cluster Zero", "Cluster One"],
+        "mapping": [
+            {"cluster_id": cid,
+             "final_name": "Cluster Zero" if cid.endswith("-0") else "Cluster One"}
+            for cid in input_cids
+        ],
+    }))
+
+    # Round 3: reassign — every headline gets a section.
+    r = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "e2e", "--prepare-reassign",
+    ])
+    assert r.exit_code == 0, r.output
+
+    reassign_batches = sorted(Path("runs/e2e/select-reassign-batches").glob("batch-*.json"))
+    Path("runs/e2e/select-reassign-results").mkdir(parents=True)
+    for i, bf in enumerate(reassign_batches):
+        batch = json.loads(bf.read_text())
+        assignments = []
+        for hl_id in batch["ids"]:
+            # Even ids → Cluster Zero, odd → Cluster One
+            label = "Cluster Zero" if int(hl_id) % 2 == 0 else "Cluster One"
+            assignments.append({"id": hl_id, "assignment": label})
+        Path(f"runs/e2e/select-reassign-results/batch-{i:03d}.json").write_text(
+            json.dumps({"assignments": assignments})
+        )
 
     r = runner.invoke(select_cli, [
         "--db", tmp_db, "--session", "e2e",
         "--apply-results", "runs/e2e",
+        "--k", "6",
     ])
     assert r.exit_code == 0, r.output
 
     state = NewsletterAgentState(session_id="e2e", db_path=tmp_db).load_latest_from_db()
-    # One noise headline dropped; the other absorbed into cluster 0.
     assert len(state.newsletter_section_data) > 0
     cats = {s["cat"] for s in state.newsletter_section_data}
     assert cats.issubset({"Cluster Zero", "Cluster One"})

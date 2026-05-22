@@ -93,7 +93,9 @@ def test_gather_dedups_against_existing_urls(tmp_path, tmp_db):
     assert state.headline_data[0]["url"] == "https://feed.example.com/b"
 
 
-def test_gather_updates_scrape_method_for_html_sources(tmp_path, tmp_db):
+def test_gather_does_not_auto_pin_scrape_method(tmp_path, tmp_db):
+    """sites.scrape_method is operator-curated config. gather must not
+    auto-write it based on whichever method happened to work this run."""
     yaml_path = tmp_path / "sources.yaml"
     yaml_path.write_text(
         "sources:\n  Site1:\n    type: html\n    url: https://news.example.com/\n    enabled: true\n"
@@ -106,12 +108,15 @@ def test_gather_updates_scrape_method_for_html_sources(tmp_path, tmp_db):
     with patch("lib.steps.gather.fetch_html",
                return_value=(html_result, "playwright", "<html>raw</html>")):
         runner = CliRunner()
-        runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
+        result = runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
 
+    assert result.exit_code == 0, result.output
     with sqlite3.connect(tmp_db) as conn:
         s = Site.get_by_domain(conn, "news.example.com")
-    assert s is not None
-    assert s.scrape_method == "playwright"
+    if s is not None:
+        assert s.scrape_method is None
+    # And the operator-facing nudge should appear, suggesting they pin it.
+    assert "scrape_method='playwright'" in result.output
 
 
 def test_gather_persists_front_page_html(tmp_path, tmp_db, monkeypatch):

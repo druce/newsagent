@@ -21,7 +21,7 @@ import click
 from pydantic import ValidationError
 
 import lib.prompts  # noqa: F401 — register all prompts
-from lib.clustering import apply_umap, load_umap_reducer, optimize_hdbscan
+from lib.clustering import apply_umap, load_umap_reducer, normalize_l2, optimize_hdbscan
 from lib.embeddings import embed_texts
 from lib.llm import call_prompt, get_prompt
 from lib.prompts.name_topic_batch import NameTopicBatchInput, NameTopicBatchOutput
@@ -36,8 +36,9 @@ def _do_clustering(
     state: NewsletterAgentState,
     umap_path: str,
     n_trials: int,
+    use_umap: bool = True,
 ):
-    """Run UMAP+HDBSCAN and assign cluster_id to each candidate headline.
+    """Run UMAP+HDBSCAN (or HDBSCAN on L2-normalized embeddings) and assign cluster_id.
 
     Returns (cluster_to_headlines, metrics, candidates).
     cluster_to_headlines maps int cluster_id -> list of headline dicts (non-noise only).
@@ -54,8 +55,13 @@ def _do_clustering(
             h["embedding"] = v
 
     embeddings: List[List[float]] = [h["embedding"] for h in candidates]
-    reducer = load_umap_reducer(umap_path)
-    reduced = apply_umap(embeddings, reducer)
+    if use_umap:
+        reducer = load_umap_reducer(umap_path)
+        reduced = apply_umap(embeddings, reducer)
+    else:
+        # Skip UMAP; cluster directly on L2-normalized embeddings.
+        # Euclidean on unit vectors ranks neighbors identically to cosine.
+        reduced = normalize_l2(embeddings)
     labels, metrics = optimize_hdbscan(reduced, n_trials=n_trials)
 
     for h, label in zip(candidates, labels):
@@ -199,8 +205,10 @@ def _write_report(
 @click.command()
 @click.option("--db", "db_path", default="newsletter_agent.db")
 @click.option("--session", "session_id", required=True)
-@click.option("--n-trials", default=30, type=int, help="Optuna trials for HDBSCAN tuning")
+@click.option("--n-trials", default=50, type=int, help="Optuna trials for HDBSCAN tuning")
 @click.option("--umap-path", default="umap_reducer.pkl", help="Path to pretrained UMAP reducer")
+@click.option("--no-umap", "no_umap", is_flag=True,
+              help="Skip UMAP; run HDBSCAN directly on L2-normalized embeddings")
 @click.option("--engine", default=None,
               help="Override engine for classic mode")
 @click.option("--prepare-batches", is_flag=True,
@@ -212,6 +220,7 @@ def cli(
     session_id: str,
     n_trials: int,
     umap_path: str,
+    no_umap: bool,
     engine: Optional[str],
     prepare_batches: bool,
     apply_results: Optional[str],
@@ -227,7 +236,7 @@ def cli(
     if prepare_batches:
         state.start_step("cluster")
         state.save_checkpoint("cluster")
-        cluster_to_headlines, metrics, candidates = _do_clustering(state, umap_path, n_trials)
+        cluster_to_headlines, metrics, candidates = _do_clustering(state, umap_path, n_trials, use_umap=not no_umap)
         if not cluster_to_headlines:
             click.echo("Nothing to cluster (no non-noise clusters).")
             state.complete_step("cluster", message="no non-noise clusters")
@@ -280,7 +289,7 @@ def cli(
     # ── classic mode ───────────────────────────────────────────────
     state.start_step("cluster")
     state.save_checkpoint("cluster")
-    cluster_to_headlines, metrics, candidates = _do_clustering(state, umap_path, n_trials)
+    cluster_to_headlines, metrics, candidates = _do_clustering(state, umap_path, n_trials, use_umap=not no_umap)
     if not cluster_to_headlines:
         click.echo("Nothing to cluster.")
         state.complete_step("cluster", message="no non-noise clusters")

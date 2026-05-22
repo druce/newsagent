@@ -17,7 +17,7 @@ These were set by the user during the build and are non-negotiable in future wor
 1. **No Anthropic direct API.** No `anthropic` SDK, no `ANTHROPIC_API_KEY`. Claude models route through the `subagent` engine (which subprocesses `claude -p` against the user's Claude Code subscription). Allowed engines: `subagent`, `openrouter:<m>`, `openai:<m>`, `google:<m>`.
 2. **Embeddings = OpenAI `text-embedding-3-large`.** Matches the legacy `umap_reducer.pkl` dimensions. Do not substitute another provider.
 3. **PromptConfig per legacy style.** Each prompt binds to a specific `default_engine` and `reasoning_effort` (0–10 scale). Subagent is the implicit fallback default if not specified.
-4. **Adaptive HTML scraping.** `gather` tries `httpx + BeautifulSoup` first (extracts `<a>` tags from landing pages), falls back to Playwright on failure, and memoizes the working method per site in `sites.scrape_method`. `download` follows the same `httpx → Playwright` shape but uses trafilatura to pull article body text from each article page. Domains marked `sites.bright_data_enabled=1` (Bloomberg, WSJ, CNN, Forbes, Fast Company by default) skip httpx/Playwright and route through the Bright Data Web Unlocker (`BRIGHTDATA_API_KEY` required); URLs that fail both http and Playwright also get a final BD attempt as a fallback.
+4. **Adaptive HTML scraping (runtime fallback) + operator-curated pins.** Each step adapts at fetch time: `gather` tries `httpx + BeautifulSoup` first (extracts `<a>` tags from landing pages), falls back to Playwright on failure; `download` follows the same `httpx → Playwright` shape but uses trafilatura on article pages. **`sites.scrape_method` is operator-curated config (a hard pin), NOT a heuristic cache** — gather/download never auto-write it. When httpx fails and Playwright recovers, the step logs a "consider pinning" notice; the operator decides whether to set `UPDATE sites SET scrape_method='playwright' WHERE domain=...`. Aggregator hosts with JS-based redirects (`news.google.com`, `t.co`, `lnkd.in`, `link.medium.com`, `l.facebook.com`, `out.reddit.com`) get an extra 10s `wait_for_url` after DCL in Playwright so the redirect resolves before we snapshot HTML. Domains marked `sites.bright_data_enabled=1` (Bloomberg, WSJ, CNN, Forbes, Fast Company by default) skip httpx/Playwright and route through the Bright Data Web Unlocker (`BRIGHTDATA_API_KEY` required, async + Semaphore(8)); URLs that fail both http and Playwright also get a final BD attempt as a fallback.
 
 See `~/.claude/projects/-Users-drucev-projects-newsagent/memory/` for the full memory store.
 
@@ -131,6 +131,7 @@ Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific
 - `download/bsky-images/` — Bluesky image cache.
 - `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `newsagent:run`.
 - `out/YYYY-MM-DD.html` — final newsletter (+ `out/latest.html` symlink).
+- `out/YYYY-MM-DD_short.html` — rated-digest bullets written by `rate` (+ `out/latest_short.html` symlink).
 - `out/bsky-YYYY-MM-DD.html` — Bluesky digest (+ `out/latest-bsky.html`).
 
 ## Environment
@@ -143,6 +144,7 @@ Copy `dot-env.txt` to `.env`. All keys are optional except the ones you actually
 - `NEWSAPI_API_KEY` — only if NewsAPI source is enabled in `sources.yaml`
 - `BSKY_USERNAME` / `BSKY_SECRET` — only for `newsagent:bluesky`
 - `BRIGHTDATA_API_KEY` — only needed if any domain has `sites.bright_data_enabled=1` (paywall routing in `download`). Optional `BRIGHTDATA_ZONE` overrides the Web Unlocker zone.
+- `GMAIL_USER` / `GMAIL_PASSWORD` — only if you want the post-rate email digest. `rate` writes `out/<date>_short.html` + `out/latest_short.html` unconditionally; the email send is auto-attempted but degrades to a warning when these are missing. Use `--no-email` to skip explicitly.
 
 **Do NOT set or expect `ANTHROPIC_API_KEY`.** Claude models go through the `subagent` engine via your Claude Code subscription.
 

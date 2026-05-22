@@ -12,14 +12,46 @@ are unit-tested without any LLM involvement.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Set, Tuple
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import choix
 
-from lib.llm import call_prompt_batch
+from lib.engines.base import EngineError
+from lib.llm import call_prompt
 
 # Items per battle batch sent to the LLM judge
 _BATTLE_BATCH_SIZE = 6
+
+# Battle retry policy. Gemini occasionally returns transient 5xx during peak
+# load; one failed call would otherwise kill the entire rate step (battles run
+# in parallel via ThreadPoolExecutor.map which propagates the first exception).
+_BATTLE_MAX_RETRIES = 2
+_BATTLE_RETRY_PAUSE_SECONDS = 60
+_BATTLE_PARALLELISM = 8
+_5XX_RE = re.compile(r"\b5\d{2}\b")
+
+
+def _is_5xx_error(exc: BaseException) -> bool:
+    return isinstance(exc, EngineError) and bool(_5XX_RE.search(str(exc)))
+
+
+def _call_battle_with_retry(item: Dict[str, Any]) -> Any:
+    """Send one battle prompt; retry on 5xx with a fixed pause between attempts."""
+    last_exc: Optional[BaseException] = None
+    for attempt in range(_BATTLE_MAX_RETRIES + 1):
+        try:
+            return call_prompt("battle_prompt", item)
+        except EngineError as exc:
+            last_exc = exc
+            if attempt < _BATTLE_MAX_RETRIES and _is_5xx_error(exc):
+                time.sleep(_BATTLE_RETRY_PAUSE_SECONDS)
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def swiss_pairing(
@@ -114,6 +146,7 @@ def bradley_terry_scores(
     items: List[dict],
     max_rounds: Optional[int] = None,
     items_per_battle: int = _BATTLE_BATCH_SIZE,
+    progress_callback: Optional[Callable[[int, int, int], None]] = None,
 ) -> Dict[str, float]:
     """Run iterative Swiss-paired battles and return final Bradley-Terry scores.
 
@@ -173,9 +206,11 @@ def bradley_terry_scores(
         if not batches:
             break
 
-        # Run all batches in parallel via call_prompt_batch
+        # Run all batches in parallel; per-call retry on 5xx so a single
+        # transient Gemini blip can't kill the whole step.
         inputs = [{"items": b} for b in batches]
-        results = call_prompt_batch("battle_prompt", inputs, parallelism=8)
+        with ThreadPoolExecutor(max_workers=_BATTLE_PARALLELISM) as pool:
+            results = list(pool.map(_call_battle_with_retry, inputs))
 
         # Extract pairwise outcomes from each ranking
         for result in results:
@@ -189,5 +224,8 @@ def bradley_terry_scores(
 
         if all_battles:
             current_scores = bradley_terry_from_battles(ids, all_battles)
+
+        if progress_callback is not None:
+            progress_callback(_round + 1, max_rounds, len(batches))
 
     return current_scores

@@ -52,7 +52,17 @@ parallel (single message, multiple Agent tool calls) with:
   output_schema, with exactly one entry per id (no duplicates, no extras).
   Write that JSON object to:
     runs/<SID>/filter-results/batch-NNN.json
-  using the Write tool. Then report the path you wrote.
+  using the Write tool.
+
+  Then validate by running:
+    .venv/bin/python tools/check_batch.py runs/<SID>/filter-results/batch-NNN.json
+  If it prints "FAIL", fix the issues (missing ids, extras, duplicates) and
+  re-Write. If it prints "OK", report the path you wrote.
+
+  Use ONLY these tools: Read, Write, and the Bash invocation of
+  `.venv/bin/python tools/check_batch.py`. Do not use sed, grep, inline
+  python -c, or any other shell command — the validator covers everything
+  you need to verify.
   ```
 
 Run all batches in parallel — they are independent. Failures or schema misses

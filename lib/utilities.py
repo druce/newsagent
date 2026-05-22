@@ -1,13 +1,16 @@
-"""Shared utility helpers (currently: Gmail SMTP).
+"""Shared utility helpers: Gmail SMTP + rated-digest HTML rendering.
 
 Ported from ~/projects/OpenAIAgentsSDK/utilities.py with light cleanup.
 """
 from __future__ import annotations
 
+import html as _html
 import os
 import smtplib
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from pathlib import Path
 from typing import Iterable, Optional
 
 
@@ -60,3 +63,87 @@ def send_gmail(subject: str, html_str: str, *, to: Optional[str] = None) -> None
     if not recipient:
         raise RuntimeError("No recipient: pass `to=` or set GMAIL_USER")
     send_email([recipient], subject, html_str)
+
+
+# ── Rated-digest HTML rendering ──────────────────────────────────────────────
+
+
+def _render_rated_item(h: dict) -> str:
+    # Lazy import to keep utilities.py importable without the full app stack.
+    from lib.sources import pretty_source
+
+    rating = float(h.get("rating", 0.0))
+    # Prefer the distilled one-liner; fall back to scraped title (which can
+    # be garbage like image-caption text on some sites).
+    headline = _html.escape(h.get("short_summary") or h.get("title") or "(no title)")
+    final_url = h.get("final_url") or h.get("url") or ""
+    url = _html.escape(final_url or "#")
+    # Prefer the stored site_name (set at download time); fall back to a
+    # live pretty_source() lookup for old sessions that pre-date that field.
+    source = _html.escape(
+        h.get("site_name") or pretty_source(final_url, h.get("source"))
+    )
+    summary_raw = (h.get("summary") or "").strip()
+    summary_html = _html.escape(summary_raw).replace("\n", "<br>")
+
+    return (
+        '<div style="margin-bottom:20px;padding:10px;'
+        'border-left:3px solid #4CAF50;">\n'
+        f'  <h3 style="margin:0 0 5px 0;font-size:15px;">'
+        f'{rating:.2f} &mdash; '
+        f'<a href="{url}" style="color:#0366d6;text-decoration:none;">{headline}</a>'
+        f' &mdash; <span style="color:#666;">{source}</span></h3>\n'
+        f'  <p style="margin:5px 0 0 0;color:#444;font-size:13px;'
+        f'line-height:1.5;">{summary_html}</p>\n'
+        "</div>"
+    )
+
+
+def render_rated_digest(session_id: str, rated: list[dict], timestamp: str) -> str:
+    """Render a styled HTML digest of rated headlines, sorted by caller."""
+    items_html = "\n".join(_render_rated_item(h) for h in rated)
+    return (
+        "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">"
+        f"<title>AI news items - {_html.escape(timestamp)}</title>"
+        "<style>"
+        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+        "max-width:900px;margin:20px auto;padding:0 16px;color:#222;}"
+        "h1{font-size:18px;margin-bottom:12px;}"
+        "</style></head><body>"
+        f"<h1>AI news items &mdash; {_html.escape(timestamp)} "
+        f"(session {_html.escape(session_id)}, {len(rated)} articles)</h1>\n"
+        + items_html
+        + "</body></html>"
+    )
+
+
+def write_short_digest(
+    session_id: str,
+    headlines: list[dict],
+    *,
+    out_dir: str | Path = "out",
+) -> tuple[Path, str]:
+    """Render the rated digest, write to out/<date>_short.html, update latest_short.html.
+
+    `headlines` must be filtered + sorted by the caller. Returns
+    (dated_path, html_content).
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    html_content = render_rated_digest(session_id, headlines, timestamp)
+
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    dated = out_path / f"{date_str}_short.html"
+    dated.write_text(html_content)
+
+    latest = out_path / "latest_short.html"
+    if latest.is_symlink() or latest.exists():
+        latest.unlink()
+    try:
+        latest.symlink_to(dated.name)
+    except OSError:
+        # Filesystem without symlink support: write a copy.
+        latest.write_text(html_content)
+
+    return dated, html_content

@@ -4,10 +4,9 @@ from lib.prompts import rate_quality, rate_on_topic, rate_importance  # noqa: F4
 from lib.prompts import battle  # noqa: F401
 from lib.prompts import name_topic  # noqa: F401
 from lib.prompts import name_topic_batch  # noqa: F401
-from lib.prompts import assign_noise  # noqa: F401
-from lib.prompts import assign_noise_batch  # noqa: F401
-from lib.prompts import merge_clusters  # noqa: F401
-from lib.prompts import merge_clusters_batch  # noqa: F401
+from lib.prompts import extract_noise_clusters  # noqa: F401
+from lib.prompts import consolidate_cluster_names  # noqa: F401
+from lib.prompts import assign_noise_batch  # noqa: F401  # registers `reassign_to_clusters`
 from lib.prompts import write_section  # noqa: F401
 from lib.prompts import critique_section  # noqa: F401
 from lib.prompts import improve_section  # noqa: F401
@@ -27,10 +26,9 @@ __all__ = [
     "battle",
     "name_topic",
     "name_topic_batch",
-    "assign_noise",
+    "extract_noise_clusters",
+    "consolidate_cluster_names",
     "assign_noise_batch",
-    "merge_clusters",
-    "merge_clusters_batch",
     "write_section",
     "critique_section",
     "improve_section",

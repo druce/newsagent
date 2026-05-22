@@ -1,8 +1,12 @@
-"""assign_noise_batch — assign multiple noise headlines to clusters in one call.
+"""reassign_to_clusters — assign every headline to a consolidated cluster name.
 
-Batched variant of ASSIGN_NOISE. Used by newsagent:select in --prepare-batches
-mode so one Haiku Agent handles up to N (default 25) noise-point assignments
-in one round-trip.
+Phase C of the redesigned newsagent:select. Unlike the prior `assign_noise`
+flow (which targeted only HDBSCAN noise), this prompt sees every rated
+headline and the consolidated cluster name list from phase B; for each
+headline it returns either a final name or the literal "Other".
+
+The PromptConfig name is `reassign_to_clusters` (the module filename is kept
+as `assign_noise_batch.py` for git history continuity).
 """
 from __future__ import annotations
 
@@ -12,19 +16,22 @@ from typing import List
 from pydantic import BaseModel, computed_field
 
 from lib.llm import PromptConfig, register_prompt
-from lib.prompts.assign_noise import ClusterDescriptor
 
 
-class NoiseHeadline(BaseModel):
+class HeadlineToReassign(BaseModel):
     id: str
     title: str
-    summary: str
+    short_summary: str
 
 
-class AssignNoiseBatchInput(BaseModel):
-    headlines: List[NoiseHeadline]
-    clusters: List[ClusterDescriptor]
-    allow_new: bool = True
+class ClusterChoice(BaseModel):
+    name: str
+    sample_headlines: List[str]
+
+
+class ReassignToClustersInput(BaseModel):
+    headlines: List[HeadlineToReassign]
+    clusters: List[ClusterChoice]
 
     @computed_field
     @property
@@ -37,27 +44,31 @@ class AssignNoiseBatchInput(BaseModel):
         return json.dumps([c.model_dump() for c in self.clusters], indent=2)
 
 
-class NoiseAssignment(BaseModel):
+class HeadlineAssignment(BaseModel):
     id: str
-    assignment: str  # cluster id, "new", or "none"
+    assignment: str  # one of clusters[*].name, or the literal "Other"
 
 
-class AssignNoiseBatchOutput(BaseModel):
-    assignments: List[NoiseAssignment]
+class ReassignToClustersOutput(BaseModel):
+    assignments: List[HeadlineAssignment]
 
 
 _SYSTEM = """\
-You are an editor assigning unclustered news headlines to one of today's news clusters.
+You are a newsletter editor assigning every headline of the day to one of the
+final newsletter sections.
 
 You will receive:
-- A JSON list of headlines (each with id, title, summary)
-- A JSON list of existing clusters (each with id, name, sample_headlines)
+- A JSON list of headlines (id, title, short_summary)
+- A JSON list of section choices (each with name + sample_headlines)
 
-For EACH headline, decide:
-- The id of the best-matching existing cluster, OR
-- "new" if the headline is significantly different from all existing clusters
-  but plausibly worth its own section (only if allow_new is true), OR
-- "none" if the headline is unrelated to the newsletter's topic
+For EACH headline, return:
+- The exact `name` of the best-matching section, OR
+- The literal string "Other" if the headline does not fit any section
+  meaningfully.
+
+Match decisively — every headline belongs somewhere. Use "Other" only when
+nothing else is a reasonable fit. Do not invent new section names beyond the
+provided list and "Other".
 
 Return ONLY a JSON object matching the provided schema, with exactly one
 entry per input id (no duplicates, no extras)."""
@@ -66,22 +77,20 @@ _USER = """\
 Headlines to assign (JSON):
 {headlines_json}
 
-Existing clusters (JSON):
+Section choices (JSON):
 {clusters_json}
-
-Allow new cluster: {allow_new}
 
 Return JSON matching the schema."""
 
 
-ASSIGN_NOISE_BATCH = PromptConfig(
-    name="assign_noise_batch",
+REASSIGN_TO_CLUSTERS = PromptConfig(
+    name="reassign_to_clusters",
     system_prompt=_SYSTEM,
     user_prompt=_USER,
-    input_schema=AssignNoiseBatchInput,
-    output_schema=AssignNoiseBatchOutput,
+    input_schema=ReassignToClustersInput,
+    output_schema=ReassignToClustersOutput,
     default_engine="subagent",
     reasoning_effort=3,
 )
 
-register_prompt(ASSIGN_NOISE_BATCH)
+register_prompt(REASSIGN_TO_CLUSTERS)

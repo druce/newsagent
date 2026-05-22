@@ -62,7 +62,25 @@ Per-Agent config:
 
   Write that JSON object to:
     runs/<SID>/draft-results/batch-NNN.json
-  using the Write tool. Then report the path.
+  using the Write tool.
+
+  Then validate by running:
+    .venv/bin/python tools/check_batch.py runs/<SID>/draft-results/batch-NNN.json
+  If it prints "FAIL", fix the issues and re-Write. If it prints "OK",
+  report the path.
+
+  IMPORTANT — the write/critique/improve loop runs ENTIRELY in your own
+  thinking, not via tool calls. Produce each section draft, score, and
+  feedback by reasoning directly. Do NOT spawn subprocesses, make HTTP
+  calls, or invoke any LLM tool to "call write/critique/improve" — those
+  are just labels for the steps you reason through.
+
+  Use ONLY these tools: Read (once, for the batch file), Write (once, for
+  the result file — or once more if check_batch reports FAIL), and the
+  Bash invocation of `.venv/bin/python tools/check_batch.py`. Do not use
+  sed, grep, inline python -c, or any other shell command. Do not read
+  any other files (no lib/prompts/, no other batches, no other results).
+  The batch file is fully self-contained.
   ```
 
 Dispatch all N section Agents in a single parent message so they run in

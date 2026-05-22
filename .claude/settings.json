@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/pytest *)",
+      "Bash(cd /Users/drucev/projects/newsagent && .venv/bin/python tools/check_batch.py *)",
+      "Bash(.venv/bin/python tools/check_batch.py *)",
+      "Read(//Users/drucev/projects/newsagent/runs/**)",
+      "Write(//Users/drucev/projects/newsagent/runs/**)",
+      "Read(//Users/drucev/projects/newsagent/download/**)",
+      "Read(//Users/drucev/projects/newsagent/lib/**)",
+      "Read(//Users/drucev/projects/newsagent/skills/**)",
+      "Read(//Users/drucev/projects/newsagent/tools/**)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot"
+    ]
+  }
+}

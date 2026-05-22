@@ -1,81 +1,135 @@
 ---
 name: select
-description: Select a diverse top-K set of headlines per topic cluster. Runs LLM noise assignment for cluster_id=-1 headlines, embedding-based cluster merge for similar clusters, and MMR selection per surviving cluster to balance rating with embedding diversity.
+description: Mine HDBSCAN noise for new clusters, consolidate the full cluster-name list, reassign every headline to a final section (or "Other"), and run global MMR top-K (default 100). Three sequential subagent dispatch rounds + one apply step.
 ---
 
 # newsagent:select
 
-Step 9 of /newsagent:run. Two execution paths.
+Step 9 of /newsagent:run. Replaces the prior noise-assign + per-cluster MMR
+flow with a three-round consolidation pipeline that produces a flat
+8–18 named sections + `Other`, with exactly K items globally.
 
-## Interactive mode — Haiku subagent dispatch
+## Phases
 
-### Step 1: prepare batches
+| Phase | What | Batch shape | Subagent |
+|---|---|---|---|
+| A | Repechage: mine HDBSCAN noise for new themes | 50 noise items / batch | Sonnet |
+| B | Consolidate: unify HDBSCAN + repechage names | 1 batch (all clusters) | Sonnet |
+| C | Reassign: every headline → final name or "Other" | 25 headlines / batch | Haiku |
+| D | Global MMR top-K (default 100, λ=0.7) | in-process math | — |
+| E | Build sections from MMR survivors | in-process | — |
+
+Phases A→C are sequentially dependent (B reads A's results; C reads B's
+result), so the interactive flow is **three separate prepare/dispatch
+rounds** plus one apply step.
+
+## Interactive mode — three rounds then apply
+
+### Round 1: repechage
 
 ```bash
-python -m lib.steps.select --session SID --prepare-batches
+python -m lib.steps.select --session SID --prepare-repechage
 ```
 
-Writes two subdirs under `runs/<SID>/`:
-- `select-assign-batches/batch-NNN.json` — noise headlines sharded 25 per
-  batch. Each batch carries the same cluster descriptors plus the headlines
-  to assign.
-- `select-merge-batches/batch-000.json` — all candidate near-duplicate cluster
-  pairs (post-cosine filter). Skipped if no candidates exist.
+Writes `runs/<SID>/select-repechage-batches/batch-NNN.json` — each batch
+holds ≤50 noise headlines (`id`, `title`, `short_summary`) plus the
+self-contained `system_prompt`, `user_prompt`, and `output_schema` for
+`extract_noise_clusters`.
 
-Each batch file is self-contained (system_prompt + user_prompt + output_schema
-+ items). No further `lib/prompts/` access needed by subagents.
-
-### Step 2: dispatch Haiku subagents (all in ONE parent message)
-
-For each assign batch and (if present) the merge batch, dispatch one Agent
-with `model: "haiku"`. Dispatch all of them in the same message so they run
-in parallel.
-
-Per-Agent prompt skeleton:
+Dispatch one Sonnet subagent per batch (all in parallel in ONE parent
+message). Each subagent must:
 
 ```
-Read runs/<SID>/select-assign-batches/batch-NNN.json
-  (or runs/<SID>/select-merge-batches/batch-000.json).
-The file contains system_prompt, user_prompt, output_schema, and the items.
+Read runs/<SID>/select-repechage-batches/batch-NNN.json.
 Follow system_prompt + user_prompt. Return ONLY a JSON object matching
-output_schema, with exactly one entry per id (no duplicates, no extras).
-Write to runs/<SID>/select-assign-results/batch-NNN.json
-  (or runs/<SID>/select-merge-results/batch-000.json)
-using the Write tool. Then report the path.
+output_schema (proposed_clusters[] of 2+ member_ids each, plus
+unclustered_ids — every input id appears exactly once across both).
+Write to runs/<SID>/select-repechage-results/batch-NNN.json using Write.
+Then validate: .venv/bin/python tools/check_batch.py runs/<SID>/select-repechage-results/batch-NNN.json
+If FAIL, fix and re-Write. If OK, report the path.
+Use ONLY: Read, Write, and the validator Bash invocation.
 ```
 
-### Step 3: apply results
+### Round 2: consolidate
+
+```bash
+python -m lib.steps.select --session SID --prepare-consolidate
+```
+
+Reads `select-repechage-results/`, merges with HDBSCAN clusters (carried in
+state from the cluster step), and writes a single
+`runs/<SID>/select-consolidate-batches/batch-000.json` for
+`consolidate_cluster_names`.
+
+Dispatch **one** Sonnet subagent. Same skeleton as round 1 but writes to
+`runs/<SID>/select-consolidate-results/batch-000.json`. The validator
+handles the `{final_names, mapping}` shape automatically.
+
+### Round 3: reassign
+
+```bash
+python -m lib.steps.select --session SID --prepare-reassign
+```
+
+Reads the consolidate result, builds final cluster choices, and writes
+`runs/<SID>/select-reassign-batches/batch-NNN.json` — every rated headline
+sharded 25 / batch with the same `clusters` choice list.
+
+Dispatch one Haiku subagent per batch (all in parallel). Each writes to
+`runs/<SID>/select-reassign-results/batch-NNN.json`. Validator works on the
+standard `{id, assignment}` shape.
+
+### Apply
 
 ```bash
 python -m lib.steps.select --session SID --apply-results runs/<SID>
 ```
 
-Note: `--apply-results` takes the **session runs dir** (e.g. `runs/<SID>`),
-not a specific subdir. The step looks for both
-`select-assign-results/` and `select-merge-results/` inside it.
-
-Applies assignments (`none` → drop, `new` → new singleton cluster,
-`<cid>` → attach), applies merges, then runs MMR top-K per surviving cluster.
-
-### Step 4: retry on failure
-
-Per the filter/summarize pattern: re-dispatch only the failing batch(es) and
-re-run `--apply-results`. Partial application is idempotent.
+Loads reassign results, applies cluster_name to every headline (unmapped or
+"Other" → routed to the `Other` bucket), runs global MMR top-K (default
+100, override with `--k`), populates `state.newsletter_section_data` +
+`state.clusters`, writes `runs/<SID>/select.json`.
 
 ## Classic mode (non-interactive)
 
 ```bash
-python -m lib.steps.select --session SID --engine openai:gpt-4o-mini
+python -m lib.steps.select --session SID --engine subagent
 ```
 
-In-process calls for each noise headline and each candidate merge pair.
+Runs all three LLM phases in-process via `lib.llm.call_prompt`, then
+MMR/finalize. Useful for cron/CI when no parent Claude is dispatching.
+
+## CLI flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--k` | 100 | Global MMR top-K |
+| `--lambda` | 0.7 | MMR relevance/diversity trade-off |
+| `--repechage-batch-size` | 50 | Noise headlines per phase-A batch |
+| `--reassign-batch-size` | 25 | Headlines per phase-C batch |
+| `--engine` | (unset) | Classic mode engine override |
+| `--prepare-repechage` | — | Phase A only |
+| `--prepare-consolidate` | — | Phase B only |
+| `--prepare-reassign` | — | Phase C only |
+| `--apply-results DIR` | — | Phase D+E only |
+
+The three prepare flags are mutually exclusive with each other and with
+`--apply-results`.
 
 ## Output contract
 
-- HDBSCAN noise headlines either attached to an existing cluster, promoted to
-  a new singleton, or dropped from `state.headline_data`.
-- Similar clusters merged according to `merge_clusters_batch` decisions.
-- `state.newsletter_section_data` populated by MMR top-K per cluster.
-- `state.clusters` populated with `{name: [headline_index_str, ...]}`.
-- `runs/<SID>/select.json` written with counts.
+- Every headline gets a `cluster_name` (one of the consolidated final names
+  or the literal string `"Other"`).
+- `state.newsletter_section_data` populated with exactly `--k` items
+  (top by global MMR; default 100).
+- `state.clusters` populated with `{section_name: [headline_index_str, ...]}`
+  using only the survivors of MMR.
+- `runs/<SID>/select.json` written with `n_selected`, per-section counts,
+  `n_final_names`, K, λ.
 - `select` step marked COMPLETE.
+
+## Retry on failure
+
+Per the filter/summarize pattern: re-dispatch only the failing batch(es)
+and re-run the corresponding `--prepare-*` or `--apply-results` step. Each
+phase is idempotent — overwriting a result file is safe.
