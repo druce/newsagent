@@ -382,28 +382,3 @@ Python 3.11 · Pydantic v2 · SQLite (stdlib) · Click · httpx · trafilatura �
 
 MIT
 
-
-
-  # 1. Rename project directory
-  mv ~/projects/news_agent ~/projects/newsagent
-
-  # 2. Rename the CC memory store so it stays linked to this project
-  mv ~/.claude/projects/-Users-drucev-projects-news-agent \
-     ~/.claude/projects/-Users-drucev-projects-newsagent
-
-  # 3. Reinstall the package in the new path (regenerates egg-info as 'newsagent')
-  cd ~/projects/newsagent
-  .venv/bin/pip install -e ".[dev]"     # the [dev] also fixes the missing pytest in your venv
-
-  # 4. Start a new Claude Code session
-  cd ~/projects/newsagent
-  claude
-
-  Then inside the new CC session:
-
-  /plugin marketplace add /Users/drucev/projects/newsagent
-  /plugin install newsagent@newsagent-dev
-
-  Verify with a typed slash command:
-
-  /newsagent:status
