@@ -4,8 +4,10 @@ Source types:
   - rss   : feedparser via httpx (lib.fetch.rss)
   - html  : adaptive httpx + BeautifulSoup → Playwright fallback
             (lib.fetch.html parses <a> tags via lib.fetch.extract);
-            persists per-site working method in sites.scrape_method;
-            raw HTML saved to runs/<SID>/pages/<source>.html for inspection.
+            reads sites.scrape_method as a hard pin (operator-controlled);
+            does NOT write back — the runtime adapts at fetch time, but
+            persistent failures should be pinned manually by the operator.
+            Raw HTML saved to runs/<SID>/pages/<source>.html for inspection.
             NB: trafilatura is NOT used here — gather only needs the link graph
             of the landing page, not article body extraction.
   - rest  : generic JSON API (lib.fetch.rest)
@@ -87,8 +89,22 @@ def cli(db_path: str, session_id: str) -> None:
 
     pages_dir = Path("runs") / session_id / "pages"
 
+    with sqlite3.connect(db_path) as conn:
+        pinned_pw = {
+            r[0] for r in conn.execute(
+                "SELECT domain FROM sites WHERE scrape_method='playwright'"
+            )
+        }
+    pw_fallback_sources: list[tuple[str, str]] = []  # (source_name, domain)
+
     for name, cfg in enabled_sources.items():
         result, used_method, raw_html = _fetch_one(name, cfg, db_path)
+        if (
+            isinstance(cfg, dict)
+            and used_method == "playwright"
+            and _domain_of(cfg.get("url", "")) not in pinned_pw
+        ):
+            pw_fallback_sources.append((name, _domain_of(cfg.get("url", ""))))
         page_path: str | None = None
         if raw_html is not None:
             pages_dir.mkdir(parents=True, exist_ok=True)
@@ -108,14 +124,10 @@ def cli(db_path: str, session_id: str) -> None:
             for a in result.articles:
                 all_articles.append(a.model_dump())
 
-        # Persist scrape_method for HTML sources whether successful or not
-        if used_method and isinstance(cfg, dict):
-            domain = _domain_of(cfg.get("url", ""))
-            if domain:
-                with sqlite3.connect(db_path) as conn:
-                    Site(domain=domain, name=name,
-                         scrape_method=used_method,
-                         last_seen=datetime.now().isoformat()).upsert(conn)
+        # sites.scrape_method is operator-curated config (hard pin).
+        # Do not auto-write — runtime adaptation happens in fetch_html.
+        # Log when a source needed Playwright after httpx, so the operator
+        # can decide whether to pin it.
 
     # Dedup against urls table; insert new ones
     new_count = 0
@@ -158,6 +170,15 @@ def cli(db_path: str, session_id: str) -> None:
         "sources": report_sources,
         "new_headlines": new_count,
     }, indent=2))
+
+    if pw_fallback_sources:
+        click.echo(
+            "Note: httpx failed → Playwright recovered for these sources; "
+            "consider pinning them with "
+            "UPDATE sites SET scrape_method='playwright' WHERE domain=...:"
+        )
+        for name, domain in pw_fallback_sources:
+            click.echo(f"  - {name} ({domain})")
 
     click.echo(f"Gathered {new_count} new headlines from {len(enabled_sources)} sources.")
     click.echo(f"  {'STATUS':<5} {'SOURCE':<24} {'FETCH':>5} {'NEW':>5}  METHOD")

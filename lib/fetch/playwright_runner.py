@@ -12,12 +12,46 @@ from __future__ import annotations
 import asyncio
 import random
 from typing import Optional
+from urllib.parse import urlparse
 
 from lib.fetch.browser import launch_stealth_context_async
 
 
 _DEFAULT_NAV_TIMEOUT_MS = 30_000
 _BLOCKED_TYPES_DEFAULT = frozenset({"image", "media", "font"})
+
+# Hosts whose pages do a JS-based redirect to the real article after DCL.
+# When the post-DCL URL is still on one of these hosts, wait briefly for
+# the URL to navigate away before snapshotting HTML.
+_AGGREGATOR_HOSTS = frozenset({
+    "news.google.com",
+    "t.co",
+    "lnkd.in",
+    "link.medium.com",
+    "l.facebook.com",
+    "out.reddit.com",
+})
+_AGGREGATOR_REDIRECT_TIMEOUT_MS = 10_000
+
+
+def _is_aggregator(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host in _AGGREGATOR_HOSTS
+
+
+async def _await_aggregator_redirect(page) -> None:
+    """If the page is still on a known wrapper host, wait for the JS
+    redirect to navigate away. Swallow timeout — caller will capture whatever
+    HTML is present."""
+    if not _is_aggregator(page.url):
+        return
+    try:
+        await page.wait_for_url(
+            lambda u: not _is_aggregator(u),
+            timeout=_AGGREGATOR_REDIRECT_TIMEOUT_MS,
+        )
+    except Exception:
+        pass
 
 
 async def _enable_fast_mode(page, blocked_types=_BLOCKED_TYPES_DEFAULT) -> None:
@@ -74,6 +108,7 @@ async def fetch_url_html_async(
             if block_resources:
                 await _enable_fast_mode(page)
             await page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+            await _await_aggregator_redirect(page)
             if initial_sleep > 0 or scroll > 0:
                 await asyncio.sleep(initial_sleep + random.uniform(0.5, 1.5))
             for _ in range(scroll):
@@ -134,6 +169,7 @@ async def fetch_urls_html_batch_async(
                         if block_resources:
                             await _enable_fast_mode(page)
                         await page.goto(u, timeout=timeout_ms, wait_until="domcontentloaded")
+                        await _await_aggregator_redirect(page)
                         html = await page.content()
                         results[u] = (html, page.url, None)
                     except Exception as exc:

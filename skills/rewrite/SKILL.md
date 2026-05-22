@@ -3,57 +3,92 @@ name: rewrite
 description: Assemble section drafts into a whole newsletter, run a whole-newsletter critic-optimizer pass, generate the title, and store state.final_newsletter. Iterates up to --max-edits times with early exit at score >= 8.0.
 ---
 
-# rewrite
+# newsagent:rewrite
 
-**Step in pipeline:** 11 of 12 (after `draft`, before `send`)
+Step 11 of /newsagent:run. Two execution paths.
 
-## What it does
+## Interactive mode — Sonnet subagent dispatch
 
-Assembles all section drafts into a single newsletter, runs a whole-newsletter critic-optimizer pass, generates the title, and writes the final newsletter artifact.
+The Agent runs the **critic-optimizer loop + title generation** inside its
+own context. One Agent, one batch, one result file.
 
-1. **Concatenate** all `section_markdown` values from `state.newsletter_section_data` (joined by `\n\n`).
-2. **Critique + improve** the full newsletter body via the `critique_newsletter` / `improve_newsletter` prompts, up to `--max-edits` iterations. Exits early if the critic scores >= 8.0 or sets `accept=True`.
-3. **Generate title** via `generate_newsletter_title` — produces a 6-12 word factual title in active voice.
-4. **Write** `state.final_newsletter = "# {title}\n\n{body}"` and `state.newsletter_title = title`.
-5. **Write** `runs/<SID>/rewrite.json` with the critic transcript and title.
-
-## Invocation
+### Step 1: prepare batch
 
 ```bash
-python -m lib.steps.rewrite --session SID [--db PATH] [--max-edits N] [--engine ENGINE]
+python -m lib.steps.rewrite --session SID --prepare-batches [--max-edits 2]
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--session` | required | Session ID to load/save state |
-| `--db` | `newsletter_agent.db` | Path to SQLite database |
-| `--max-edits` | `2` | Max critic-optimizer iterations |
-| `--engine` | prompt default | Override LLM engine for all prompts |
+Writes a single `runs/<SID>/rewrite-batches/batch-000.json` with the initial
+draft (concatenated section markdowns) and three pre-rendered prompts
+(critique_newsletter / improve_newsletter / generate_newsletter_title) plus
+`max_edits`, `accept_threshold`, and the `RewriteResult` schema.
 
-## Expected output
+### Step 2: dispatch one Sonnet subagent
 
-- `state.final_newsletter`: markdown string starting with `# <title>` followed by all section bodies.
-- `state.newsletter_title`: the generated title string.
-- `runs/<SID>/rewrite.json`: JSON with `title`, `transcript` (iterations, scores, feedbacks, accepted).
-- Step `rewrite` marked COMPLETE in workflow state.
-- Console: `Rewrite: '<title>' — N iteration(s), accepted=True/False.`
+Per-Agent config:
 
-## Error cases
+- `subagent_type: "general-purpose"`
+- `model: "sonnet"`
+- `description: "Rewrite newsletter for session SID"`
+- `prompt:` instructions of the shape:
 
-- **No state found for session**: session ID not in DB — run prior steps first.
-- **Empty newsletter_section_data**: concatenation produces an empty string; the critic loop runs on an empty draft.
-- **LLM engine failure**: propagated as exit code 1. Re-run after fixing engine config.
+  ```
+  Read runs/<SID>/rewrite-batches/batch-000.json. It contains:
+    - initial_draft (concatenated section markdowns)
+    - max_edits, accept_threshold
+    - critique_system_prompt, critique_user_prompt (template with
+      {newsletter_markdown} placeholder)
+    - improve_system_prompt, improve_user_prompt (template with
+      {newsletter_markdown} and {critique})
+    - title_system_prompt, title_user_prompt (template with
+      {newsletter_markdown})
+    - output_schema: required JSON shape (RewriteResult)
 
-## Artifacts written
+  Run this loop in your own context:
+    Let draft = initial_draft.
+    For up to max_edits iterations:
+      a. Substitute {newsletter_markdown}=draft into critique_user_prompt and
+         call critique → score (float), feedback (str), accept (bool).
+      b. If accept OR score >= accept_threshold: stop, mark accepted=true.
+      c. Otherwise substitute {newsletter_markdown}=draft and {critique}=feedback
+         into improve_user_prompt, call improve → new draft. Continue.
+    Then substitute {newsletter_markdown}=final draft into title_user_prompt
+    and call generate_newsletter_title → title.
 
-| Path | Contents |
-|---|---|
-| `runs/<SID>/rewrite.json` | Critic transcript + title |
-| `newsletter_agent.db` | Updated `agent_state` row at step `rewrite` |
+  Return ONLY a JSON object matching output_schema with:
+    final_newsletter_markdown (the final draft body),
+    title,
+    iterations, scores, feedbacks, accepted.
 
-## State fields updated
+  Write to runs/<SID>/rewrite-results/batch-000.json using Write, then report
+  the path.
+  ```
 
-| Field | Value |
-|---|---|
-| `state.final_newsletter` | `# <title>\n\n<body>` (full newsletter markdown) |
-| `state.newsletter_title` | Title string (6-12 words) |
+### Step 3: apply result
+
+```bash
+python -m lib.steps.rewrite --session SID \
+  --apply-results runs/<SID>/rewrite-results
+```
+
+Validates against `RewriteResult`, sets `state.final_newsletter = "# {title}\n\n{body}"`
+and `state.newsletter_title`, writes `runs/<SID>/rewrite.json`.
+
+### Step 4: retry on failure
+
+If apply reports schema mismatch, re-dispatch the Sonnet Agent, re-run apply.
+
+## Classic mode (non-interactive)
+
+```bash
+python -m lib.steps.rewrite --session SID --engine openai:gpt-4o-mini --max-edits 2
+```
+
+In-process critic loop + title call. Do not use `--engine subagent`.
+
+## Output contract
+
+- `state.final_newsletter = "# {title}\n\n{body}"` set.
+- `state.newsletter_title` set.
+- `runs/<SID>/rewrite.json` written with transcript.
+- `rewrite` step marked COMPLETE.

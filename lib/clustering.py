@@ -37,6 +37,14 @@ def apply_umap(embeddings: list[list[float]], reducer: Any) -> np.ndarray:
     return reducer.transform(M).astype(np.float64)
 
 
+def normalize_l2(embeddings: list[list[float]]) -> np.ndarray:
+    """L2-normalize embeddings so euclidean distance ranks neighbors like cosine."""
+    M = np.asarray(embeddings, dtype=np.float64)
+    norms = np.linalg.norm(M, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    return M / norms
+
+
 def cluster_quality_metrics(embeddings: np.ndarray, labels: np.ndarray) -> dict:
     """Compute silhouette, n_clusters, noise_ratio, etc."""
     n = len(labels)
@@ -88,7 +96,8 @@ def optimize_hdbscan(
         metrics = cluster_quality_metrics(reduced, labels)
         n_clusters = metrics["n_clusters"]
         if n_clusters < 2 or metrics["noise_ratio"] > 0.8:
-            return -1.0
+            # Sentinel worse than any valid score (we're minimizing).
+            return float("inf")
         # Composite: more clusters good (up to ~10), low noise good, high silhouette good
         sil = metrics["silhouette"] if not np.isnan(metrics["silhouette"]) else 0.0
         score = (
@@ -104,10 +113,16 @@ def optimize_hdbscan(
     )
     study.optimize(objective, n_trials=n_trials, timeout=timeout)
 
+    # Only trust the study's best params if at least one trial produced a
+    # valid clustering (finite score). Otherwise fall back to a permissive
+    # default — works for both UMAP-reduced and high-dim normalized inputs.
+    found_valid = (
+        study.best_trial is not None and np.isfinite(study.best_value)
+    )
     best_params = (
         study.best_params
-        if study.best_trial is not None and study.best_value < 0.0
-        else {"min_cluster_size": 3, "min_samples": 2}
+        if found_valid
+        else {"min_cluster_size": 3, "min_samples": 1}
     )
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=best_params["min_cluster_size"],

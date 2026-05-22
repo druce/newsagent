@@ -219,3 +219,87 @@ def test_draft_engine_override_propagates(tmp_db, monkeypatch, tmp_path):
     assert all(e == "openrouter:test-model" for e in engines_used), (
         f"Some calls used wrong engine: {engine_log}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: --prepare-batches writes one batch file per section
+# ---------------------------------------------------------------------------
+
+def test_draft_prepare_writes_one_batch_per_section(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="d_prep")
+
+    from lib.steps.draft import cli as draft_cli
+
+    runner = CliRunner()
+    result = runner.invoke(draft_cli, [
+        "--db", tmp_db, "--session", "d_prep", "--prepare-batches",
+        "--max-edits", "2",
+    ])
+    assert result.exit_code == 0, result.output
+
+    batches_dir = Path("runs/d_prep/draft-batches")
+    files = sorted(batches_dir.glob("batch-*.json"))
+    # One batch per cat in the seeded state
+    assert len(files) >= 1
+
+    payload = json.loads(files[0].read_text())
+    assert "cat" in payload
+    assert "stories" in payload
+    assert payload["max_edits"] == 2
+    # All three prompts pre-rendered + present
+    for key in ("write_system_prompt", "write_user_prompt",
+                "critique_system_prompt", "critique_user_prompt",
+                "improve_system_prompt", "improve_user_prompt"):
+        assert key in payload and payload[key]
+    # Output schema is DraftSectionResult
+    schema = payload["output_schema"]
+    assert "final_section_markdown" in schema["properties"]
+    assert "iterations" in schema["properties"]
+
+
+# ---------------------------------------------------------------------------
+# Test 6: --apply-results reads section transcripts and writes markdowns
+# ---------------------------------------------------------------------------
+
+def test_draft_apply_reads_results_and_writes_sections(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="d_apply")
+
+    from lib.steps.draft import cli as draft_cli
+
+    runner = CliRunner()
+    prep = runner.invoke(draft_cli, [
+        "--db", tmp_db, "--session", "d_apply", "--prepare-batches",
+    ])
+    assert prep.exit_code == 0, prep.output
+
+    # Figure out which cats were prepared
+    batch_files = sorted(Path("runs/d_apply/draft-batches").glob("batch-*.json"))
+    cats = [json.loads(f.read_text())["cat"] for f in batch_files]
+    assert len(cats) >= 1
+
+    results_dir = Path("runs/d_apply/draft-results")
+    results_dir.mkdir(parents=True)
+    for i, cat in enumerate(cats):
+        (results_dir / f"batch-{i:03d}.json").write_text(json.dumps({
+            "cat": cat,
+            "final_section_markdown": f"## {cat}\n- fake headline",
+            "iterations": 1,
+            "scores": [7.5],
+            "feedbacks": ["needs more"],
+            "accepted": False,
+        }))
+
+    apply_res = runner.invoke(draft_cli, [
+        "--db", tmp_db, "--session", "d_apply",
+        "--apply-results", str(results_dir),
+    ])
+    assert apply_res.exit_code == 0, apply_res.output
+
+    state = NewsletterAgentState(session_id="d_apply", db_path=tmp_db).load_latest_from_db()
+    assert state is not None
+    section_cats = {s["cat"] for s in state.newsletter_section_data}
+    assert section_cats == set(cats)
+    for s in state.newsletter_section_data:
+        assert s["section_markdown"].startswith("## ")

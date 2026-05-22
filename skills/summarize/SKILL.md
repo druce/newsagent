@@ -63,16 +63,27 @@ Per-Agent-call config:
     - user_prompt: pre-rendered task with the JSON items inline
     - ids: list of article ids you MUST produce a summary for
     - output_schema: required JSON shape (ExtractSummariesOutput)
-  
+
   Follow system_prompt + user_prompt. Return ONLY a JSON object matching
   output_schema, with exactly one entry per id (no duplicates, no extras).
   Each entry has BOTH a `short_summary` (one headline-style sentence,
   <=25 words, sentence case) AND a `summary` (3 bullets) per the
   system_prompt rules.
-  
+
   Write that JSON object to:
     runs/<SID>/summarize-results/batch-NNN.json
-  using the Write tool. Then report the path you wrote.
+  using the Write tool.
+
+  Then validate by running:
+    .venv/bin/python tools/check_batch.py runs/<SID>/summarize-results/batch-NNN.json
+  If it prints "FAIL", fix the issues (missing ids, extras, duplicates, or
+  short_summaries over 25 words) and re-Write. If it prints "OK", report
+  the path you wrote.
+
+  Use ONLY these tools: Read, Write, and the Bash invocation of
+  `.venv/bin/python tools/check_batch.py`. Do not use sed, grep, inline
+  python -c, or any other shell command — the validator covers everything
+  you need to verify.
   ```
 
 **Dispatch shape (orchestrator side):**

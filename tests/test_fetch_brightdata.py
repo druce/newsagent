@@ -106,24 +106,48 @@ def test_brightdata_sdk_exception_returns_error():
     assert err and "boom" in err
 
 
-def test_brightdata_batch_passes_each_url_to_same_client():
+def test_brightdata_batch_uses_async_client_concurrently():
     html = "<html>" + ("x " * 600) + "</html>"
-    client = MagicMock()
-    client.scrape_url.return_value = _fake_result(data=html)
 
-    # Patch SyncBrightDataClient context manager to yield our mock client.
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            self.calls: list[str] = []
+            self.init_kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def scrape_url(self, url, zone=None):
+            self.calls.append(url)
+            return _fake_result(data=html)
+
+    instance = FakeAsyncClient()
     from unittest.mock import patch
-    cm = MagicMock()
-    cm.__enter__.return_value = client
-    cm.__exit__.return_value = False
-    with patch("lib.fetch.brightdata.SyncBrightDataClient", return_value=cm):
+    with patch("lib.fetch.brightdata.BrightDataClient", return_value=instance):
         results = brightdata.scrape_urls_brightdata(
             ["https://a.example/x", "https://b.example/y"],
             api_key="tok",
+            concurrency=8,
         )
     assert set(results.keys()) == {"https://a.example/x", "https://b.example/y"}
     assert all(r[3] is None for r in results.values())  # no errors
-    assert client.scrape_url.call_count == 2
+    assert sorted(instance.calls) == [
+        "https://a.example/x",
+        "https://b.example/y",
+    ]
+
+
+def test_brightdata_batch_no_api_key_returns_per_url_errors(monkeypatch):
+    monkeypatch.delenv("BRIGHTDATA_API_KEY", raising=False)
+    results = brightdata.scrape_urls_brightdata(
+        ["https://a.example/x", "https://b.example/y"],
+    )
+    assert set(results.keys()) == {"https://a.example/x", "https://b.example/y"}
+    for _, _, _, err in results.values():
+        assert err and "BRIGHTDATA_API_KEY" in err
 
 
 @pytest.mark.skipif(

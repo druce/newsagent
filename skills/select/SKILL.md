@@ -1,91 +1,135 @@
 ---
 name: select
-description: Select a diverse top-K set of headlines per topic cluster. Runs LLM noise assignment for cluster_id=-1 headlines, embedding-based cluster merge for similar clusters, and MMR selection per surviving cluster to balance rating with embedding diversity.
+description: Mine HDBSCAN noise for new clusters, consolidate the full cluster-name list, reassign every headline to a final section (or "Other"), and run global MMR top-K (default 100). Three sequential subagent dispatch rounds + one apply step.
 ---
 
-# select
+# newsagent:select
 
-Select a diverse top-K set of headlines per topic cluster for newsletter sections.
+Step 9 of /newsagent:run. Replaces the prior noise-assign + per-cluster MMR
+flow with a three-round consolidation pipeline that produces a flat
+8–18 named sections + `Other`, with exactly K items globally.
 
-## What it does
+## Phases
 
-Runs three substeps against the clustered headline data produced by `newsagent:cluster`:
+| Phase | What | Batch shape | Subagent |
+|---|---|---|---|
+| A | Repechage: mine HDBSCAN noise for new themes | 50 noise items / batch | Sonnet |
+| B | Consolidate: unify HDBSCAN + repechage names | 1 batch (all clusters) | Sonnet |
+| C | Reassign: every headline → final name or "Other" | 25 headlines / batch | Haiku |
+| D | Global MMR top-K (default 100, λ=0.7) | in-process math | — |
+| E | Build sections from MMR survivors | in-process | — |
 
-1. **LLM noise assignment** — For each headline that HDBSCAN marked as noise
-   (`cluster_id=-1`), calls `assign_noise` to decide whether it belongs to an
-   existing cluster, deserves its own new cluster, or should be dropped entirely.
+Phases A→C are sequentially dependent (B reads A's results; C reads B's
+result), so the interactive flow is **three separate prepare/dispatch
+rounds** plus one apply step.
 
-2. **LLM cluster merge** — Embeds cluster names, finds pairs whose name embeddings
-   have cosine similarity >= 0.85, then calls `merge_clusters` for each candidate
-   pair. If confirmed, all headlines from cluster B are reassigned to cluster A
-   under the merged name.
+## Interactive mode — three rounds then apply
 
-3. **MMR selection** — For each surviving cluster, runs Maximal Marginal Relevance
-   (`mmr_select`) to pick the top-K headlines that balance rating (relevance) with
-   embedding diversity. Default K=5, lambda=0.7.
-
-Writes:
-- `state.newsletter_section_data` — list of `{cat, headline, link, rating, summary, id}` dicts
-- `state.clusters` — updated `{cluster_name: [idx, ...]}` map
-- `runs/<SID>/select.json` — summary artifact
-
-## Design vs legacy
-
-The legacy `do_cluster.py` / `newsletter_state.py` pipeline used plain top-K-by-rating
-to pick headlines per cluster. The new step adds:
-- LLM-assisted noise classification (no legacy equivalent)
-- LLM-assisted cluster deduplication (no legacy equivalent)
-- MMR diversity selection instead of greedy top-K
-
-## Invocation
+### Round 1: repechage
 
 ```bash
-# Standard invocation (after newsagent:cluster)
-python -m lib.steps.select --session SID
-
-# Override defaults
-python -m lib.steps.select --session SID --k 8 --lambda 0.5
-
-# Skip LLM substeps (faster, for debugging)
-python -m lib.steps.select --session SID --no-noise-assign --no-merge
-
-# Force a specific LLM engine
-python -m lib.steps.select --session SID --engine openrouter:anthropic/claude-3-haiku
+python -m lib.steps.select --session SID --prepare-repechage
 ```
 
-## Options
+Writes `runs/<SID>/select-repechage-batches/batch-NNN.json` — each batch
+holds ≤50 noise headlines (`id`, `title`, `short_summary`) plus the
+self-contained `system_prompt`, `user_prompt`, and `output_schema` for
+`extract_noise_clusters`.
 
-| Flag | Default | Description |
+Dispatch one Sonnet subagent per batch (all in parallel in ONE parent
+message). Each subagent must:
+
+```
+Read runs/<SID>/select-repechage-batches/batch-NNN.json.
+Follow system_prompt + user_prompt. Return ONLY a JSON object matching
+output_schema (proposed_clusters[] of 2+ member_ids each, plus
+unclustered_ids — every input id appears exactly once across both).
+Write to runs/<SID>/select-repechage-results/batch-NNN.json using Write.
+Then validate: .venv/bin/python tools/check_batch.py runs/<SID>/select-repechage-results/batch-NNN.json
+If FAIL, fix and re-Write. If OK, report the path.
+Use ONLY: Read, Write, and the validator Bash invocation.
+```
+
+### Round 2: consolidate
+
+```bash
+python -m lib.steps.select --session SID --prepare-consolidate
+```
+
+Reads `select-repechage-results/`, merges with HDBSCAN clusters (carried in
+state from the cluster step), and writes a single
+`runs/<SID>/select-consolidate-batches/batch-000.json` for
+`consolidate_cluster_names`.
+
+Dispatch **one** Sonnet subagent. Same skeleton as round 1 but writes to
+`runs/<SID>/select-consolidate-results/batch-000.json`. The validator
+handles the `{final_names, mapping}` shape automatically.
+
+### Round 3: reassign
+
+```bash
+python -m lib.steps.select --session SID --prepare-reassign
+```
+
+Reads the consolidate result, builds final cluster choices, and writes
+`runs/<SID>/select-reassign-batches/batch-NNN.json` — every rated headline
+sharded 25 / batch with the same `clusters` choice list.
+
+Dispatch one Haiku subagent per batch (all in parallel). Each writes to
+`runs/<SID>/select-reassign-results/batch-NNN.json`. Validator works on the
+standard `{id, assignment}` shape.
+
+### Apply
+
+```bash
+python -m lib.steps.select --session SID --apply-results runs/<SID>
+```
+
+Loads reassign results, applies cluster_name to every headline (unmapped or
+"Other" → routed to the `Other` bucket), runs global MMR top-K (default
+100, override with `--k`), populates `state.newsletter_section_data` +
+`state.clusters`, writes `runs/<SID>/select.json`.
+
+## Classic mode (non-interactive)
+
+```bash
+python -m lib.steps.select --session SID --engine subagent
+```
+
+Runs all three LLM phases in-process via `lib.llm.call_prompt`, then
+MMR/finalize. Useful for cron/CI when no parent Claude is dispatching.
+
+## CLI flags
+
+| Flag | Default | Meaning |
 |---|---|---|
-| `--session` | required | Session ID |
-| `--db` | `newsletter_agent.db` | SQLite DB path |
-| `--k` | `5` | Max headlines per cluster |
-| `--lambda` | `0.7` | MMR trade-off (1.0=relevance, 0.0=diversity) |
-| `--engine` | from PromptConfig | Override LLM engine |
-| `--no-noise-assign` | off | Skip LLM noise assignment |
-| `--no-merge` | off | Skip LLM cluster merge |
+| `--k` | 100 | Global MMR top-K |
+| `--lambda` | 0.7 | MMR relevance/diversity trade-off |
+| `--repechage-batch-size` | 50 | Noise headlines per phase-A batch |
+| `--reassign-batch-size` | 25 | Headlines per phase-C batch |
+| `--engine` | (unset) | Classic mode engine override |
+| `--prepare-repechage` | — | Phase A only |
+| `--prepare-consolidate` | — | Phase B only |
+| `--prepare-reassign` | — | Phase C only |
+| `--apply-results DIR` | — | Phase D+E only |
 
-## Prerequisites
+The three prepare flags are mutually exclusive with each other and with
+`--apply-results`.
 
-- `newsagent:cluster` must be complete for the session (headlines must have `cluster_id`
-  and `embedding` fields)
-- `OPENAI_API_KEY` — used by `embed_texts` for cluster-name embeddings (merge step)
-- `ANTHROPIC_API_KEY` or configured engine — for assign_noise + merge_clusters prompts
+## Output contract
 
-## Outputs
+- Every headline gets a `cluster_name` (one of the consolidated final names
+  or the literal string `"Other"`).
+- `state.newsletter_section_data` populated with exactly `--k` items
+  (top by global MMR; default 100).
+- `state.clusters` populated with `{section_name: [headline_index_str, ...]}`
+  using only the survivors of MMR.
+- `runs/<SID>/select.json` written with `n_selected`, per-section counts,
+  `n_final_names`, K, λ.
+- `select` step marked COMPLETE.
 
-`state.newsletter_section_data` is a list of section-headline records, one per
-selected headline:
+## Retry on failure
 
-```python
-{
-    "cat": "AI Safety",          # cluster/section name
-    "headline": "OpenAI...",     # article title
-    "link": "https://...",       # article URL
-    "rating": 4.2,               # composite Bradley-Terry rating
-    "summary": "Short summary",  # from summarize step
-    "id": 7,                     # index into state.headline_data
-}
-```
-
-The `newsagent:draft` step consumes `newsletter_section_data` to produce per-section drafts.
+Per the filter/summarize pattern: re-dispatch only the failing batch(es)
+and re-run the corresponding `--prepare-*` or `--apply-results` step. Each
+phase is idempotent — overwriting a result file is safe.

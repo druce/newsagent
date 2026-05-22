@@ -120,10 +120,13 @@ def test_download_falls_back_to_playwright_on_http_failure(tmp_path, tmp_db, mon
     assert result.exit_code == 0, result.output
     pw.assert_called_once()
 
+    # Per policy: download must NOT auto-write sites.scrape_method based on
+    # a successful Playwright fallback. The sites table is operator-curated;
+    # the runtime adapts via the fallback chain regardless.
     with sqlite3.connect(tmp_db) as conn:
         s = Site.get_by_domain(conn, "example.com")
-    assert s is not None
-    assert s.scrape_method == "playwright"
+    if s is not None:
+        assert s.scrape_method is None
 
     # Both txt and html written for playwright path too
     assert len(list(Path("download/txt").glob("*.txt"))) == 2

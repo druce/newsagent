@@ -1,33 +1,60 @@
 """newsagent:send — render newsletter as HTML and write to out/."""
 from __future__ import annotations
 
+import re
 import sqlite3
 import sys
 from datetime import date, datetime
 from pathlib import Path
 
 import click
+import markdown as md
 
 from lib.state import NewsletterAgentState
 
 
 _OUT_DIR = Path("out")
+_LEADING_H1_RE = re.compile(r"\A(?:\s*#\s+[^\n]*\n+)+", re.MULTILINE)
 
 
-def _render_html(title: str, body_html: str, headline_count: int) -> str:
+def _markdown_to_html(body_md: str) -> str:
+    """Convert the rewrite step's markdown body into HTML.
+
+    Strips any leading top-level `# Title` lines (the rewrite step often
+    emits the title at the top of the body even though the template wrapper
+    already renders it as <h1>), then runs python-markdown with the
+    extra/sane_lists/smarty extensions so [link](url), `**bold**`, and
+    `- bullet` lists render as real HTML elements.
+    """
+    body = _LEADING_H1_RE.sub("", body_md or "")
+    return md.markdown(
+        body,
+        extensions=["extra", "sane_lists", "smarty"],
+        output_format="html",
+    )
+
+
+def _render_html(title: str, body_md: str, headline_count: int) -> str:
+    body_html = _markdown_to_html(body_md)
+    safe_title = title or "AI Newsletter"
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>{title or 'AI Newsletter'}</title>
+  <title>{safe_title}</title>
   <style>
-    body {{ font-family: -apple-system, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; line-height: 1.5; }}
+    body {{ font-family: -apple-system, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; line-height: 1.5; color: #222; }}
     h1 {{ border-bottom: 2px solid #333; padding-bottom: .3em; }}
+    h2 {{ margin-top: 1.8em; border-bottom: 1px solid #ddd; padding-bottom: .2em; }}
+    a {{ color: #0366d6; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    ul {{ padding-left: 1.2em; }}
+    li {{ margin-bottom: .5em; }}
     .meta {{ color: #666; font-size: .9em; }}
   </style>
 </head>
 <body>
-  <h1>{title or 'AI Newsletter'}</h1>
+  <h1>{safe_title}</h1>
   <p class="meta">{datetime.now().isoformat()} — {headline_count} headlines</p>
   {body_html}
 </body>
