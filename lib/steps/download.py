@@ -431,7 +431,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
             click.echo(f"  - {d}")
 
     # Resolve and store h['site_name'] on every headline. LLM-fill any
-    # aggregator-sourced domains we don't recognize.
+    # domains we don't recognize.
     n_llm_resolved, n_sites_set = _populate_site_names(state, db_path)
     if n_llm_resolved:
         click.echo(f"sitename LLM resolved {n_llm_resolved} new domains.")
