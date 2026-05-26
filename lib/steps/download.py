@@ -32,11 +32,11 @@ import trafilatura
 import lib.prompts  # noqa: F401 — register SITENAME
 
 from lib.fetch.brightdata import scrape_urls_brightdata
+from lib.fetch.canonical import extract_canonical_url
 from lib.fetch.playwright_runner import fetch_urls_html_batch
 from lib.llm import call_prompt
 from lib.prompts.sitename import SitenameOutput
 from lib.sources import (
-    _AGGREGATORS,
     _bare_domain,
     _candidate_domains,
     pretty_source,
@@ -184,26 +184,27 @@ def _llm_resolve_unknown_domains(unknown: set[str], db_path: str) -> int:
 
 
 def _populate_site_names(state: NewsletterAgentState, db_path: str) -> tuple[int, int]:
-    """Set h['site_name'] on every headline. For aggregator-sourced articles
-    whose final_url domain isn't yet in the sites table, LLM-resolve via the
+    """Set h['site_name'] on every headline. For any headline whose
+    final_url domain isn't yet in the sites table, LLM-resolve via the
     sitename prompt and persist before assignment.
+
+    No aggregator allowlist: the publisher domain wins regardless of
+    gather-time source label. Articles that failed to download (no
+    final_url) keep their gather-time source as the displayable name.
 
     Returns (n_llm_resolved, n_headlines_with_site_name).
     """
-    # Build the set of bare domains that need a lookup (only from aggregator
-    # sources — direct sources already carry their pretty name in `source`).
+    # Collect every bare domain we'll need to resolve.
     candidate_domains: set[str] = set()
     for h in state.headline_data:
-        if "final_url" not in h:
-            continue
-        if h.get("source") not in _AGGREGATORS:
-            continue
-        d = _bare_domain(h["final_url"])
+        url = h.get("final_url") or h.get("url")
+        d = _bare_domain(url)
         if d:
             candidate_domains.add(d)
 
-    # Filter to domains genuinely missing from sites table (including parent-
-    # domain matches like 'finance.yahoo.com' -> 'yahoo.com' that DO resolve).
+    # Filter to domains genuinely missing from sites table (subdomain
+    # stripping: 'finance.yahoo.com' -> 'yahoo.com' that DO resolve count
+    # as known).
     with sqlite3.connect(db_path) as conn:
         known = {
             row[0]
@@ -220,18 +221,13 @@ def _populate_site_names(state: NewsletterAgentState, db_path: str) -> tuple[int
 
     n_resolved = _llm_resolve_unknown_domains(unknown, db_path)
 
-    # Now set h['site_name'] for every headline. Articles without final_url
-    # fall back to their gather-time source label.
+    # Set h['site_name'] for every headline. pretty_source handles the
+    # full fallback chain (DB → fallback_source → bare domain → "Unknown").
     n_set = 0
     for h in state.headline_data:
-        if "final_url" in h:
-            h["site_name"] = pretty_source(
-                h["final_url"], h.get("source"), db_path=db_path
-            )
-            n_set += 1
-        elif h.get("source"):
-            h["site_name"] = h["source"]
-            n_set += 1
+        url = h.get("final_url") or h.get("url")
+        h["site_name"] = pretty_source(url, h.get("source"), db_path=db_path)
+        n_set += 1
 
     return n_resolved, n_set
 
@@ -296,6 +292,14 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
     # scrape_method).
     domain_method: dict[str, str] = {}
 
+    def _refine_with_canonical(post_redirect_url: str, html: str | None) -> str:
+        """Return the same-domain canonical if HTML carries one, else the
+        post-redirect URL. Pure: no DB or network I/O."""
+        if not html:
+            return post_redirect_url
+        canonical = extract_canonical_url(html, post_redirect_url)
+        return canonical or post_redirect_url
+
     def _persist(url: str, text: str, html: str, final_url: str) -> tuple[Path, Path]:
         stem = _name_stem(final_url)
         txt_path = _TXT_DIR / f"{stem}.txt"
@@ -323,7 +327,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
             if text is None or html is None:
                 bd_failed_initial.append(url)
                 continue
-            final = final_url or url
+            final = _refine_with_canonical(final_url or url, html)
             _persist(url, text, html, final)
             # Don't write to sites.scrape_method — BD routing is governed by
             # bright_data_enabled, not by scrape_method. Tag for the run log.
@@ -340,7 +344,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
                 if text is None or html is None:
                     http_failed.append(url)
                     continue
-                final = final_url or url
+                final = _refine_with_canonical(final_url or url, html)
                 _persist(url, text, html, final)
                 d = _domain_of(final)
                 if d:
@@ -371,7 +375,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
                     f"playwright thin extract ({len(text) if text else 0} chars)",
                 ))
                 continue
-            final = final_url or url
+            final = _refine_with_canonical(final_url or url, html)
             _persist(url, text, html, final)
             d = _domain_of(final)
             if d:
@@ -403,7 +407,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
                     "error": f"{prior} | bd: {err or 'unknown'}",
                 })
                 continue
-            final = final_url or url
+            final = _refine_with_canonical(final_url or url, html)
             _persist(url, text, html, final)
             domain_method.setdefault(_domain_of(final) or "", "bright_data")
 

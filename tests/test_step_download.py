@@ -17,7 +17,7 @@ def _body(label: str) -> str:
 def _setup(tmp_db):
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="d1", db_path=tmp_db)
-    state.complete_step("init")
+    state.complete_step("start")
     state.complete_step("gather")
     state.headline_data = [
         {"source": "S", "title": "T1", "url": "https://example.com/a"},
@@ -205,7 +205,7 @@ def test_download_routes_bright_data_enabled_domain_through_bd(
     monkeypatch.setenv("BRIGHTDATA_API_KEY", "test-key")
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="bd1", db_path=tmp_db)
-    state.complete_step("init")
+    state.complete_step("start")
     state.complete_step("gather")
     state.headline_data = [
         {"source": "S", "title": "T", "url": "https://www.wsj.com/article-x"},
@@ -342,3 +342,160 @@ def test_download_respects_max_flag(tmp_path, tmp_db, monkeypatch):
         runner = CliRunner()
         runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1", "--max", "1"])
     assert len(calls) == 1
+
+
+def test_download_uses_canonical_url_when_present(tmp_path, tmp_db, monkeypatch):
+    """When the fetched HTML carries a same-domain <link rel='canonical'>,
+    final_url and the cache key should follow the canonical, not the
+    post-redirect URL."""
+    monkeypatch.chdir(tmp_path)
+    _setup(tmp_db)
+
+    canonical_html = (
+        '<html><head>'
+        '<link rel="canonical" href="https://example.com/canonical-a">'
+        '</head><body>' + ("body text " * 100) + '</body></html>'
+    )
+
+    def fake_http(url):
+        if url.endswith("/a"):
+            return _body("A"), canonical_html, "https://example.com/redirected-a", None
+        return _body("B"), "<html>nope</html>", "https://example.com/b", None
+
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http):
+        with patch("lib.steps.download.fetch_urls_html_batch"):
+            runner = CliRunner()
+            result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
+            assert result.exit_code == 0, result.output
+
+    with sqlite3.connect(tmp_db) as conn:
+        row = conn.execute(
+            "SELECT final_url FROM urls WHERE initial_url=?",
+            ("https://example.com/a",),
+        ).fetchone()
+    assert row[0] == "https://example.com/canonical-a"
+
+
+def test_download_ignores_cross_domain_canonical(tmp_path, tmp_db, monkeypatch):
+    """A canonical pointing to a different domain must be rejected; the
+    post-redirect URL wins."""
+    monkeypatch.chdir(tmp_path)
+    _setup(tmp_db)
+
+    hostile_html = (
+        '<html><head>'
+        '<link rel="canonical" href="https://attacker.com/take-over">'
+        '</head><body>' + ("body text " * 100) + '</body></html>'
+    )
+
+    def fake_http(url):
+        return _body("X"), hostile_html, "https://example.com/redirected-a", None
+
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http):
+        with patch("lib.steps.download.fetch_urls_html_batch"):
+            runner = CliRunner()
+            result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
+            assert result.exit_code == 0, result.output
+
+    with sqlite3.connect(tmp_db) as conn:
+        rows = {r[0] for r in conn.execute("SELECT final_url FROM urls").fetchall()}
+    assert "https://example.com/redirected-a" in rows
+    assert not any("attacker.com" in u for u in rows)
+
+
+def test_site_name_resolves_via_domain_regardless_of_source_label(tmp_path, tmp_db, monkeypatch):
+    """An article gathered with source='Hacker News' whose final_url is on
+    nytimes.com must be labeled with the NYT name from sites.name — no
+    aggregator allowlist required."""
+    monkeypatch.chdir(tmp_path)
+    init_db(tmp_db)
+    # Seed the publisher domain in sites.
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute(
+            "INSERT INTO sites(domain, name) VALUES(?, ?)",
+            ("nytimes.com", "The New York Times"),
+        )
+        conn.commit()
+
+    state = NewsletterAgentState(session_id="d1", db_path=tmp_db)
+    state.complete_step("start")
+    state.complete_step("gather")
+    state.headline_data = [
+        {"source": "Hacker News", "title": "T", "url": "https://news.ycombinator.com/item?id=1"},
+    ]
+    state.save_checkpoint("gather")
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute(
+            "INSERT INTO urls(initial_url, final_url, title, source) VALUES(?, ?, ?, ?)",
+            ("https://news.ycombinator.com/item?id=1",
+             "https://news.ycombinator.com/item?id=1",
+             "T", "Hacker News"),
+        )
+        conn.commit()
+
+    def fake_http(url):
+        # HN linkout resolves to NYT after redirect.
+        return _body("nyt"), "<html><body>" + ("text " * 200) + "</body></html>", \
+            "https://www.nytimes.com/2026/foo", None
+
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http):
+        with patch("lib.steps.download.fetch_urls_html_batch"):
+            runner = CliRunner()
+            result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
+            assert result.exit_code == 0, result.output
+
+    reloaded = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
+    h = reloaded.headline_data[0]
+    assert h.get("site_name") == "The New York Times", h
+
+
+def test_unknown_domain_triggers_sitename_llm_for_any_source(tmp_path, tmp_db, monkeypatch):
+    """The LLM-sitename resolution path used to fire only for aggregator
+    sources. It must now fire for any source whose final_url domain isn't
+    in sites."""
+    from lib.prompts.sitename import SitenameOutput, SitenameRecord
+
+    monkeypatch.chdir(tmp_path)
+    init_db(tmp_db)
+
+    state = NewsletterAgentState(session_id="d1", db_path=tmp_db)
+    state.complete_step("start")
+    state.complete_step("gather")
+    state.headline_data = [
+        # Direct (non-aggregator) source, unknown publisher domain.
+        {"source": "Some Direct Feed", "title": "T", "url": "https://brand-new-site.example/post"},
+    ]
+    state.save_checkpoint("gather")
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute(
+            "INSERT INTO urls(initial_url, final_url, title, source) VALUES(?, ?, ?, ?)",
+            ("https://brand-new-site.example/post",
+             "https://brand-new-site.example/post",
+             "T", "Some Direct Feed"),
+        )
+        conn.commit()
+
+    def fake_http(url):
+        return _body("x"), "<html><body>" + ("text " * 200) + "</body></html>", \
+            "https://brand-new-site.example/post", None
+
+    fake_result = SitenameOutput(results=[
+        SitenameRecord(id="0", domain="brand-new-site.example", site_name="Brand New Site"),
+    ])
+
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http), \
+         patch("lib.steps.download.fetch_urls_html_batch"), \
+         patch("lib.steps.download.call_prompt", return_value=fake_result) as call:
+        runner = CliRunner()
+        result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
+        assert result.exit_code == 0, result.output
+        # The LLM was actually consulted.
+        assert call.called
+        domains_sent = {item["domain"] for item in call.call_args.args[1]["items"]}
+        assert "brand-new-site.example" in domains_sent
+
+    with sqlite3.connect(tmp_db) as conn:
+        row = conn.execute(
+            "SELECT name FROM sites WHERE domain=?", ("brand-new-site.example",),
+        ).fetchone()
+    assert row is not None and row[0] == "Brand New Site"
