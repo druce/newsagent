@@ -1,19 +1,12 @@
 """Map article URLs to human-friendly source names.
 
-Articles gathered from aggregators (Feedly, NewsAPI, Techmeme) carry the
-aggregator name as their `source` field — but for display we want the
-underlying publisher (e.g. "Reuters", "TechCrunch") derived from the
-article's final URL.
-
-Lookup order:
+Resolution order:
   1. SQLite `sites.name` row (DB is the single source of truth; ~4k+ domains
      seeded from the legacy newsletter_agent.db migration).
      Tries the exact bare domain first, then strips leading subdomains.
-  2. Bare domain fallback (e.g. "calcalistech.com") if no row matches.
-
-Articles gathered directly from a configured non-aggregator source
-(e.g. Ars Technica, The Verge) already have the correct pretty name in
-`source`; we don't override those.
+  2. Gather-time source label (`fallback_source`), if provided.
+  3. Bare domain of `final_url`.
+  4. "Unknown".
 """
 from __future__ import annotations
 
@@ -21,11 +14,6 @@ import sqlite3
 from functools import lru_cache
 from typing import Optional
 from urllib.parse import urlparse
-
-
-# Aggregator source names from sources.yaml whose articles should be
-# re-attributed to the underlying publisher by URL.
-_AGGREGATORS: set[str] = {"Feedly AI", "NewsAPI", "Techmeme"}
 
 
 def _bare_domain(url: str | None) -> str:
@@ -72,19 +60,19 @@ def _load_db_map(db_path: str) -> dict[str, str]:
     return {d.lower(): n for d, n in rows}
 
 
-def _resolve_domain(domain: str, db_path: Optional[str]) -> str:
+def _resolve_domain(domain: str, db_path: Optional[str]) -> Optional[str]:
     """Look up the domain in the sites table, with subdomain stripping.
-    Returns the pretty name, or the bare domain as fallback.
+    Returns the pretty name, or None if no row matches.
     """
     if not domain:
-        return ""
+        return None
     if not db_path:
-        return domain
+        return None
     db_map = _load_db_map(db_path)
     for c in _candidate_domains(domain):
         if c in db_map:
             return db_map[c]
-    return domain
+    return None
 
 
 def pretty_source(
@@ -95,31 +83,28 @@ def pretty_source(
 ) -> str:
     """Best human-friendly source name for an article.
 
-    Logic:
-      - If `fallback_source` is a known aggregator (Feedly, NewsAPI, Techmeme),
-        re-attribute to the publisher derived from `final_url`.
-      - Otherwise prefer `fallback_source` (gather-time label is correct for
-        direct sources like Ars Technica or The Verge).
-      - Lookup chain: SQLite `sites.name` (with subdomain stripping)
-        → bare domain → 'Unknown'.
+    Resolution order:
+      1. If `final_url` resolves to a domain present in `sites.name`
+         (with subdomain stripping), return that name. This is the
+         authoritative path — the publisher is whoever's serving the URL.
+      2. Else, return `fallback_source` if provided. This covers headlines
+         that failed to download (no final_url) and unknown publishers where
+         the gather-time source label is the best we have.
+      3. Else, the bare domain of `final_url`.
+      4. Else, "Unknown".
 
     `db_path` is the SQLite database holding the `sites` table.
     Pass `None` to skip the DB lookup (useful in tests).
     """
-    is_aggregator = fallback_source in _AGGREGATORS
-
-    if is_aggregator:
-        domain = _bare_domain(final_url)
-        if domain:
-            return _resolve_domain(domain, db_path=db_path)
-        return fallback_source or "Unknown"
-
-    if fallback_source:
-        return fallback_source
-
     domain = _bare_domain(final_url)
     if domain:
-        return _resolve_domain(domain, db_path=db_path)
+        name = _resolve_domain(domain, db_path=db_path)
+        if name:
+            return name
+    if fallback_source:
+        return fallback_source
+    if domain:
+        return domain
     return "Unknown"
 
 
