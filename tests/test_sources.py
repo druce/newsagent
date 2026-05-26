@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 from lib.db import init_db
 from lib.sources import pretty_source, reset_db_cache
 
