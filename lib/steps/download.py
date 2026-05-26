@@ -185,12 +185,13 @@ def _llm_resolve_unknown_domains(unknown: set[str], db_path: str) -> int:
 
 def _populate_site_names(state: NewsletterAgentState, db_path: str) -> tuple[int, int]:
     """Set h['site_name'] on every headline. For any headline whose
-    final_url domain isn't yet in the sites table, LLM-resolve via the
-    sitename prompt and persist before assignment.
+    final_url (or fallback gather-time url) domain isn't yet in the sites
+    table, LLM-resolve via the sitename prompt and persist before assignment.
 
     No aggregator allowlist: the publisher domain wins regardless of
-    gather-time source label. Articles that failed to download (no
-    final_url) keep their gather-time source as the displayable name.
+    gather-time source label. Download failures fall back to the original
+    gather-time url's domain; pretty_source decides between sites.name,
+    the gather-time source label, the bare domain, or "Unknown".
 
     Returns (n_llm_resolved, n_headlines_with_site_name).
     """
