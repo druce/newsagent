@@ -445,6 +445,7 @@ def test_site_name_resolves_via_domain_regardless_of_source_label(tmp_path, tmp_
             assert result.exit_code == 0, result.output
 
     reloaded = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
+    assert reloaded is not None
     h = reloaded.headline_data[0]
     assert h.get("site_name") == "The New York Times", h
 
