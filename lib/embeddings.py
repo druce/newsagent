@@ -16,6 +16,8 @@ from lib.engines.base import EngineError
 
 _DEFAULT_MODEL = "text-embedding-3-large"
 _BATCH_SIZE = 256
+# OpenAI caps embeddings requests at 300k tokens. Keep headroom; ~4 chars/token.
+_MAX_CHARS_PER_REQUEST = 1_000_000
 
 
 def embed_texts(
@@ -31,11 +33,23 @@ def embed_texts(
 
     client = OpenAI(api_key=api_key)
     out: List[List[float]] = []
-    for i in range(0, len(texts), _BATCH_SIZE):
-        chunk = texts[i:i + _BATCH_SIZE]
+    i = 0
+    n = len(texts)
+    while i < n:
+        chunk: List[str] = []
+        char_budget = 0
+        j = i
+        while j < n and len(chunk) < _BATCH_SIZE:
+            t_len = len(texts[j])
+            if chunk and char_budget + t_len > _MAX_CHARS_PER_REQUEST:
+                break
+            chunk.append(texts[j])
+            char_budget += t_len
+            j += 1
         try:
             resp = client.embeddings.create(model=model, input=chunk)
         except Exception as exc:
             raise EngineError(f"OpenAI embeddings error: {exc}") from exc
         out.extend([d.embedding for d in resp.data])
+        i = j
     return out
