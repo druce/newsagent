@@ -33,10 +33,31 @@ _AGGREGATOR_HOSTS = frozenset({
 })
 _AGGREGATOR_REDIRECT_TIMEOUT_MS = 10_000
 
+# Hosts whose article body is rendered by client-side JS hydration AFTER
+# domcontentloaded fires. Snapshotting at DCL yields only nav chrome (~250
+# chars); waiting for the `load` event gets the full hydrated DOM (~13K chars
+# on a typical HackerNoon post). Bounded timeout so a long-polling resource
+# can't hang the whole batch.
+_HYDRATING_HOSTS = frozenset({
+    "hackernoon.com",
+})
+_HYDRATION_TIMEOUT_MS = 8_000
+
 
 def _is_aggregator(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host in _AGGREGATOR_HOSTS
+
+
+def _needs_hydration_wait(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    # Match bare domain plus any subdomain (e.g. www.hackernoon.com).
+    if host in _HYDRATING_HOSTS:
+        return True
+    for h in _HYDRATING_HOSTS:
+        if host.endswith("." + h):
+            return True
+    return False
 
 
 async def _await_aggregator_redirect(page) -> None:
@@ -50,6 +71,18 @@ async def _await_aggregator_redirect(page) -> None:
             lambda u: not _is_aggregator(u),
             timeout=_AGGREGATOR_REDIRECT_TIMEOUT_MS,
         )
+    except Exception:
+        pass
+
+
+async def _await_hydration(page) -> None:
+    """Wait for the `load` event on hosts where article body renders post-DCL
+    (Next.js SSR + client hydration). Bounded — if `load` never fires we just
+    capture whatever the DOM looks like after the timeout."""
+    if not _needs_hydration_wait(page.url):
+        return
+    try:
+        await page.wait_for_load_state("load", timeout=_HYDRATION_TIMEOUT_MS)
     except Exception:
         pass
 
@@ -109,6 +142,7 @@ async def fetch_url_html_async(
                 await _enable_fast_mode(page)
             await page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
             await _await_aggregator_redirect(page)
+            await _await_hydration(page)
             if initial_sleep > 0 or scroll > 0:
                 await asyncio.sleep(initial_sleep + random.uniform(0.5, 1.5))
             for _ in range(scroll):
@@ -170,6 +204,7 @@ async def fetch_urls_html_batch_async(
                             await _enable_fast_mode(page)
                         await page.goto(u, timeout=timeout_ms, wait_until="domcontentloaded")
                         await _await_aggregator_redirect(page)
+                        await _await_hydration(page)
                         html = await page.content()
                         results[u] = (html, page.url, None)
                     except Exception as exc:

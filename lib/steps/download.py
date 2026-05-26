@@ -54,7 +54,7 @@ _HTTP_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36"
 )
-_MIN_TEXT_CHARS = 500
+_MIN_TEXT_CHARS = 400
 
 
 def _name_stem(final_url: str) -> str:

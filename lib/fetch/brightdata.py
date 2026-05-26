@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - dep is in pyproject
     SyncBrightDataClient = None  # type: ignore[assignment,misc]
 
 
-_MIN_TEXT_CHARS = 500
+_MIN_TEXT_CHARS = 400
 _DEFAULT_TIMEOUT = 90
 _DEFAULT_CONCURRENCY = 8
 
