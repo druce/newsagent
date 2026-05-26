@@ -62,9 +62,11 @@ def test_rate_quality_default_engine():
     assert cfg.default_engine == "openai:gpt-4o-mini"
 
 
-def test_rate_quality_reasoning_effort():
+def test_rate_quality_reasoning_effort_omitted():
+    # gpt-4o-mini doesn't honor reasoning_effort; the prompt must opt out
+    # explicitly so openai_chat skips the kwarg instead of catch-and-retry.
     cfg = get_prompt("rate_quality")
-    assert cfg.reasoning_effort == 4
+    assert cfg.reasoning_effort is None
 
 
 def test_rate_quality_system_prompt_mentions_low_quality():
@@ -93,9 +95,9 @@ def test_rate_on_topic_default_engine():
     assert cfg.default_engine == "openai:gpt-4o-mini"
 
 
-def test_rate_on_topic_reasoning_effort():
+def test_rate_on_topic_reasoning_effort_omitted():
     cfg = get_prompt("rate_on_topic")
-    assert cfg.reasoning_effort == 4
+    assert cfg.reasoning_effort is None
 
 
 def test_rate_on_topic_system_prompt_mentions_ai_news():
@@ -125,9 +127,9 @@ def test_rate_importance_default_engine():
     assert cfg.default_engine == "openai:gpt-4o-mini"
 
 
-def test_rate_importance_reasoning_effort():
+def test_rate_importance_reasoning_effort_omitted():
     cfg = get_prompt("rate_importance")
-    assert cfg.reasoning_effort == 4
+    assert cfg.reasoning_effort is None
 
 
 def test_rate_importance_system_prompt_mentions_importance():

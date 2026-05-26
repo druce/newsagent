@@ -146,18 +146,19 @@ def bradley_terry_scores(
     items: List[dict],
     max_rounds: Optional[int] = None,
     items_per_battle: int = _BATTLE_BATCH_SIZE,
-    progress_callback: Optional[Callable[[int, int, int], None]] = None,
+    progress_callback: Optional[Callable[..., None]] = None,
 ) -> Dict[str, float]:
     """Run iterative Swiss-paired battles and return final Bradley-Terry scores.
 
-    This is the high-level orchestrator that drives LLM battle calls. It is
-    intentionally not unit-tested (requires LLM mocks); call the two pure helpers
-    directly in tests.
+    Stops early once ranking changes between rounds fall below a convergence
+    threshold (legacy do_rating.py:341-370 parity).
 
     Args:
         items: List of dicts with "id", "title", "summary".
         max_rounds: Maximum Swiss rounds to run. Defaults to ceil((n-1)/(batch-1)).
         items_per_battle: Number of items per LLM battle call.
+        progress_callback: Called as (round, max_rounds, n_batches, avg_rank_change).
+            avg_rank_change is None on the first round (no prior ordering).
 
     Returns:
         Dict mapping id -> Bradley-Terry score (log-odds scale).
@@ -177,6 +178,12 @@ def bradley_terry_scores(
         aid: 1.0 - (i / max(n - 1, 1))
         for i, aid in enumerate(ids)
     }
+
+    # Convergence-control state (legacy do_rating.py:274-281)
+    convergence_threshold = max(1.0, n * 0.005)
+    min_rounds = max(3, max_rounds // 3)
+    rank_changes: List[float] = []
+    prev_ranking: List[str] = sorted(ids, key=lambda i: current_scores[i], reverse=True)
 
     battle_history: Set[Tuple[str, str]] = set()
     all_battles: List[Tuple[str, str]] = []
@@ -225,7 +232,27 @@ def bradley_terry_scores(
         if all_battles:
             current_scores = bradley_terry_from_battles(ids, all_battles)
 
+        # Convergence check (legacy do_rating.py:341-370). Use positional
+        # displacement: sum |new_rank - old_rank| over all items, normalized.
+        new_ranking = sorted(ids, key=lambda i: current_scores[i], reverse=True)
+        new_pos = {aid: idx for idx, aid in enumerate(new_ranking)}
+        old_pos = {aid: idx for idx, aid in enumerate(prev_ranking)}
+        avg_change = sum(abs(new_pos[aid] - old_pos[aid]) for aid in ids) / n
+        rank_changes.append(avg_change)
+        prev_ranking = new_ranking
+
         if progress_callback is not None:
-            progress_callback(_round + 1, max_rounds, len(batches))
+            progress_callback(_round + 1, max_rounds, len(batches), avg_change)
+
+        # Only check convergence once we have more than min_rounds samples.
+        if len(rank_changes) > min_rounds:
+            last_two = (rank_changes[-1] + rank_changes[-2]) / 2
+            if last_two < convergence_threshold:
+                break
+            if len(rank_changes) >= 4:
+                prev_two = (rank_changes[-3] + rank_changes[-4]) / 2
+                # Bouncing around the noise floor — gains are no longer meaningful.
+                if last_two < n / 5 and last_two > prev_two:
+                    break
 
     return current_scores

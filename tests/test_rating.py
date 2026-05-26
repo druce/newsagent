@@ -2,13 +2,24 @@
 
 No LLM calls — uses synthetic battle outcomes.
 """
+from dataclasses import dataclass
+from typing import List as _List
+
 import pytest
+
 from lib.engines.base import EngineError
 from lib.rating import (
     _call_battle_with_retry,
     bradley_terry_from_battles,
+    bradley_terry_scores,
     swiss_pairing,
 )
+
+
+@dataclass
+class _FakeRanking:
+    """Stand-in for the BATTLE_PROMPT output object (only `.ranking` is read)."""
+    ranking: _List[str]
 
 
 def test_swiss_pairing_pairs_adjacent_by_score():
@@ -136,3 +147,76 @@ def test_battle_retry_does_not_retry_on_4xx(monkeypatch):
         _call_battle_with_retry({"items": [1]})
     assert attempts["n"] == 1
     assert sleeps == []
+
+
+# ---------------------------------------------------------------------------
+# bradley_terry_scores — convergence early-stop
+# ---------------------------------------------------------------------------
+
+
+def test_bradley_terry_scores_stops_early_when_converged(monkeypatch):
+    """If the LLM judge returns a perfectly consistent ranking every round,
+    rank positions stop changing after the first couple of rounds and we
+    should break out well before max_rounds."""
+    # 20 items, a stable identity ranking
+    n = 20
+    items = [{"id": f"id{i}", "title": f"t{i}", "summary": f"s{i}"} for i in range(n)]
+
+    rounds_seen = []
+
+    def fake_call_prompt(name, item):
+        # Judge always ranks the input items in their original numeric order;
+        # this means after round 1 the BT ordering matches forever.
+        ordered = sorted(item["items"], key=lambda x: int(x["id"][2:]))
+        return _FakeRanking(ranking=[x["id"] for x in ordered])
+
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: None)
+
+    def _cb(rnd, _max_rnd, _n_b, _avg):
+        rounds_seen.append(rnd)
+
+    scores = bradley_terry_scores(items, progress_callback=_cb)
+
+    # max_rounds for n=20 with items_per_battle=6 is ceil(19/5) = 4, so min_rounds = max(3, 4//3) = 3.
+    # Convergence can only fire after >min_rounds samples (i.e. round 4+). For
+    # this tiny n the loop will likely just exhaust the round budget OR break
+    # because Swiss pairing runs out of fresh pairs. The contract we verify is
+    # weaker: it must not exceed max_rounds (no regression), it must produce
+    # scores for every id, and ordering must be monotone with the judge.
+    assert max(rounds_seen) <= 4  # max_rounds for n=20 / batch 6
+    assert set(scores.keys()) == {item["id"] for item in items}
+    # Lower-numbered ids win every battle → highest BT scores.
+    ordered_ids = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
+    assert ordered_ids[0] == "id0"
+    assert ordered_ids[-1] == f"id{n - 1}"
+
+
+def test_bradley_terry_scores_break_short_circuits_below_max(monkeypatch):
+    """Use a larger n so max_rounds is big enough to actually test early-stop.
+    With a perfectly stable judge, convergence should fire after min_rounds+1."""
+    n = 60  # max_rounds = ceil(59/5) = 12, min_rounds = max(3, 12//3) = 4.
+    items = [{"id": f"id{i:03d}", "title": "", "summary": ""} for i in range(n)]
+
+    rounds_seen = []
+
+    def fake_call_prompt(name, item):
+        ordered = sorted(item["items"], key=lambda x: int(x["id"][2:]))
+        return _FakeRanking(ranking=[x["id"] for x in ordered])
+
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: None)
+
+    def _cb(rnd, max_rnd, _n_b, _avg):
+        rounds_seen.append((rnd, max_rnd))
+
+    bradley_terry_scores(items, progress_callback=_cb)
+
+    actual_max = rounds_seen[-1][0]
+    budget = rounds_seen[-1][1]
+    # Must run at least min_rounds+1 = 5 rounds (so >min_rounds samples exist
+    # before convergence check runs), but must stop strictly before budget.
+    assert actual_max >= 5
+    assert actual_max < budget, (
+        f"Expected early stop before max_rounds={budget}, got {actual_max}"
+    )

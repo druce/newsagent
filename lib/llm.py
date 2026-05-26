@@ -23,7 +23,7 @@ class PromptConfig:
     input_schema: Type[BaseModel]
     output_schema: Type[BaseModel]
     default_engine: Optional[str]
-    reasoning_effort: int = 4  # 0-10 scale
+    reasoning_effort: Optional[int] = 4  # 0-10 scale; None to omit the param entirely
 
 
 _registry: Dict[str, PromptConfig] = {}

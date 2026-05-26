@@ -35,6 +35,7 @@ import math
 import re
 import sqlite3
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -55,6 +56,9 @@ from lib.state import NewsletterAgentState
 from lib.utilities import send_gmail, write_short_digest
 
 _BATCH = 25
+# All three axes' batches fan out into one pool. OpenAI tier-1 RPM caps around
+# 500/min for gpt-4o-mini, well above what 16 in-flight requests will sustain.
+_PER_AXIS_PARALLELISM = 16
 _URL_DATE_RE = re.compile(r"/(20\d\d)[/-](\d{1,2})[/-](\d{1,2})(?:[/-]|$)")
 _RECENCY_K = math.log(2)  # half-life: 1 day
 
@@ -65,14 +69,22 @@ def _collect_confidences(
     items: List[dict],
     prompt_name: str,
     engine: str | None,
+    *,
+    parallelism: int = _PER_AXIS_PARALLELISM,
 ) -> Dict[str, float]:
-    """Call the given rating prompt in batches; return {id: confidence}."""
+    """Call the given rating prompt in batches concurrently; return {id: confidence}."""
+    batches = [items[i:i + _BATCH] for i in range(0, len(items), _BATCH)]
+    n_batches = len(batches)
+    click.echo(f"  {prompt_name}: dispatching {n_batches} batch(es), parallelism={parallelism}")
+
+    def _one(batch):
+        return call_prompt(prompt_name, {"items": batch}, engine=engine)
+
+    with ThreadPoolExecutor(max_workers=parallelism) as pool:
+        outs = list(pool.map(_one, batches))
+
     result: Dict[str, float] = {}
-    n_batches = math.ceil(len(items) / _BATCH)
-    for batch_idx, batch_start in enumerate(range(0, len(items), _BATCH), start=1):
-        batch = items[batch_start:batch_start + _BATCH]
-        click.echo(f"  {prompt_name}: batch {batch_idx}/{n_batches} ({len(batch)} items)")
-        out = call_prompt(prompt_name, {"items": batch}, engine=engine)
+    for out in outs:
         for sc in out.results_list:
             result[sc.id] = sc.confidence
     return result
@@ -268,16 +280,18 @@ def cli(
 
     click.echo(f"Rating {len(items)} articles across 3 axes + Bradley-Terry battles.")
 
-    # --- Per-axis confidence scores ---
-    click.echo("[1/4] rate_quality")
-    quality_dict = _collect_confidences(items, "rate_quality", engine)
-    click.echo("[2/4] rate_on_topic")
-    on_topic_dict = _collect_confidences(items, "rate_on_topic", engine)
-    click.echo("[3/4] rate_importance")
-    importance_dict = _collect_confidences(items, "rate_importance", engine)
+    # --- Per-axis confidence scores (all 3 axes run concurrently) ---
+    click.echo("[1/4] Rating quality, on_topic, importance concurrently")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        fut_quality = pool.submit(_collect_confidences, items, "rate_quality", engine)
+        fut_on_topic = pool.submit(_collect_confidences, items, "rate_on_topic", engine)
+        fut_importance = pool.submit(_collect_confidences, items, "rate_importance", engine)
+        quality_dict = fut_quality.result()
+        on_topic_dict = fut_on_topic.result()
+        importance_dict = fut_importance.result()
 
     # --- Bradley-Terry ---
-    click.echo("[4/4] Bradley-Terry Swiss-paired battles")
+    click.echo("[2/2] Bradley-Terry Swiss-paired battles")
     bt_items = [
         {
             "id": str(i),
@@ -287,8 +301,10 @@ def cli(
         for i in rated_indices
     ]
 
-    def _bt_progress(round_done: int, total_rounds: int, n_battles: int) -> None:
-        click.echo(f"  BT round {round_done}/{total_rounds} ({n_battles} battles)")
+    def _bt_progress(round_done: int, total_rounds: int, n_battles: int,
+                     avg_change: float | None = None) -> None:
+        suffix = f", avg rank chg {avg_change:.2f}" if avg_change is not None else ""
+        click.echo(f"  BT round {round_done}/{total_rounds} ({n_battles} battles{suffix})")
 
     raw_bt = bradley_terry_scores(bt_items, progress_callback=_bt_progress)
     bt_z = _z_score(raw_bt)

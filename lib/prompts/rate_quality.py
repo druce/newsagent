@@ -47,7 +47,7 @@ RATE_QUALITY = PromptConfig(
     input_schema=RatingInput,
     output_schema=RatingOutput,
     default_engine="openai:gpt-4o-mini",
-    reasoning_effort=4,
+    reasoning_effort=None,  # gpt-4o-mini doesn't honor reasoning_effort
 )
 
 register_prompt(RATE_QUALITY)

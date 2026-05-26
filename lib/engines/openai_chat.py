@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Callable, Type
+from typing import Callable, Optional, Type
 
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
@@ -42,7 +42,7 @@ def _strictify_schema(schema):
 
 def openai_chat_engine(model_id: str) -> Callable[..., BaseModel]:
     def _call(system: str, user: str, schema: Type[BaseModel],
-              reasoning_effort: int = 4) -> BaseModel:
+              reasoning_effort: Optional[int] = 4) -> BaseModel:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise EngineError("OPENAI_API_KEY not set in environment")
@@ -63,8 +63,13 @@ def openai_chat_engine(model_id: str) -> Callable[..., BaseModel]:
                     "schema": _strictify_schema(schema.model_json_schema()),
                 },
             },
-            "reasoning_effort": _effort_level(reasoning_effort),
         }
+        # Only attach reasoning_effort for models that honor it. Prompts can
+        # opt out by setting reasoning_effort=None on their PromptConfig (e.g.
+        # gpt-4o-mini rejects the param outright, which otherwise burns a
+        # round-trip via the fallback retry below).
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = _effort_level(reasoning_effort)
 
         try:
             resp = client.chat.completions.create(**kwargs)
