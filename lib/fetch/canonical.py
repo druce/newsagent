@@ -40,7 +40,8 @@ def extract_canonical_url(html: str, page_url: str) -> Optional[str]:
         return None
 
     for link in soup.find_all("link", rel="canonical"):
-        href = (link.get("href") or "").strip()
+        href_val = link.get("href")
+        href: str = str(href_val).strip() if href_val else ""
         if not href:
             continue
         try:
