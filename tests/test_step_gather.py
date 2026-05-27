@@ -19,8 +19,8 @@ def _make_session(tmp_db, sources_yaml_path):
         session_id="g1", db_path=tmp_db,
         sources_file=sources_yaml_path, sources=sources,
     )
-    state.complete_step("init")
-    state.save_checkpoint("init")
+    state.complete_step("start")
+    state.save_checkpoint("start")
     return state
 
 

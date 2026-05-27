@@ -34,7 +34,7 @@ def _seed_state(
 ) -> NewsletterAgentState:
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
-    for s in ["init", "gather", "filter", "download", "dedupe",
+    for s in ["start", "gather", "filter", "download", "dedupe",
               "summarize", "rate", "cluster"]:
         state.complete_step(s)
 

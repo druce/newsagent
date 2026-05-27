@@ -5,7 +5,7 @@ description: Multi-axis confidence rating + Bradley-Terry composite scoring for 
 
 # newsagent:rate
 
-Step 7 of /newsagent:run.
+Step 7 of /newsagent:pipeline.
 
 ## How to invoke
 

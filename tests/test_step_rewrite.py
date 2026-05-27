@@ -34,7 +34,7 @@ def _seed_state(tmp_db: str, session_id: str = "s1") -> NewsletterAgentState:
     """Create state with two sections already drafted."""
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
-    for s in ["init", "gather", "filter", "download", "summarize",
+    for s in ["start", "gather", "filter", "download", "summarize",
               "rate", "cluster", "select", "draft"]:
         state.complete_step(s)
 
@@ -233,6 +233,7 @@ def test_rewrite_apply_writes_final_newsletter(tmp_db, monkeypatch, tmp_path):
     apply_res = runner.invoke(rewrite_cli, [
         "--db", tmp_db, "--session", "r_apply",
         "--apply-results", str(results_dir),
+        "--no-email",
     ])
     assert apply_res.exit_code == 0, apply_res.output
 
@@ -240,3 +241,55 @@ def test_rewrite_apply_writes_final_newsletter(tmp_db, monkeypatch, tmp_path):
     assert state.newsletter_title == "AI Weekly Roundup"
     assert state.final_newsletter.startswith("# AI Weekly Roundup")
     assert "## OpenAI" in state.final_newsletter
+    # Auto-send: rewrite must have written the HTML and inserted a newsletters row
+    out_html = Path("out") / f"{__import__('datetime').date.today().isoformat()}.html"
+    assert out_html.exists(), "rewrite should have written the newsletter HTML"
+    import sqlite3 as _sql
+    with _sql.connect(tmp_db) as conn:
+        rows = conn.execute(
+            "SELECT title FROM newsletters WHERE session_id='r_apply'"
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "AI Weekly Roundup"
+
+
+def test_rewrite_auto_sends_email_after_apply(tmp_db, monkeypatch, tmp_path):
+    """rewrite --apply-results triggers send_gmail when creds are set."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GMAIL_USER", "me@example.com")
+    monkeypatch.setenv("GMAIL_PASSWORD", "app-pw")
+    _seed_state(tmp_db, session_id="r_email")
+
+    from lib.steps.rewrite import cli as rewrite_cli
+
+    calls = []
+    monkeypatch.setattr(
+        "lib.steps.send.send_gmail",
+        lambda subject, html, *, to=None: calls.append((subject, to)),
+    )
+
+    runner = CliRunner()
+    prep = runner.invoke(rewrite_cli, [
+        "--db", tmp_db, "--session", "r_email", "--prepare-batches",
+    ])
+    assert prep.exit_code == 0, prep.output
+
+    results_dir = Path("runs/r_email/rewrite-results")
+    results_dir.mkdir(parents=True)
+    (results_dir / "batch-000.json").write_text(json.dumps({
+        "final_newsletter_markdown": "## OpenAI\n- ships GPT-6",
+        "title": "Daily AI",
+        "iterations": 1,
+        "scores": [8.5],
+        "feedbacks": ["good"],
+        "accepted": True,
+    }))
+
+    apply_res = runner.invoke(rewrite_cli, [
+        "--db", tmp_db, "--session", "r_email",
+        "--apply-results", str(results_dir),
+    ])
+    assert apply_res.exit_code == 0, apply_res.output
+
+    assert len(calls) == 1, f"expected one Gmail send, got {len(calls)}"
+    assert "Daily AI" in calls[0][0]

@@ -2,10 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(.venv/bin/pytest *)",
+      "Bash(.venv/bin/python -m lib.steps.* *)",
       "Bash(cd /Users/drucev/projects/newsagent && .venv/bin/python tools/check_batch.py *)",
       "Bash(.venv/bin/python tools/check_batch.py *)",
+      "Bash(python tools/check_batch.py *)",
+      "Bash(cat skills/*)",
+      "Bash(cat lib/*)",
+      "Bash(cat tools/*)",
+      "Bash(cat tests/*)",
       "Read(//Users/drucev/projects/newsagent/runs/**)",
       "Write(//Users/drucev/projects/newsagent/runs/**)",
+      "Read(runs/**)",
+      "Write(runs/**)",
       "Read(//Users/drucev/projects/newsagent/download/**)",
       "Read(//Users/drucev/projects/newsagent/lib/**)",
       "Read(//Users/drucev/projects/newsagent/skills/**)",

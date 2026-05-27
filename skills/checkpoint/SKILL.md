@@ -44,7 +44,7 @@ itself, but triggered manually from the CLI.
 
 - A step ran to completion but crashed before its final `save_checkpoint()` call.
 - You manually edited state (e.g. via SQLite CLI) and want to persist the result.
-- You need to re-point `newsagent:resume` to a different step without re-running the step.
+- You need to re-point `newsagent:recover` to a different step without re-running the step.
 
 ## Output
 
@@ -62,5 +62,5 @@ Checkpoint saved: session=my-session, step=gather
 
 - If a row for `(SID, STEP)` already exists it is overwritten (upsert semantics).
 - The `STEP` argument is free-form text — it does not have to be one of the 11
-  canonical workflow step names, but using a canonical name keeps `newsagent:status`
-  and `newsagent:resume` consistent.
+  canonical workflow step names, but using a canonical name keeps `newsagent:progress`
+  and `newsagent:recover` consistent.

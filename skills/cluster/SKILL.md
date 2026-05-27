@@ -5,7 +5,7 @@ description: Group summarized headlines into topical clusters using UMAP dimensi
 
 # newsagent:cluster
 
-Step 8 of /newsagent:run. Two execution paths:
+Step 8 of /newsagent:pipeline. Two execution paths:
 
 1. **Interactive** — preferred when running through Claude Code: parent Claude
    dispatches a single Haiku subagent that names every cluster in one call.

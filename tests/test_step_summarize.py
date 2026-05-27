@@ -21,7 +21,7 @@ def _seed(tmp_db, tmp_path):
     article_file.write_text("This is a detailed AI article about GPT-6 capabilities and market impact.")
 
     state = NewsletterAgentState(session_id="s1", db_path=tmp_db)
-    state.complete_step("init")
+    state.complete_step("start")
     state.complete_step("gather")
     state.complete_step("filter")
     state.complete_step("download")
@@ -97,6 +97,26 @@ def test_summarize_skips_no_text_path(tmp_db, monkeypatch, tmp_path):
     state = NewsletterAgentState(session_id="s1", db_path=tmp_db).load_latest_from_db()
     no_text_path = [h for h in state.headline_data if "text_path" not in h]
     assert all("summary" not in h for h in no_text_path)
+
+
+def test_write_batches_short_circuits_on_char_budget(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from lib.steps import summarize as summ
+
+    # 10 items at 10K chars each = 100K chars. With _MAX_BATCH_CHARS=80K
+    # the writer should produce >=2 batches even though batch_size=15 allows all in one.
+    items = [
+        {"id": str(i), "title": f"Article {i}", "text": "x" * 10_000}
+        for i in range(10)
+    ]
+    _, paths = summ._write_batches("s_budget", items, batch_size=15)
+    assert len(paths) >= 2, f"expected budget-triggered split, got {len(paths)} batch(es)"
+
+    # Sanity: each batch's items should sum under the budget (modulo one item).
+    for p in paths:
+        data = json.loads(p.read_text())
+        # items_lite no longer carries text; user_prompt is the size signal.
+        assert len(data["user_prompt"]) <= summ._MAX_BATCH_CHARS + 12_000
 
 
 def test_summarize_writes_report(tmp_db, monkeypatch, tmp_path):

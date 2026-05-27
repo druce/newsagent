@@ -63,8 +63,8 @@ def cli(session_id: str, db_path: str, errors: bool, from_step: str | None,
     else:
         state.reset()
 
-    # Save checkpoint at whatever the current step is (or init if none)
-    current = state.get_current_step() or "init"
+    # Save checkpoint at whatever the current step is (or start if none)
+    current = state.get_current_step() or "start"
     state.save_checkpoint(current)
     click.echo(f"Reset complete ({action}).")
 

@@ -12,7 +12,7 @@ from lib.prompts.filter_urls import FilterUrlsOutput, HeadlineClassification
 def _seed(tmp_db):
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="f1", db_path=tmp_db)
-    state.complete_step("init")
+    state.complete_step("start")
     state.complete_step("gather")
     state.headline_data = [
         {"source": "S", "title": "OpenAI ships GPT-6", "url": "https://e.com/a"},

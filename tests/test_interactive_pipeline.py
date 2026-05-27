@@ -29,7 +29,7 @@ def tmp_db(tmp_path):
 def _seed_for_cluster(tmp_db, session_id):
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
-    for step in ("init", "gather", "filter", "download", "dedupe", "summarize", "rate"):
+    for step in ("start", "gather", "filter", "download", "dedupe", "summarize", "rate"):
         state.complete_step(step)
     headlines = []
     for i in range(6):

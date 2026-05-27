@@ -12,8 +12,8 @@ def _make_session(db_path: str, sid: str, days_ago: int, runs_dir: Path) -> None
     """Create a session updated `days_ago` days ago, plus a runs/<sid>/ directory."""
     init_db(db_path)
     state = NewsletterAgentState(session_id=sid, db_path=db_path)
-    state.complete_step("init")
-    state.save_checkpoint("init")
+    state.complete_step("start")
+    state.save_checkpoint("start")
 
     # Back-date the updated_at row to simulate old session
     old_ts = (datetime.now() - timedelta(days=days_ago)).isoformat()

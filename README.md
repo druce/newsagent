@@ -26,7 +26,7 @@ python -m venv .venv
 cp ~/projects/OpenAIAgentsSDK/umap_reducer.pkl ./
 
 # 4. Run the full pipeline (writes a newsletter to out/<date>.html)
-.venv/bin/python -m lib.steps.run --sources sources.yaml
+.venv/bin/python -m lib.steps.pipeline --sources sources.yaml
 ```
 
 ## API keys
@@ -57,14 +57,14 @@ The default engine for every prompt is `"subagent"` — that uses your Claude Co
 
 ```bash
 # Fresh full run — creates a new session, runs all 12 steps, writes out/<date>.html
-.venv/bin/python -m lib.steps.run --sources sources.yaml
+.venv/bin/python -m lib.steps.pipeline --sources sources.yaml
 
 # All steps with a specific engine forced for LLM prompts
-.venv/bin/python -m lib.steps.run --sources sources.yaml \
+.venv/bin/python -m lib.steps.pipeline --sources sources.yaml \
     --engine openrouter:google/gemini-2.5-flash
 
 # Skip Gmail prompt (default — Phase 2 ships preview-only)
-.venv/bin/python -m lib.steps.run --sources sources.yaml --no-summary
+.venv/bin/python -m lib.steps.pipeline --sources sources.yaml --no-summary
 ```
 
 When `run` finishes you get:
@@ -78,7 +78,7 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 
 ```bash
 # Create a session
-.venv/bin/python -m lib.steps.init --sources sources.yaml --session demo-1
+.venv/bin/python -m lib.steps.start --sources sources.yaml --session demo-1
 # → "Session created: demo-1"
 
 # Fetch headlines from all enabled sources
@@ -86,7 +86,7 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 # → "Gathered N new headlines from M sources."
 
 # Inspect what we just gathered
-.venv/bin/python -m lib.steps.status --session demo-1
+.venv/bin/python -m lib.steps.progress --session demo-1
 .venv/bin/python -m lib.steps.show demo-1
 
 # LLM-filter AI-relevant headlines
@@ -146,7 +146,7 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 ### Quick check (most recent session)
 
 ```bash
-.venv/bin/python -m lib.steps.status
+.venv/bin/python -m lib.steps.progress
 ```
 
 Output:
@@ -203,13 +203,13 @@ Shows side-by-side metrics and URL overlap (Jaccard).
 
 ```bash
 # See where it stopped
-.venv/bin/python -m lib.steps.status --session demo-1
+.venv/bin/python -m lib.steps.progress --session demo-1
 
 # Clear error markers and print the next step to invoke
-.venv/bin/python -m lib.steps.resume demo-1
+.venv/bin/python -m lib.steps.recover demo-1
 
 # Re-enter the pipeline from the first incomplete step
-.venv/bin/python -m lib.steps.run --resume demo-1
+.venv/bin/python -m lib.steps.pipeline --resume demo-1
 ```
 
 ### Force a specific step to redo
@@ -225,7 +225,7 @@ Shows side-by-side metrics and URL overlap (Jaccard).
 .venv/bin/python -m lib.steps.reset demo-1 --all --yes
 
 # Then resume
-.venv/bin/python -m lib.steps.run --resume demo-1
+.venv/bin/python -m lib.steps.pipeline --resume demo-1
 ```
 
 ### Continue with engine override
@@ -253,7 +253,7 @@ Never touches `articles`, `urls`, `newsletters`, `sites` tables — those are co
 ## Pipeline reference
 
 ```
-init → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send
+start → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send
 ```
 
 Plus the standalone Bluesky digest and recovery/maintenance skills.
@@ -262,7 +262,7 @@ Plus the standalone Bluesky digest and recovery/maintenance skills.
 
 | Skill | Phase | What it does |
 |---|---|---|
-| `newsagent:init` | 0 | Create session, validate `sources.yaml`. |
+| `newsagent:start` | 0 | Create session, validate `sources.yaml`. |
 | `newsagent:gather` | 2 | Fetch from RSS / HTML / REST. HTML uses adaptive scraping (httpx + BeautifulSoup → Playwright fallback, memoized in `sites.scrape_method`). |
 | `newsagent:filter` | 3 | LLM-classify AI relevance; drop non-AI by default. |
 | `newsagent:download` | 2 | Playwright fetch + trafilatura extract. |
@@ -275,9 +275,9 @@ Plus the standalone Bluesky digest and recovery/maintenance skills.
 | `newsagent:rewrite` | 5 | Whole-newsletter critic-optimizer + title generation. |
 | `newsagent:send` | 2 | Render HTML, write `out/<date>.html` + `out/latest.html`. |
 | `newsagent:bluesky` | 7 | Standalone Bluesky digest. |
-| `newsagent:run` | 6 | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
-| `newsagent:status`, `sessions`, `show` | 0/2 | State inspection. |
-| `newsagent:resume`, `reset` | 2 | Error recovery. |
+| `newsagent:pipeline` | 6 | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
+| `newsagent:progress`, `sessions`, `show` | 0/2 | State inspection. |
+| `newsagent:recover`, `reset` | 2 | Error recovery. |
 | `newsagent:diff`, `gc`, `checkpoint` | 8 | Maintenance. |
 
 ---
@@ -310,17 +310,17 @@ Engine identifier formats:
 
 ```bash
 # One engine for all LLM prompts in a single run
-.venv/bin/python -m lib.steps.run --engine openai:gpt-4o-mini
+.venv/bin/python -m lib.steps.pipeline --engine openai:gpt-4o-mini
 
 # Override a single prompt globally via env var
 NEWS_PROMPT_RATE_QUALITY_ENGINE=openai:gpt-4o-mini \
-  .venv/bin/python -m lib.steps.run
+  .venv/bin/python -m lib.steps.pipeline
 
 # Stack overrides (rate uses Gemini, everything else default subagent)
 NEWS_PROMPT_RATE_QUALITY_ENGINE=google:gemini-2.5-flash \
 NEWS_PROMPT_RATE_ON_TOPIC_ENGINE=google:gemini-2.5-flash \
 NEWS_PROMPT_RATE_IMPORTANCE_ENGINE=google:gemini-2.5-flash \
-  .venv/bin/python -m lib.steps.run
+  .venv/bin/python -m lib.steps.pipeline
 ```
 
 ---

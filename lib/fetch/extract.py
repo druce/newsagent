@@ -12,14 +12,10 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from lib.fetch.types import Article
+from lib.utilities import clean_url
 
 
 _DEFAULT_MINLENGTH = 28
-
-
-def _clean_url(url: str) -> str:
-    """Strip fragments/empty queries; minimal normalization."""
-    return url.split("#")[0]
 
 
 def extract_article_links(
@@ -50,7 +46,7 @@ def extract_article_links(
         if re.match(r"^\d+$", text):  # bare numbers (comment counts on Ars, etc.)
             continue
         absolute = urljoin(base_url, href)
-        absolute = _clean_url(absolute)
+        absolute = clean_url(absolute)
         if not absolute.startswith("http"):  # drop javascript:, mailto:, etc.
             continue
         path = urlparse(absolute).path

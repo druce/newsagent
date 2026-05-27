@@ -119,6 +119,38 @@ def _write_batch(session_id: str, clusters: list[dict]) -> Path:
     return path
 
 
+def _metrics_sidecar(session_id: str) -> Path:
+    return Path("runs") / session_id / _BATCHES_SUBDIR / "metrics.json"
+
+
+def _save_metrics(session_id: str, metrics: dict, n_candidates: int) -> None:
+    sidecar = _metrics_sidecar(session_id)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "n_candidates": n_candidates,
+        "noise_ratio": metrics.get("noise_ratio", 0.0),
+        "silhouette": metrics.get("silhouette"),
+        "best_params": metrics.get("best_params", {}),
+    }
+    sidecar.write_text(json.dumps(payload, indent=2))
+
+
+def _load_metrics(session_id: str) -> tuple[dict, Optional[int]]:
+    sidecar = _metrics_sidecar(session_id)
+    if not sidecar.exists():
+        return {}, None
+    try:
+        data = json.loads(sidecar.read_text())
+    except json.JSONDecodeError:
+        return {}, None
+    metrics = {
+        "noise_ratio": data.get("noise_ratio", 0.0),
+        "silhouette": data.get("silhouette"),
+        "best_params": data.get("best_params", {}),
+    }
+    return metrics, data.get("n_candidates")
+
+
 def _load_results(results_dir: Path, expected_ids: set[str]) -> tuple[dict[str, str], list[str]]:
     """Returns (names: cluster_id -> name, problems)."""
     names: dict[str, str] = {}
@@ -244,6 +276,7 @@ def cli(
             return
         # Persist cluster_id assignments now so apply can read them.
         state.save_checkpoint("cluster")
+        _save_metrics(session_id, metrics, len(candidates))
         clusters_for_batch = _build_batch_clusters(cluster_to_headlines)
         path = _write_batch(session_id, clusters_for_batch)
         click.echo(f"Prepared 1 batch ({len(clusters_for_batch)} clusters): {path}")
@@ -282,7 +315,10 @@ def cli(
             }
             for name, urls in state.clusters.items()
         }
-        _write_report(session_id, len(state.headline_data), n_clusters, noise_count, {}, cluster_summary)
+        metrics, n_candidates = _load_metrics(session_id)
+        if n_candidates is None:
+            n_candidates = sum(1 for h in state.headline_data if h.get("cluster_id") is not None)
+        _write_report(session_id, n_candidates, n_clusters, noise_count, metrics, cluster_summary)
         click.echo(f"Cluster: {n_clusters} clusters, {noise_count} noise points.")
         return
 

@@ -252,6 +252,44 @@ def main() -> int:
                 f"iterations={result['iterations']}, accepted={result['accepted']}"
             )
             return 0
+
+        # Rewrite batches also have no 'ids'; validate as a single RewriteResult object.
+        required_rewrite_fields = {
+            "final_newsletter_markdown", "title", "iterations", "scores", "feedbacks", "accepted"
+        }
+        if isinstance(result, dict) and required_rewrite_fields.issubset(result.keys()):
+            errors = []
+            if not isinstance(result["final_newsletter_markdown"], str) or not result["final_newsletter_markdown"]:
+                errors.append("'final_newsletter_markdown' must be a non-empty string")
+            if not isinstance(result["title"], str) or not result["title"]:
+                errors.append("'title' must be a non-empty string")
+            if not isinstance(result["iterations"], int) or result["iterations"] < 1:
+                errors.append("'iterations' must be a positive integer")
+            if not isinstance(result["scores"], list) or not result["scores"]:
+                errors.append("'scores' must be a non-empty list")
+            if not isinstance(result["feedbacks"], list) or not result["feedbacks"]:
+                errors.append("'feedbacks' must be a non-empty list")
+            if not isinstance(result["accepted"], bool):
+                errors.append("'accepted' must be a boolean")
+            if len(result["scores"]) != result["iterations"]:
+                errors.append(
+                    f"'scores' length ({len(result['scores'])}) must equal 'iterations' ({result['iterations']})"
+                )
+            if len(result["feedbacks"]) != result["iterations"]:
+                errors.append(
+                    f"'feedbacks' length ({len(result['feedbacks'])}) must equal 'iterations' ({result['iterations']})"
+                )
+            if errors:
+                print("FAIL (rewrite result):")
+                for e in errors:
+                    print(f"  - {e}")
+                return 1
+            print(
+                f"OK: rewrite result, title='{result['title']}', "
+                f"iterations={result['iterations']}, accepted={result['accepted']}"
+            )
+            return 0
+
         print("FAIL: input batch has no 'ids' field", file=sys.stderr)
         return 1
 

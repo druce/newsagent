@@ -23,7 +23,7 @@ from lib.db import AgentState
 
 # (step_id, human_name, description)
 WORKFLOW_STEPS: list[tuple[str, str, str]] = [
-    ("init",      "Initialize",        "Create session and validate sources"),
+    ("start",     "Initialize",        "Create session and validate sources"),
     ("gather",    "Gather URLs",       "Fetch headlines/URLs from configured sources"),
     ("filter",    "Filter URLs",       "Classify AI-relevance and drop dupes vs DB"),
     ("download",  "Download Articles", "Fetch full article HTML and extract text"),

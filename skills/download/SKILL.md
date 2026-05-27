@@ -5,7 +5,7 @@ description: Fetch full article text with adaptive http→playwright strategy + 
 
 # newsagent:download
 
-Step 4 of `/newsagent:run`.
+Step 4 of `/newsagent:pipeline`.
 
 ## How to invoke
 

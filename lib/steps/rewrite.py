@@ -26,6 +26,7 @@ from lib.critic import critic_optimizer_loop
 from lib.llm import call_prompt, get_prompt
 from lib.prompts._dispatch_schemas import RewriteResult
 from lib.state import NewsletterAgentState
+from lib.steps.send import deliver_newsletter
 
 
 _BATCHES_SUBDIR = "rewrite-batches"
@@ -98,6 +99,10 @@ def _load_result(results_dir: Path) -> tuple[Optional[RewriteResult], list[str]]
               help="Write batch to runs/<SID>/rewrite-batches/ for subagent dispatch")
 @click.option("--apply-results", "apply_results", default=None,
               help="Read result JSON from this dir and apply to state")
+@click.option("--to", "email_to", default=None,
+              help="Email recipient for the auto-sent newsletter (defaults to GMAIL_USER).")
+@click.option("--no-email", "no_email", is_flag=True,
+              help="Render and write out/<date>.html but skip the Gmail send.")
 def cli(
     db_path: str,
     session_id: str,
@@ -105,6 +110,8 @@ def cli(
     engine: Optional[str],
     prepare_batches: bool,
     apply_results: Optional[str],
+    email_to: Optional[str],
+    no_email: bool,
 ) -> None:
     if prepare_batches and apply_results:
         raise click.UsageError("--prepare-batches and --apply-results are mutually exclusive")
@@ -164,6 +171,12 @@ def cli(
             },
         }, indent=2))
         click.echo(f"Rewrite: '{result.title}' — {result.iterations} iteration(s), accepted={result.accepted}.")
+        deliver_newsletter(
+            session_id=session_id,
+            db_path=db_path,
+            to=email_to,
+            no_email=no_email,
+        )
         return
 
     # ── classic mode ───────────────────────────────────────────────
@@ -211,6 +224,12 @@ def cli(
         },
     }, indent=2))
     click.echo(f"Rewrite: '{title}' — {transcript.iterations} iteration(s), accepted={transcript.accepted}.")
+    deliver_newsletter(
+        session_id=session_id,
+        db_path=db_path,
+        to=email_to,
+        no_email=no_email,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

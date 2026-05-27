@@ -5,11 +5,11 @@ description: For each downloaded headline, produce both a bullet-point article s
 
 # newsagent:summarize
 
-Step 6 of /newsagent:run (after `dedupe`, before `rate`). Two execution paths:
+Step 6 of /newsagent:pipeline (after `dedupe`, before `rate`). Two execution paths:
 
 1. **Interactive** — use when running through Claude Code: parent Claude
    dispatches **all batches at once** as Sonnet subagents, one per batch of
-   15 articles (typically 10–25 batches per run). This is the preferred path
+   10 articles (typically 15–25 batches per run). This is the preferred path
    because it avoids `claude -p` (which is not covered under the Max plan).
 2. **Classic** — use when running via cron / CI / any non-Claude-Code context:
    a single LLM engine processes batches sequentially through `lib.llm.call_prompt`.
@@ -26,7 +26,7 @@ To change the summary rubric, edit that file; both paths pick it up automaticall
 ### Step 1: prepare batches
 
 ```bash
-python -m lib.steps.summarize --session SID --prepare-batches [--batch-size 15]
+python -m lib.steps.summarize --session SID --prepare-batches [--batch-size 10]
 ```
 
 Writes one self-contained prompt file per batch:
@@ -36,8 +36,8 @@ Writes one self-contained prompt file per batch:
 this point — subagents read only the batch file and need no further access
 to `lib/prompts/`.
 
-Each batch holds up to 15 articles. Each item carries `id`, `title`, and up
-to 20,000 chars of trafilatura-extracted article body.
+Each batch holds up to 10 articles. Each item carries `id`, `title`, and up
+to 8,000 chars of trafilatura-extracted article body.
 
 ### Step 2: dispatch all batches as parallel Sonnet subagents in a single wave
 
@@ -122,7 +122,7 @@ are still applied so retries are additive.
 
 ```bash
 python -m lib.steps.summarize --session SID --engine openai:gpt-4o-mini \
-  [--batch-size 15]
+  [--batch-size 10]
 ```
 
 Routes the `extract_summaries` prompt through one engine, batches processed
@@ -140,6 +140,6 @@ sequentially. **Do not use** `--engine subagent` here — it falls back to
 
 ## Error cases
 
-- **No state found for session**: session ID not in DB — run `newsagent:init` first.
+- **No state found for session**: session ID not in DB — run `newsagent:start` first.
 - **Unreadable text_path**: that article is silently skipped (the download step's failure surfaces in `runs/<SID>/download.json`).
 - **Empty pending list**: step completes immediately with "nothing to summarize" — no batches written, no LLM calls made.

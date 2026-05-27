@@ -28,8 +28,13 @@ from lib.llm import call_prompt, get_prompt
 from lib.prompts.extract_summaries import ExtractSummariesInput, ExtractSummariesOutput
 from lib.state import NewsletterAgentState
 
-_DEFAULT_BATCH = 15
-_MAX_TEXT_CHARS = 20_000
+_DEFAULT_BATCH = 10
+_MAX_TEXT_CHARS = 8_000
+# Per-batch char budget. The subagent Read tool caps at ~25K tokens; at the
+# rough 4-chars/token ratio we leave headroom under 80K chars so each batch
+# JSON fits in one Read call. Combined with _MAX_TEXT_CHARS, one outsized
+# article can never single-handedly bust the budget.
+_MAX_BATCH_CHARS = 80_000
 _BATCHES_SUBDIR = "summarize-batches"
 _RESULTS_SUBDIR = "summarize-results"
 
@@ -74,22 +79,36 @@ def _write_batches(
             p.unlink()
     batches_dir.mkdir(parents=True, exist_ok=True)
 
-    paths: list[Path] = []
-    for batch_idx, start in enumerate(range(0, len(items), batch_size)):
-        chunk = items[start:start + batch_size]
+    def _emit(idx: int, chunk: list[dict]) -> Path:
         system, user = _render_prompts(chunk)
+        # Article text is already inlined into user_prompt; drop it from items
+        # to keep the batch file under the subagent Read tool's token cap.
+        items_lite = [{"id": it["id"], "title": it.get("title", "")} for it in chunk]
         payload = {
-            "batch_id": batch_idx,
+            "batch_id": idx,
             "session_id": session_id,
             "ids": [it["id"] for it in chunk],
-            "items": chunk,
+            "items": items_lite,
             "system_prompt": system,
             "user_prompt": user,
             "output_schema": ExtractSummariesOutput.model_json_schema(),
         }
-        path = batches_dir / f"batch-{batch_idx:03d}.json"
+        path = batches_dir / f"batch-{idx:03d}.json"
         path.write_text(json.dumps(payload, indent=2))
-        paths.append(path)
+        return path
+
+    paths: list[Path] = []
+    chunk: list[dict] = []
+    chunk_chars = 0
+    for it in items:
+        it_chars = len(it.get("text", "")) + len(it.get("title", ""))
+        if chunk and (len(chunk) >= batch_size or chunk_chars + it_chars > _MAX_BATCH_CHARS):
+            paths.append(_emit(len(paths), chunk))
+            chunk, chunk_chars = [], 0
+        chunk.append(it)
+        chunk_chars += it_chars
+    if chunk:
+        paths.append(_emit(len(paths), chunk))
     return batches_dir, paths
 
 

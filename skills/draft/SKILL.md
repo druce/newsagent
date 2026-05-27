@@ -5,7 +5,7 @@ description: Draft markdown newsletter sections in parallel with a critic-optimi
 
 # newsagent:draft
 
-Step 10 of /newsagent:run. Two execution paths.
+Step 10 of /newsagent:pipeline. Two execution paths.
 
 ## Interactive mode — Sonnet subagent dispatch
 

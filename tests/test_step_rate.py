@@ -30,7 +30,7 @@ def _now() -> datetime:
 def _seed(tmp_db, n=3, *, published_iso=None):
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="r1", db_path=tmp_db)
-    for s in ("init", "gather", "filter", "download", "summarize"):
+    for s in ("start", "gather", "filter", "download", "summarize"):
         state.complete_step(s)
     pub = published_iso or _now().isoformat()
     state.headline_data = [
@@ -152,7 +152,7 @@ def test_reputation_used_in_composite(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="rep", db_path=tmp_db)
-    for s in ("init", "gather", "filter", "download", "summarize"):
+    for s in ("start", "gather", "filter", "download", "summarize"):
         state.complete_step(s)
     # Two identical headlines on different domains; only "good.com" has reputation.
     pub = _now().isoformat()
@@ -196,7 +196,7 @@ def test_articles_older_than_7d_dropped(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="old", db_path=tmp_db)
-    for s in ("init", "gather", "filter", "download", "summarize"):
+    for s in ("start", "gather", "filter", "download", "summarize"):
         state.complete_step(s)
     fresh = _now().isoformat()
     stale = (_now() - timedelta(days=MAX_ARTICLE_AGE_DAYS + 1)).isoformat()
@@ -289,7 +289,7 @@ def test_rate_empty_state_noop(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="empty", db_path=tmp_db)
-    for s in ("init", "gather", "filter", "download", "summarize"):
+    for s in ("start", "gather", "filter", "download", "summarize"):
         state.complete_step(s)
     state.headline_data = []
     state.save_checkpoint("summarize")
@@ -304,7 +304,7 @@ def test_rate_skips_headlines_without_summary(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="s2", db_path=tmp_db)
-    for s in ("init", "gather", "filter", "download", "summarize"):
+    for s in ("start", "gather", "filter", "download", "summarize"):
         state.complete_step(s)
     pub = _now().isoformat()
     state.headline_data = [

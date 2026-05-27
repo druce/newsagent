@@ -30,7 +30,7 @@ def _seed_state(tmp_db: str, session_id: str = "s1") -> NewsletterAgentState:
     """Create a state with two clusters × 2 stories each."""
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
-    for s in ["init", "gather", "filter", "download", "summarize", "rate", "cluster", "select"]:
+    for s in ["start", "gather", "filter", "download", "summarize", "rate", "cluster", "select"]:
         state.complete_step(s)
 
     state.newsletter_section_data = [

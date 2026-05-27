@@ -5,7 +5,7 @@ description: Classify each gathered headline as AI-related. Interactive mode dis
 
 # newsagent:filter
 
-Step 3 of /newsagent:run. Two execution paths:
+Step 3 of /newsagent:pipeline. Two execution paths:
 
 1. **Interactive** — use when running through Claude Code: parent Claude
    dispatches N parallel Haiku subagents, one per batch of 25 headlines.

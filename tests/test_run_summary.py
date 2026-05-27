@@ -17,15 +17,15 @@ def _seed_empty_session(tmp_db: str, session_id: str = "empty-sess") -> None:
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
     # Don't complete any steps — just save initial checkpoint
-    state.save_checkpoint("init")
+    state.save_checkpoint("start")
 
 
 def _seed_partial_session(tmp_db: str, session_id: str = "partial-sess") -> None:
     """Create a session with init and gather completed."""
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
-    state.complete_step("init", message="loaded 5 sources")
-    state.save_checkpoint("init")
+    state.complete_step("start", message="loaded 5 sources")
+    state.save_checkpoint("start")
     state.complete_step("gather", message="42 headlines from 5 sources")
     state.headline_data = [{"title": f"story {i}", "link": f"https://ex.com/{i}"}
                            for i in range(42)]

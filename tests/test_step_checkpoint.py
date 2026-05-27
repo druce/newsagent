@@ -9,8 +9,8 @@ def _make_session(tmp_db: str, sid: str) -> None:
     """Create a session with init complete."""
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=sid, db_path=tmp_db)
-    state.complete_step("init")
-    state.save_checkpoint("init")
+    state.complete_step("start")
+    state.save_checkpoint("start")
 
 
 def test_checkpoint_persists_state_at_step(tmp_db):
@@ -36,5 +36,5 @@ def test_checkpoint_unknown_session_errors(tmp_db):
 
     from lib.steps.checkpoint import cli as checkpoint_cli
     runner = CliRunner()
-    result = runner.invoke(checkpoint_cli, ["no-such-session", "init", "--db", tmp_db])
+    result = runner.invoke(checkpoint_cli, ["no-such-session", "start", "--db", tmp_db])
     assert result.exit_code != 0

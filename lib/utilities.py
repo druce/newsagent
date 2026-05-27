@@ -12,10 +12,24 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Iterable, Optional
+from urllib.parse import urlparse, urlunparse
 
 
 _SMTP_HOST = "smtp.gmail.com"
 _SMTP_PORT = 587
+
+
+def clean_url(url: str) -> str:
+    """Strip query string, fragment, and ;params from a URL.
+
+    Keeps scheme + netloc + path. Drops tracking params (utm_*, gclid),
+    session ids, and #anchors that point at the same page. Non-strings
+    and empty inputs return "".
+    """
+    if not isinstance(url, str) or not url:
+        return ""
+    parts = urlparse(url)
+    return urlunparse((parts.scheme, parts.netloc, parts.path, "", "", ""))
 
 
 def send_email(

@@ -24,7 +24,7 @@ Four-column table:
 
 ## When to use
 
-- Find a session id to feed to `/newsagent:resume`, `/newsagent:status`, or `/newsagent:show`.
+- Find a session id to feed to `/newsagent:recover`, `/newsagent:progress`, or `/newsagent:show`.
 - Audit recent runs at a glance.
 
 ## No-op cases

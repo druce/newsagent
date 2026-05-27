@@ -1,5 +1,5 @@
 from click.testing import CliRunner
-from lib.steps.init import cli as init_cli
+from lib.steps.start import cli as init_cli
 from lib.steps.sessions import cli as sessions_cli
 from lib.db import init_db
 

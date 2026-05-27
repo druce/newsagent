@@ -84,12 +84,12 @@ newsagent/
 │   │   ├── critique_newsletter.py, improve_newsletter.py, generate_title.py
 │   │   └── bsky_reorder.py, bsky_section_titles.py
 │   ├── steps/                        # 18 step CLIs
-│   │   ├── init.py, gather.py, filter.py, download.py, summarize.py,
+│   │   ├── start.py, gather.py, filter.py, download.py, summarize.py,
 │   │   │   dedupe.py, rate.py, cluster.py, select.py, draft.py,
 │   │   │   rewrite.py, send.py, bluesky.py        # pipeline
-│   │   ├── run.py                                 # orchestrator
-│   │   ├── status.py, sessions.py, show.py        # inspection
-│   │   └── resume.py, reset.py, checkpoint.py,
+│   │   ├── pipeline.py                            # orchestrator
+│   │   ├── progress.py, sessions.py, show.py      # inspection
+│   │   └── recover.py, reset.py, checkpoint.py,
 │   │       diff.py, gc.py                         # recovery / maintenance
 │   └── bluesky/                      # atproto api, og_tags, image resize
 ├── skills/                           # 21 SKILL.md contracts
@@ -102,7 +102,7 @@ newsagent/
 
 ## Workflow
 
-`init → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send`
+`start → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send`
 
 Plus the standalone `newsagent:bluesky` and seven recovery/maintenance skills.
 
@@ -129,7 +129,7 @@ Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific
 - `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`.
 - `download/` — article text cache (sha256-of-url filename).
 - `download/bsky-images/` — Bluesky image cache.
-- `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `newsagent:run`.
+- `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `newsagent:pipeline`.
 - `out/YYYY-MM-DD.html` — final newsletter (+ `out/latest.html` symlink).
 - `out/YYYY-MM-DD_short.html` — rated-digest bullets written by `rate` (+ `out/latest_short.html` symlink).
 - `out/bsky-YYYY-MM-DD.html` — Bluesky digest (+ `out/latest-bsky.html`).
@@ -152,20 +152,20 @@ Copy `dot-env.txt` to `.env`. All keys are optional except the ones you actually
 
 ```bash
 # Full run (fresh session)
-.venv/bin/python -m lib.steps.run --sources sources.yaml
+.venv/bin/python -m lib.steps.pipeline --sources sources.yaml
 
 # Resume
-.venv/bin/python -m lib.steps.run --resume SID
-.venv/bin/python -m lib.steps.run --from cluster --session SID
+.venv/bin/python -m lib.steps.pipeline --resume SID
+.venv/bin/python -m lib.steps.pipeline --from cluster --session SID
 
 # Single step
 .venv/bin/python -m lib.steps.filter --session SID
 
 # Inspection / recovery
-.venv/bin/python -m lib.steps.status
+.venv/bin/python -m lib.steps.progress
 .venv/bin/python -m lib.steps.sessions --limit 10
 .venv/bin/python -m lib.steps.show SID
-.venv/bin/python -m lib.steps.resume SID
+.venv/bin/python -m lib.steps.recover SID
 
 # Maintenance
 .venv/bin/python -m lib.steps.diff SID1 SID2

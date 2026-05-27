@@ -15,7 +15,7 @@ def _seed(tmp_db, session_id="c1", n=6, with_embeddings=True, with_ratings=True)
     """Seed a DB with headlines that have summaries (and optionally embeddings/ratings)."""
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
-    for s in ("init", "gather", "filter", "download", "summarize", "rate"):
+    for s in ("start", "gather", "filter", "download", "summarize", "rate"):
         state.complete_step(s)
     headlines = []
     for i in range(n):
@@ -80,7 +80,7 @@ def test_cluster_skips_when_no_summaries(tmp_db, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     init_db(tmp_db)
     state = NewsletterAgentState(session_id="empty", db_path=tmp_db)
-    for s in ("init", "gather", "filter", "download", "summarize", "rate"):
+    for s in ("start", "gather", "filter", "download", "summarize", "rate"):
         state.complete_step(s)
     state.headline_data = [{"id": 0, "title": "T", "url": "https://e.com/0"}]  # no summary
     state.save_checkpoint("rate")

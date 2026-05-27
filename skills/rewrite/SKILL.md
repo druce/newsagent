@@ -5,7 +5,7 @@ description: Assemble section drafts into a whole newsletter, run a whole-newsle
 
 # newsagent:rewrite
 
-Step 11 of /newsagent:run. Two execution paths.
+Step 11 of /newsagent:pipeline. Two execution paths.
 
 ## Interactive mode — Sonnet subagent dispatch
 
@@ -92,3 +92,9 @@ In-process critic loop + title call. Do not use `--engine subagent`.
 - `state.newsletter_title` set.
 - `runs/<SID>/rewrite.json` written with transcript.
 - `rewrite` step marked COMPLETE.
+- **Auto-send:** at the end of both `--apply-results` and classic mode, rewrite
+  invokes `lib.steps.send.deliver_newsletter(...)` which renders
+  `out/<date>.html`, inserts a row in `newsletters`, and emails the result via
+  Gmail (defaults to `GMAIL_USER`). Pass `--no-email` to suppress the send,
+  `--to ADDR` to override the recipient. The send step (step 12) is idempotent
+  and will not re-email when invoked again for the same session.

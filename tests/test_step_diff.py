@@ -8,7 +8,7 @@ def _make_session(tmp_db: str, sid: str, section_data: list) -> None:
     """Create a minimal session with the given newsletter_section_data."""
     init_db(tmp_db)
     state = NewsletterAgentState(session_id=sid, db_path=tmp_db)
-    state.complete_step("init")
+    state.complete_step("start")
     state.complete_step("gather")
     state.newsletter_section_data = section_data
     state.newsletter_title = f"Newsletter for {sid}"

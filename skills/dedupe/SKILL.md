@@ -5,7 +5,7 @@ description: Remove near-duplicate articles by cosine similarity on OpenAI text-
 
 # newsagent:dedupe
 
-Step 5 of `/newsagent:run` — runs between `download` and `summarize` so duplicate
+Step 5 of `/newsagent:pipeline` — runs between `download` and `summarize` so duplicate
 articles never get summarized (saves LLM spend + avoids near-identical sections
 downstream).
 

@@ -5,7 +5,7 @@ description: Fetch headlines from all configured sources (RSS/HTML/REST). HTML s
 
 # newsagent:gather
 
-Step 2 of `/newsagent:run`. Fetches headlines and dedups against `urls`.
+Step 2 of `/newsagent:pipeline`. Fetches headlines and dedups against `urls`.
 
 ## How to invoke
 

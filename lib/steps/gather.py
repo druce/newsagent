@@ -30,6 +30,7 @@ from lib.fetch.html import fetch_html
 from lib.fetch.rest import fetch_rest
 from lib.fetch.types import FetchResult
 from lib.state import NewsletterAgentState
+from lib.utilities import clean_url
 
 
 def _domain_of(url: str) -> str:
@@ -122,7 +123,11 @@ def cli(db_path: str, session_id: str) -> None:
         })
         if result.ok:
             for a in result.articles:
-                all_articles.append(a.model_dump())
+                d = a.model_dump()
+                d["url"] = clean_url(d.get("url", ""))
+                if not d["url"]:
+                    continue
+                all_articles.append(d)
 
         # sites.scrape_method is operator-curated config (hard pin).
         # Do not auto-write — runtime adaptation happens in fetch_html.
