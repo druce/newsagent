@@ -10,6 +10,30 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 
 ---
 
+## Per-step reference
+
+| Skill | What it does |
+|---|---|
+| `newsagent:start` | Create session, validate `sources.yaml`. |
+| `newsagent:gather` | Fetch from RSS / HTML / REST. HTML uses adaptive scraping (httpx + BeautifulSoup → Playwright fallback, memoized in `sites.scrape_method`). |
+| `newsagent:filter` | LLM-classify AI relevance; drop non-AI by default. |
+| `newsagent:download` | Playwright fetch + trafilatura extract. |
+| `newsagent:dedupe` | Cosine-similarity dedup on OpenAI embeddings (runs before `summarize` so duplicates aren't summarized). |
+| `newsagent:summarize` | Per-article bullet summary. |
+| `newsagent:rate` | Multi-axis confidence + Swiss-paired Bradley-Terry → composite rating. |
+| `newsagent:cluster` | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
+| `newsagent:select` | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
+| `newsagent:draft` | Parallel section drafters; each runs a critic-optimizer loop. |
+| `newsagent:rewrite` | Whole-newsletter critic-optimizer + title generation. |
+| `newsagent:send` | Render HTML, write `out/<date>.html` + `out/latest.html`. |
+| `newsagent:bluesky` | Standalone Bluesky digest. |
+| `newsagent:pipeline` | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
+| `newsagent:progress`, `sessions`, `show` | State inspection. |
+| `newsagent:recover`, `reset` | Error recovery. |
+| `newsagent:diff`, `gc`, `checkpoint` | Maintenance. |
+
+---
+
 ## Quick start
 
 ```bash
@@ -257,28 +281,6 @@ start → gather → filter → download → dedupe → summarize → rate → c
 ```
 
 Plus the standalone Bluesky digest and recovery/maintenance skills.
-
-### Per-step reference
-
-| Skill | Phase | What it does |
-|---|---|---|
-| `newsagent:start` | 0 | Create session, validate `sources.yaml`. |
-| `newsagent:gather` | 2 | Fetch from RSS / HTML / REST. HTML uses adaptive scraping (httpx + BeautifulSoup → Playwright fallback, memoized in `sites.scrape_method`). |
-| `newsagent:filter` | 3 | LLM-classify AI relevance; drop non-AI by default. |
-| `newsagent:download` | 2 | Playwright fetch + trafilatura extract. |
-| `newsagent:dedupe` | 3 | Cosine-similarity dedup on OpenAI embeddings (runs before `summarize` so duplicates aren't summarized). |
-| `newsagent:summarize` | 3 | Per-article bullet summary. |
-| `newsagent:rate` | 3 | Multi-axis confidence + Swiss-paired Bradley-Terry → composite rating. |
-| `newsagent:cluster` | 4 | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
-| `newsagent:select` | 4 | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
-| `newsagent:draft` | 5 | Parallel section drafters; each runs a critic-optimizer loop. |
-| `newsagent:rewrite` | 5 | Whole-newsletter critic-optimizer + title generation. |
-| `newsagent:send` | 2 | Render HTML, write `out/<date>.html` + `out/latest.html`. |
-| `newsagent:bluesky` | 7 | Standalone Bluesky digest. |
-| `newsagent:pipeline` | 6 | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
-| `newsagent:progress`, `sessions`, `show` | 0/2 | State inspection. |
-| `newsagent:recover`, `reset` | 2 | Error recovery. |
-| `newsagent:diff`, `gc`, `checkpoint` | 8 | Maintenance. |
 
 ---
 
