@@ -172,3 +172,26 @@ def write_summary(
     out_path.write_text(content, encoding="utf-8")
 
     return str(out_path)
+
+
+def main() -> None:
+    """CLI: write runs/<SID>/summary.md for a session.
+
+    Lets the interactive pipeline driver generate the summary via an
+    allowlisted `.venv/bin/python -m lib.run_summary --session SID` call
+    instead of an ad-hoc `python -c`.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Write runs/<SID>/summary.md for a session.")
+    parser.add_argument("--session", required=True, help="Session id (SID).")
+    parser.add_argument("--db", default="newsletter_agent.db", help="SQLite DB path.")
+    parser.add_argument("--runs-dir", default="runs", help="Runs directory.")
+    args = parser.parse_args()
+
+    path = write_summary(args.session, db_path=args.db, runs_dir=args.runs_dir)
+    print(f"Wrote {path}")
+
+
+if __name__ == "__main__":
+    main()

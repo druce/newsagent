@@ -3,6 +3,12 @@
     "allow": [
       "Bash(.venv/bin/pytest *)",
       "Bash(.venv/bin/python -m lib.steps.* *)",
+      "Bash(.venv/bin/python -m lib.run_summary *)",
+      "Bash(ls runs/**)",
+      "Bash(ls download/**)",
+      "Bash(tail *)",
+      "Bash(head *)",
+      "Bash(wc *)",
       "Bash(cd /Users/drucev/projects/newsagent && .venv/bin/python tools/check_batch.py *)",
       "Bash(.venv/bin/python tools/check_batch.py *)",
       "Bash(python tools/check_batch.py *)",

@@ -40,6 +40,33 @@ rate → cluster → select → draft → rewrite → send
 | rewrite | prepare/dispatch/apply | sonnet | 1 batch (whole newsletter) |
 | send | Python CLI | — | — |
 
+## Command discipline (stay prompt-free)
+
+The driver session runs under a permission allowlist (`.claude/settings.json`).
+Only these run without an approval prompt, so use ONLY these:
+
+- `.venv/bin/python -m lib.steps.* …` — every step CLI (prepare / apply / run).
+  Always the `.venv/bin/python` form, never bare `python` (bare `python` is not
+  allowlisted and will prompt).
+- `.venv/bin/python tools/check_batch.py …`
+- the **Read** and **Write** tools on `runs/**`, and **Read** on `download/**`.
+
+To keep the whole run prompt-free:
+
+- **Drive every step with its `.venv/bin/python -m lib.steps.<step> …` CLI.**
+  Never substitute ad-hoc shell for what a step CLI already does.
+- **Inspect files with the Read tool, never bash** — no `cat runs/…`, `tail`,
+  `head`, `ls`, `wc`, or `echo`. Reading a step log or a batch/result JSON is a
+  Read-tool call on the `runs/**` (or `download/**`) path.
+- **Never run `sleep` and never poll.** The harness blocks chained sleeps. For
+  a long no-LLM step (e.g. `download`), launch it with `run_in_background: true`
+  and wait for the completion notification — do not babysit it with `tail`.
+- **Enumerate batch files from the `--prepare-batches` stdout**, which prints
+  the full path of every batch file it wrote. Do NOT `ls` the directory and do
+  NOT pipe prepare's output through `head`/`tail` (truncating it reintroduces
+  the zero-index off-by-one footgun). Dispatch exactly one Agent per path
+  printed.
+
 ## Driver loop (what parent Claude does)
 
 For each step in the plan:
@@ -47,13 +74,15 @@ For each step in the plan:
 1. **No-LLM steps** (start, gather, download, dedupe, rate, send):
    Run the Python CLI:
    ```bash
-   python -m lib.steps.<step> --session SID [step-specific args]
+   .venv/bin/python -m lib.steps.<step> --session SID [step-specific args]
    ```
-   Abort the orchestrator on non-zero exit.
+   Abort the orchestrator on non-zero exit. For long steps (`download`),
+   launch with `run_in_background: true` and wait for the completion
+   notification rather than polling.
 
 2. **LLM-using steps** (filter, summarize, cluster, select, draft, rewrite):
    ```bash
-   python -m lib.steps.<step> --session SID --prepare-batches [step-specific args]
+   .venv/bin/python -m lib.steps.<step> --session SID --prepare-batches [step-specific args]
    ```
    Then dispatch ALL `runs/SID/<step>-batches/batch-*.json` files as Agents
    in a SINGLE parent message (one Agent tool call per batch file). Use the
@@ -61,21 +90,23 @@ For each step in the plan:
    it to read the batch file, run the step's logic in its own context, and
    write the result to `runs/SID/<step>-results/batch-NNN.json`.
 
-   **Enumerate batch files with `ls runs/SID/<step>-batches/` before
-   dispatching — do NOT assume the index range.** Batch files are
-   ZERO-INDEXED (`batch-000.json` is the first one), and the count varies
-   per step and per run. Counting from 1 or guessing N from the prepare
-   output's "Prepared N batches" line is a known footgun — it produced a
-   silent off-by-one (skipping batch-000 and dispatching a non-existent
-   batch-NNN) in past runs. Always list the directory first, then dispatch
-   one Agent per file actually present.
+   **Enumerate batch files from the `--prepare-batches` stdout, which prints
+   the full path of every batch file it wrote — do NOT assume the index
+   range and do NOT `ls` the directory.** Batch files are ZERO-INDEXED
+   (`batch-000.json` is the first one), and the count varies per step and per
+   run. Counting from 1, or guessing N from the prepare output's "Prepared N
+   batches" line, is a known footgun — it produced a silent off-by-one
+   (skipping batch-000 and dispatching a non-existent batch-NNN) in past
+   runs. Never pipe prepare's stdout through `head`/`tail` (that truncates
+   the list); read the full path list it prints and dispatch one Agent per
+   path.
 
    (For `select` there are two batch subdirs — `select-assign-batches/` and
    `select-merge-batches/` — dispatch Agents for both in the same message.)
 
    Wait for all Agents to return. Then:
    ```bash
-   python -m lib.steps.<step> --session SID --apply-results runs/SID/<step>-results
+   .venv/bin/python -m lib.steps.<step> --session SID --apply-results runs/SID/<step>-results
    ```
    (For `select` use `--apply-results runs/SID` so it can find both result
    subdirs.)
@@ -85,7 +116,11 @@ For each step in the plan:
    (overwriting their result files), and re-run apply.
 
 After the `send` step completes, write `runs/SID/summary.md` (unless
-`--no-summary` was passed) by calling `lib.run_summary.write_summary(SID)`.
+`--no-summary` was passed) with the allowlisted CLI:
+
+```bash
+.venv/bin/python -m lib.run_summary --session SID
+```
 
 ## Per-step Agent prompt skeletons
 
@@ -132,7 +167,7 @@ use the non-interactive fallback below.
 
 1. `--only STEP` → run exactly that one step.
 2. `--from STEP` → run STEP and every step that follows it in workflow order.
-3. `--resume SID` → load state via `python -m lib.steps.progress --session SID`,
+3. `--resume SID` → load state via `.venv/bin/python -m lib.steps.progress --session SID`,
    find the first non-complete step, run from there.
 4. Default → run all 12 steps starting from start.
 
@@ -141,8 +176,8 @@ use the non-interactive fallback below.
 If a step fails mid-run, the orchestrator aborts. To recover:
 
 ```bash
-python -m lib.steps.progress --session SID
-python -m lib.steps.reset --session SID --errors
+.venv/bin/python -m lib.steps.progress --session SID
+.venv/bin/python -m lib.steps.reset --session SID --errors
 # Then re-invoke /newsagent:pipeline --resume SID
 ```
 
