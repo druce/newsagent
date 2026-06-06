@@ -325,3 +325,47 @@ def test_gather_halt_message_distinguishes_html_fetch_fail_vs_zero_links(tmp_pat
     assert result.exit_code != 0, result.output
     assert "FetchFail (html): fetch failed; download the landing page" in result.output
     assert "ZeroLinks (html): fetched but extracted 0 links; replace" in result.output
+
+
+def test_gather_resume_with_cached_pages_completes(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n  Site1:\n    type: html\n    url: https://news.example.com/\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    # First pass: html fetch comes back empty → halt.
+    empty = FetchResult(source="Site1", ok=False, error="blocked", articles=[])
+    with patch("lib.steps.gather.fetch_html", return_value=(empty, "playwright", None)):
+        runner = CliRunner()
+        first = runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
+    assert first.exit_code != 0, first.output
+
+    state = NewsletterAgentState(session_id="g1", db_path=tmp_db).load_latest_from_db()
+    assert state.get_current_step() == "gather"
+
+    # Operator drops the manual landing page where the halt message said.
+    page_dir = Path("runs/g1/pages")
+    page_dir.mkdir(parents=True, exist_ok=True)
+    (page_dir / "Site1.html").write_text(
+        '<html><body>'
+        '<a href="https://news.example.com/story-one">'
+        'A sufficiently long story headline here</a>'
+        '</body></html>'
+    )
+
+    # Resume in cached mode: html read from disk, no network.
+    with patch("lib.steps.gather.fetch_html",
+               side_effect=AssertionError("must use cached page on resume")):
+        runner = CliRunner()
+        second = runner.invoke(
+            gather_cli, ["--db", tmp_db, "--session", "g1", "--cached-pages"]
+        )
+
+    assert second.exit_code == 0, second.output
+    with sqlite3.connect(tmp_db) as conn:
+        rows = {r[0] for r in conn.execute("SELECT initial_url FROM urls").fetchall()}
+    assert "https://news.example.com/story-one" in rows
+    state = NewsletterAgentState(session_id="g1", db_path=tmp_db).load_latest_from_db()
+    assert state.get_current_step() != "gather"
