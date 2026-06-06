@@ -27,6 +27,7 @@ import click
 from lib.db import Site
 from lib.fetch.rss import fetch_rss
 from lib.fetch.html import fetch_html
+from lib.fetch.extract import extract_article_links
 from lib.fetch.rest import fetch_rest
 from lib.fetch.types import FetchResult
 from lib.state import NewsletterAgentState
@@ -41,8 +42,42 @@ def _safe_filename(source_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", source_name).strip("_") or "source"
 
 
+def _read_cached_page(session_id: str, source_name: str) -> str | None:
+    path = Path("runs") / session_id / "pages" / f"{_safe_filename(source_name)}.html"
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _fetch_html_cached(
+    source_name: str, cfg: dict, session_id: str
+) -> tuple[FetchResult, str | None, str | None]:
+    """Build a FetchResult from a previously-saved landing page on disk.
+
+    Missing cache file → ok=False (counts as an empty source at halt time).
+    """
+    html = _read_cached_page(session_id, source_name)
+    if html is None:
+        rel = f"runs/{session_id}/pages/{_safe_filename(source_name)}.html"
+        return (
+            FetchResult(source=source_name, ok=False,
+                        error=f"cached page missing: {rel}"),
+            "cached",
+            None,
+        )
+    articles = extract_article_links(html, cfg, source_name)
+    ok = len(articles) > 0
+    err = None if ok else "no links extracted from cached page"
+    return (
+        FetchResult(source=source_name, articles=articles, ok=ok, error=err),
+        "cached",
+        html,
+    )
+
+
 def _fetch_one(
-    source_name: str, cfg: dict, db_path: str
+    source_name: str, cfg: dict, db_path: str,
+    *, cached_pages: bool = False, session_id: str = "",
 ) -> tuple[FetchResult, str | None, str | None]:
     """Returns (result, used_method, raw_html). The latter two are only set for HTML sources."""
     stype = cfg.get("type", "html")
@@ -53,6 +88,8 @@ def _fetch_one(
                                error="No rss/url in source config"), None, None
         return fetch_rss(source_name, rss_url), None, None
     if stype == "html":
+        if cached_pages:
+            return _fetch_html_cached(source_name, cfg, session_id)
         url = cfg.get("url", "")
         domain = _domain_of(url)
         prior_method: str | None = None
@@ -72,7 +109,10 @@ def _fetch_one(
 @click.command()
 @click.option("--db", "db_path", default="newsletter_agent.db")
 @click.option("--session", "session_id", required=True)
-def cli(db_path: str, session_id: str) -> None:
+@click.option("--cached-pages", "cached_pages", is_flag=True,
+              help="Read html sources from runs/<SID>/pages/<source>.html "
+                   "instead of fetching them; rss/rest are still fetched live.")
+def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()
     if state is None:
         raise click.ClickException(f"No state found for session {session_id}")
@@ -99,7 +139,9 @@ def cli(db_path: str, session_id: str) -> None:
     pw_fallback_sources: list[tuple[str, str]] = []  # (source_name, domain)
 
     for name, cfg in enabled_sources.items():
-        result, used_method, raw_html = _fetch_one(name, cfg, db_path)
+        result, used_method, raw_html = _fetch_one(
+            name, cfg, db_path, cached_pages=cached_pages, session_id=session_id,
+        )
         if (
             isinstance(cfg, dict)
             and used_method == "playwright"

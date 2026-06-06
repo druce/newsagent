@@ -143,6 +143,77 @@ def test_gather_persists_front_page_html(tmp_path, tmp_db, monkeypatch):
     assert any(s.get("page_path", "").endswith("Site_1.html") for s in report["sources"])
 
 
+def test_gather_cached_pages_reads_html_from_disk(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n  Site1:\n    type: html\n    url: https://news.example.com/\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    page_dir = Path("runs/g1/pages")
+    page_dir.mkdir(parents=True, exist_ok=True)
+    (page_dir / "Site1.html").write_text(
+        '<html><body>'
+        '<a href="https://news.example.com/story-one">'
+        'A sufficiently long story headline here</a>'
+        '</body></html>'
+    )
+
+    def _boom(*a, **k):
+        raise AssertionError("fetch_html must not be called with --cached-pages")
+
+    with patch("lib.steps.gather.fetch_html", side_effect=_boom):
+        runner = CliRunner()
+        result = runner.invoke(
+            gather_cli, ["--db", tmp_db, "--session", "g1", "--cached-pages"]
+        )
+
+    assert result.exit_code == 0, result.output
+    with sqlite3.connect(tmp_db) as conn:
+        rows = {r[0] for r in conn.execute("SELECT initial_url FROM urls").fetchall()}
+    assert "https://news.example.com/story-one" in rows
+
+
+def test_gather_cached_pages_still_fetches_rss_live(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n"
+        "  Site1:\n    type: html\n    url: https://news.example.com/\n    enabled: true\n"
+        "  Feed1:\n    type: rss\n    url: https://feed.example.com/rss\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    page_dir = Path("runs/g1/pages")
+    page_dir.mkdir(parents=True, exist_ok=True)
+    (page_dir / "Site1.html").write_text(
+        '<html><body>'
+        '<a href="https://news.example.com/story-one">'
+        'A sufficiently long story headline here</a>'
+        '</body></html>'
+    )
+
+    rss_result = FetchResult(source="Feed1", ok=True, articles=[
+        Article(source="Feed1", title="A sufficiently long rss headline here",
+                url="https://feed.example.com/a"),
+    ])
+    with patch("lib.steps.gather.fetch_html",
+               side_effect=AssertionError("html must come from cache")), \
+         patch("lib.steps.gather.fetch_rss", return_value=rss_result) as mock_rss:
+        runner = CliRunner()
+        result = runner.invoke(
+            gather_cli, ["--db", tmp_db, "--session", "g1", "--cached-pages"]
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_rss.assert_called_once()
+    with sqlite3.connect(tmp_db) as conn:
+        rows = {r[0] for r in conn.execute("SELECT initial_url FROM urls").fetchall()}
+    assert "https://feed.example.com/a" in rows
+    assert "https://news.example.com/story-one" in rows
+
+
 def test_gather_writes_report_json(tmp_path, tmp_db, monkeypatch):
     monkeypatch.chdir(tmp_path)
     yaml_path = tmp_path / "sources.yaml"
