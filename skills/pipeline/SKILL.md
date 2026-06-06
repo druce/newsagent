@@ -37,7 +37,7 @@ rate → cluster → select → draft → rewrite → send
 | cluster | prepare/dispatch/apply | haiku | 1 batch (all clusters) |
 | select | prepare/dispatch/apply | haiku | 25 noise per assign batch; 1 merge batch |
 | draft | prepare/dispatch/apply | sonnet | 1 batch per section |
-| rewrite | prepare/dispatch/apply | sonnet | 1 batch (whole newsletter) |
+| rewrite | prepare/**critic loop**/apply | sonnet | separate critique → improve → title → assemble dispatches |
 | send | Python CLI | — | — |
 
 ## Command discipline (stay prompt-free)
@@ -80,7 +80,7 @@ For each step in the plan:
    launch with `run_in_background: true` and wait for the completion
    notification rather than polling.
 
-2. **LLM-using steps** (filter, summarize, cluster, select, draft, rewrite):
+2. **LLM-using fan-out steps** (filter, summarize, cluster, select, draft):
    ```bash
    .venv/bin/python -m lib.steps.<step> --session SID --prepare-batches [step-specific args]
    ```
@@ -114,6 +114,17 @@ For each step in the plan:
    If apply reports problems on stderr (`missing ...`, `schema mismatch`),
    identify the failing batch numbers, re-dispatch only those Agents
    (overwriting their result files), and re-run apply.
+
+3. **`rewrite` is a sequential critic loop, NOT a fan-out.** After
+   `--prepare-batches`, do NOT dispatch all batches at once. Instead parent
+   Claude drives the loop from `skills/rewrite/SKILL.md`: dispatch a CRITIQUE
+   Agent → read its score/accept → if score < 8.0 dispatch an IMPROVE Agent →
+   re-critique → … (≤ `--max-edits`), then a TITLE Agent. Each pass is a
+   separate dispatch with fresh context (genuine critic/improver separation);
+   drafts and critiques thread through `runs/SID/rewrite-work/`. There is no
+   assemble Agent — finish with one mechanical CLI call,
+   `rewrite --finalize …`, which packages the work files and applies. Narrate
+   each dispatch and what came back.
 
 After the `send` step completes, write `runs/SID/summary.md` (unless
 `--no-summary` was passed) with the allowlisted CLI:
@@ -158,6 +169,7 @@ calls in the same message) so they run in parallel.
 | `--parallelism N` | 4 | Section drafters for classic-mode draft only |
 | `--no-email` | off | Skip the Gmail send at the end of rewrite/send (email is on by default; requires `GMAIL_USER`/`GMAIL_PASSWORD`) |
 | `--no-summary` | off | Skip writing runs/<SID>/summary.md |
+| `--cached-pages` | off | Gather reads html sources from `runs/<SID>/pages/` (rss/rest still live). Use to resume a halted gather after dropping a manual landing page. |
 
 `--engine` from `lib.steps.pipeline` is NOT supported in the interactive flow —
 the model is fixed per step (table above). For full-pipeline engine override
@@ -180,6 +192,24 @@ If a step fails mid-run, the orchestrator aborts. To recover:
 .venv/bin/python -m lib.steps.reset --session SID --errors
 # Then re-invoke /newsagent:pipeline --resume SID
 ```
+
+### Gather halt (0-URL source)
+
+If `gather` reports `gather halted: N source(s) returned 0 URLs`, the run
+stopped because a source extracted nothing (e.g. WSJ blocked). To recover:
+
+1. For each html source named, download its landing page to the
+   `runs/<SID>/pages/<source>.html` path printed in the halt message (e.g. via
+   the headed browser `scripts/playwright_login.py` or Bright Data).
+2. Resume in cached-pages mode (html from disk, rss/rest live):
+   ```bash
+   .venv/bin/python -m lib.steps.pipeline --resume SID --cached-pages
+   ```
+   Gather re-reads the cached html (including your manual file), finds the
+   source non-empty, completes, and the pipeline continues.
+
+For a halted rss/rest source there is no manual-file path — just resume
+(`--resume SID`) once the feed/API is reachable again.
 
 ## Output
 

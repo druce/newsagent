@@ -27,6 +27,26 @@ After all sources fetched:
 - Writes per-source report to `runs/<SID>/gather.json`
 - Marks `gather` step complete
 
+## Halt on empty sources
+
+After fetching every enabled source, `gather` halts (exit code 1, step marked
+ERROR) if ANY source extracted 0 URLs — i.e. it failed to fetch, or its landing
+page yielded 0 matching links. "0 new after dedup" does NOT count as empty.
+
+URLs from working sources are still inserted before the halt, and the empty
+sources are recorded in `runs/<SID>/gather.json` under `empty_sources`. The step
+is left ERROR so it is the resume point for `lib.steps.pipeline --resume`.
+
+## --cached-pages
+
+`python -m lib.steps.gather --session SID --cached-pages`
+
+Reads each html source from `runs/<SID>/pages/<source>.html` instead of
+fetching it; rss/rest are still fetched live. A missing cache file counts as an
+empty source (→ halt). Use this to recover a halted gather: download the failed
+source's landing page to the path named in the halt message, then re-run with
+`--cached-pages` (typically via `lib.steps.pipeline --resume SID --cached-pages`).
+
 ## Errors
 
 - Missing session or session without `init` complete → exit 1
