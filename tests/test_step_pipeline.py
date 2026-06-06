@@ -229,3 +229,33 @@ def test_run_no_summary_skips_write(tmp_db, tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     mock_write.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: --cached-pages plumbing to the gather step
+# ---------------------------------------------------------------------------
+
+from lib.steps.pipeline import _build_args
+
+
+def _args(step_id, **over):
+    base = dict(
+        step_id=step_id, session_id="s1", db_path="db.sqlite",
+        sources_path="sources.yaml", max_edits=2, parallelism=4,
+        engine=None, no_email=False, cached_pages=True,
+    )
+    base.update(over)
+    return _build_args(**base)
+
+
+def test_build_args_passes_cached_pages_to_gather():
+    assert "--cached-pages" in _args("gather")
+
+
+def test_build_args_omits_cached_pages_for_non_gather_steps():
+    assert "--cached-pages" not in _args("filter")
+    assert "--cached-pages" not in _args("download")
+
+
+def test_build_args_no_cached_pages_when_flag_off():
+    assert "--cached-pages" not in _args("gather", cached_pages=False)

@@ -74,6 +74,7 @@ def _build_args(
     parallelism: int,
     engine: str | None,
     no_email: bool,
+    cached_pages: bool = False,
 ) -> list[str]:
     args = ["--db", db_path]
     if step_id == "start":
@@ -88,6 +89,8 @@ def _build_args(
         args.extend(["--parallelism", str(parallelism)])
     if no_email and step_id in ("rewrite", "send"):
         args.append("--no-email")
+    if cached_pages and step_id == "gather":
+        args.append("--cached-pages")
     return args
 
 
@@ -121,6 +124,10 @@ def _build_args(
                    "(email is on by default; requires GMAIL_USER/GMAIL_PASSWORD)")
 @click.option("--no-summary", "no_summary", is_flag=True,
               help="Skip writing runs/<SID>/summary.md")
+@click.option("--cached-pages", "cached_pages", is_flag=True,
+              help="Read html sources from runs/<SID>/pages/ during gather "
+                   "(rss/rest still fetched live). Use after dropping a manual "
+                   "landing page to resume a halted gather.")
 def cli(
     db_path: str,
     session_id: str | None,
@@ -134,6 +141,7 @@ def cli(
     engine: str | None,
     no_email: bool,
     no_summary: bool,
+    cached_pages: bool,
 ) -> None:
     """Non-interactive newsletter orchestrator (cron / CI). Sequences all 12 pipeline steps."""
 
@@ -184,6 +192,7 @@ def cli(
         args = _build_args(
             step_id, session_id, db_path, sources_path,
             max_edits, parallelism, engine, no_email,
+            cached_pages=cached_pages,
         )
         click.echo(f"\n=== {step_id} ===")
         try:
