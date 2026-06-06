@@ -210,6 +210,7 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
             "source": s["source"],
             "type": s["type"],
             "error": s["error"],
+            "saved": bool(s["page_path"]),
             "page_path": (
                 f"runs/{session_id}/pages/{_safe_filename(s['source'])}.html"
                 if s["type"] == "html" else None
@@ -266,10 +267,16 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
         click.echo("")
         click.echo(f"gather halted: {len(empty_sources)} source(s) returned 0 URLs.")
         for e in empty_sources:
-            if e["page_path"]:
+            if e["type"] == "html" and not e["saved"]:
                 click.echo(
-                    f"  - {e['source']} (html): download the landing page to "
-                    f"{e['page_path']}, then resume."
+                    f"  - {e['source']} (html): fetch failed; download the landing "
+                    f"page to {e['page_path']}, then resume."
+                )
+            elif e["type"] == "html":
+                click.echo(
+                    f"  - {e['source']} (html): fetched but extracted 0 links; "
+                    f"replace {e['page_path']} with a good capture (or fix the "
+                    f"source's include/exclude rules), then resume."
                 )
             else:
                 click.echo(

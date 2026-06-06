@@ -298,3 +298,30 @@ def test_gather_does_not_halt_on_zero_new_after_dedup(tmp_path, tmp_db, monkeypa
     state = NewsletterAgentState(session_id="g1", db_path=tmp_db).load_latest_from_db()
     # gather completed, so the first non-complete step is the next one (filter).
     assert state.get_current_step() == "filter"
+
+
+def test_gather_halt_message_distinguishes_html_fetch_fail_vs_zero_links(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n"
+        "  FetchFail:\n    type: html\n    url: https://fail.example.com/\n    enabled: true\n"
+        "  ZeroLinks:\n    type: html\n    url: https://zero.example.com/\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    def _html(source_name, cfg, *, scrape_method):
+        if source_name == "FetchFail":
+            # fetch failed entirely -> no page saved (raw_html None)
+            return (FetchResult(source="FetchFail", ok=False, error="blocked"), "playwright", None)
+        # fetched a page but extracted 0 links -> page IS saved
+        return (FetchResult(source="ZeroLinks", ok=False, error="no links"),
+                "http", "<html>raw but no usable links</html>")
+
+    with patch("lib.steps.gather.fetch_html", side_effect=_html):
+        runner = CliRunner()
+        result = runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
+
+    assert result.exit_code != 0, result.output
+    assert "FetchFail (html): fetch failed; download the landing page" in result.output
+    assert "ZeroLinks (html): fetched but extracted 0 links; replace" in result.output
