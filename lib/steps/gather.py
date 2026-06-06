@@ -202,10 +202,34 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
         s["new"] = new_by_source.get(s["source"], 0)
 
     state.headline_data.extend(new_articles_for_state)
-    state.complete_step(
-        "gather",
-        message=f"{len(enabled_sources)} sources, {new_count} new headlines",
-    )
+
+    # A source is "empty" if it failed to fetch OR extracted 0 links (pre-dedup).
+    # "0 new after dedup" is NOT empty — those links were simply already known.
+    empty_sources = [
+        {
+            "source": s["source"],
+            "type": s["type"],
+            "error": s["error"],
+            "page_path": (
+                f"runs/{session_id}/pages/{_safe_filename(s['source'])}.html"
+                if s["type"] == "html" else None
+            ),
+        }
+        for s in report_sources
+        if not s["ok"] or s["count"] == 0
+    ]
+
+    if empty_sources:
+        state.error_step(
+            "gather",
+            f"{len(empty_sources)} source(s) extracted 0 URLs: "
+            + ", ".join(e["source"] for e in empty_sources),
+        )
+    else:
+        state.complete_step(
+            "gather",
+            message=f"{len(enabled_sources)} sources, {new_count} new headlines",
+        )
     state.save_checkpoint("gather")
 
     # Write per-source report
@@ -216,6 +240,7 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
         "completed_at": datetime.now().isoformat(),
         "sources": report_sources,
         "new_headlines": new_count,
+        "empty_sources": empty_sources,
     }, indent=2))
 
     if pw_fallback_sources:
@@ -236,6 +261,26 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
             f"  {status:<5} {s['source']:<24} "
             f"{s['count']:>5} {s.get('new', 0):>5}  {method}"
         )
+
+    if empty_sources:
+        click.echo("")
+        click.echo(f"gather halted: {len(empty_sources)} source(s) returned 0 URLs.")
+        for e in empty_sources:
+            if e["page_path"]:
+                click.echo(
+                    f"  - {e['source']} (html): download the landing page to "
+                    f"{e['page_path']}, then resume."
+                )
+            else:
+                click.echo(
+                    f"  - {e['source']} ({e['type']}): returned 0 "
+                    f"({e['error'] or 'no links'}); fix upstream and resume."
+                )
+        click.echo(
+            "Resume with: python -m lib.steps.pipeline "
+            f"--resume {session_id} --cached-pages"
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover

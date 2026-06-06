@@ -232,3 +232,69 @@ def test_gather_writes_report_json(tmp_path, tmp_db, monkeypatch):
     report = json.loads(report_path.read_text())
     assert "sources" in report
     assert any(s["source"] == "Feed1" for s in report["sources"])
+
+
+def test_gather_halts_when_source_extracts_zero(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n"
+        "  Good:\n    type: rss\n    url: https://feed.example.com/rss\n    enabled: true\n"
+        "  Bad:\n    type: rss\n    url: https://bad.example.com/rss\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    def _rss(source_name, url):
+        if source_name == "Good":
+            return FetchResult(source="Good", ok=True, articles=[
+                Article(source="Good", title="A sufficiently long good headline here",
+                        url="https://feed.example.com/a"),
+            ])
+        return FetchResult(source="Bad", ok=False, error="boom", articles=[])
+
+    with patch("lib.steps.gather.fetch_rss", side_effect=_rss):
+        runner = CliRunner()
+        result = runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
+
+    # Halts with a non-zero exit code.
+    assert result.exit_code != 0, result.output
+    # Working source's URL is still persisted.
+    with sqlite3.connect(tmp_db) as conn:
+        rows = {r[0] for r in conn.execute("SELECT initial_url FROM urls").fetchall()}
+    assert "https://feed.example.com/a" in rows
+    # Step is left in ERROR so resume picks it up.
+    state = NewsletterAgentState(session_id="g1", db_path=tmp_db).load_latest_from_db()
+    assert state.get_current_step() == "gather"
+    # gather.json lists the empty source.
+    report = json.loads(Path("runs/g1/gather.json").read_text())
+    assert [e["source"] for e in report["empty_sources"]] == ["Bad"]
+
+
+def test_gather_does_not_halt_on_zero_new_after_dedup(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n  Feed1:\n    type: rss\n    url: https://feed.example.com/rss\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    # Pre-seed the only article so it dedups to 0 new — but extracted > 0.
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute(
+            "INSERT INTO urls (initial_url, final_url, title, source) VALUES (?,?,?,?)",
+            ("https://feed.example.com/a", "https://feed.example.com/a", "A", "Feed1"),
+        )
+        conn.commit()
+
+    rss_result = FetchResult(source="Feed1", ok=True, articles=[
+        Article(source="Feed1", title="A sufficiently long headline here",
+                url="https://feed.example.com/a"),
+    ])
+    with patch("lib.steps.gather.fetch_rss", return_value=rss_result):
+        runner = CliRunner()
+        result = runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
+
+    assert result.exit_code == 0, result.output
+    state = NewsletterAgentState(session_id="g1", db_path=tmp_db).load_latest_from_db()
+    # gather completed, so the first non-complete step is the next one (filter).
+    assert state.get_current_step() == "filter"
