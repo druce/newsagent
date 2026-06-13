@@ -14,26 +14,27 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 
 The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 
-1. **`/newsagent:pipeline`** — run the full 12-step pipeline. Writes the newsletter to
-   `out/latest.html` (the full issue) and the rated-bullet digest to `out/latest_short.html`
+1. **`/newsagent:pipeline`** — run the full 12-step pipeline from scraping and gathering, to
+   selecting items and writing proposed newsletter. Writes the newsletter to
+   `out/latest.html` (fully AI-eddited issue) and the rated-bullet digest to `out/latest_short.html`
    (both also dated: `out/<date>.html`, `out/<date>_short.html`). Details under *How to run*.
 
-2. **Post to Bluesky** — open the **local `file://` copy** of `out/latest.html`, start the
-   share daemon (`python -m lib.steps.bsky_share`), and click the 🦋 link on each story you
+3. **Post to Bluesky** — open the **local `file://` copy** of `out/latest.html`, start the
+   share daemon (`python -m lib.steps.bsky_share`), and click the 🦋 link on each story from
+   `latest.html` refined newsletter and `latest_short.html` you
    want to feature. Each posts to your Bluesky as a link-preview card (post text = the title,
    card = the URL). Details under *Share newsletter items to Bluesky*.
 
-3. **`/newsagent:bluesky`** — harvest your Bluesky feed since the last run (per-handle dedup
-   marker, capped at `--limit`), download + resize the post images, and reorder posts into
+5. **`/newsagent:bluesky`** — harvests the Bluesky feed since the last run (per-handle dedup
+   marker, capped at `--limit`), downloads + resize the post images, and reorders posts into
    topical groups ranked by a news-importance rubric. Writes `out/latest-bsky.html`. It also
-   generates witty, pun-forward / alliterative section-title hooks as a **separate**
-   suggestion artifact (`runs/bsky-<handle>/titles.json`) — the HTML's `<h2>` headers stay
-   neutral, so use the hooks as headline suggestions when you edit in step 4. Details under
+   generates witty, pun-forward / alliterative hooks as a **separate**
+   suggestion artifact (`runs/bsky-<handle>/titles.json`). Details under
    *Bluesky digest*.
 
-4. **`/beehiiv-daily`** — import `out/latest-bsky.html` into a beehiiv **draft**: upload every
-   image and paste the body (sections, links, descriptions, images in document order). Apply
-   the suggested punny section titles, do your final edit in beehiiv, then **send from beehiiv
+6. **`/beehiiv-daily`** — imports `out/latest-bsky.html` into a beehiiv **draft**: upload every
+   image and paste the body (sections, links, descriptions, images in document order). You can
+   apply suggested punny rewrites, do final edit in beehiiv, then **send from beehiiv
    yourself** — the skill only ever creates a draft, never publishes. Requires a
    `claude --chrome` session with a logged-in `app.beehiiv.com` tab. See
    [.claude/skills/beehiiv-daily/README.md](.claude/skills/beehiiv-daily/README.md).
