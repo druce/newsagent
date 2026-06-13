@@ -10,6 +10,36 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 
 ---
 
+## Daily publishing workflow
+
+The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
+
+1. **`/newsagent:pipeline`** — run the full 12-step pipeline. Writes the newsletter to
+   `out/latest.html` (the full issue) and the rated-bullet digest to `out/latest_short.html`
+   (both also dated: `out/<date>.html`, `out/<date>_short.html`). Details under *How to run*.
+
+2. **Post to Bluesky** — open the **local `file://` copy** of `out/latest.html`, start the
+   share daemon (`python -m lib.steps.bsky_share`), and click the 🦋 link on each story you
+   want to feature. Each posts to your Bluesky as a link-preview card (post text = the title,
+   card = the URL). Details under *Share newsletter items to Bluesky*.
+
+3. **`/newsagent:bluesky`** — harvest your Bluesky feed since the last run (per-handle dedup
+   marker, capped at `--limit`), download + resize the post images, and reorder posts into
+   topical groups ranked by a news-importance rubric. Writes `out/latest-bsky.html`. It also
+   generates witty, pun-forward / alliterative section-title hooks as a **separate**
+   suggestion artifact (`runs/bsky-<handle>/titles.json`) — the HTML's `<h2>` headers stay
+   neutral, so use the hooks as headline suggestions when you edit in step 4. Details under
+   *Bluesky digest*.
+
+4. **`/beehiiv-daily`** — import `out/latest-bsky.html` into a beehiiv **draft**: upload every
+   image and paste the body (sections, links, descriptions, images in document order). Apply
+   the suggested punny section titles, do your final edit in beehiiv, then **send from beehiiv
+   yourself** — the skill only ever creates a draft, never publishes. Requires a
+   `claude --chrome` session with a logged-in `app.beehiiv.com` tab. See
+   [.claude/skills/beehiiv-daily/README.md](.claude/skills/beehiiv-daily/README.md).
+
+---
+
 ## Per-step reference
 
 | Skill | What it does |
@@ -63,7 +93,8 @@ All optional except where you actually use the corresponding feature.
 | `OPENAI_API_KEY` | OpenAI engine (GPT-4o, GPT-5, o-series) + embeddings (required for dedupe/cluster/select) |
 | `GOOGLE_API_KEY` | Google engine (Gemini direct) |
 | `NEWSAPI_API_KEY` | Only if the `NewsAPI` source is enabled in `sources.yaml` |
-| `BSKY_USERNAME` / `BSKY_SECRET` | Only for `newsagent:bluesky` |
+| `BSKY_USERNAME` / `BSKY_SECRET` | For `newsagent:bluesky` and the share-to-Bluesky daemon (`lib.steps.bsky_share`) |
+| `BSKY_QUEUE_PORT` | Optional. Port for the share-to-Bluesky enqueue daemon (default `8765`); must match the port the newsletter's butterfly links point at |
 | `GMAIL_USER` / `GMAIL_PASSWORD` | Only if you want the post-rate email digest (`rate` always writes the HTML; email send falls back to a warning when these are missing) |
 | `BRIGHTDATA_API_KEY` (+ optional `BRIGHTDATA_ZONE`) | Only if any domain in the `sites` table has `bright_data_enabled=1` (paywall routing in `download`) |
 
@@ -162,6 +193,23 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 .venv/bin/python -m lib.steps.bluesky --user yourhandle.bsky.social --limit 80
 # → writes out/bsky-<date>.html
 ```
+
+### Share newsletter items to Bluesky (queue + auto-poster)
+
+Each item row in `out/latest.html` has a 🦋 link. Run the daemon, open the **local
+`file://` copy** of the newsletter, and click 🦋 on any story — its title + URL are queued
+and posted to your Bluesky as a link-preview card (post text = the title, card = the URL).
+
+```bash
+# Requires BSKY_USERNAME + BSKY_SECRET; serves the enqueue endpoint + drains the queue
+.venv/bin/python -m lib.steps.bsky_share --interval 60
+# --once  drains a single pending item and exits
+# --port  overrides $BSKY_QUEUE_PORT (default 8765)
+```
+
+Notes: the 🦋 link only works from the local file (not the emailed copy) and only while the
+daemon is running. Each URL is queued at most once, ever (permanent dedup). One item posts
+per `--interval` for gentle rate-limiting; the queue lives in the `bsky_queue` table.
 
 ---
 
