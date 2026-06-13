@@ -403,8 +403,10 @@ def _stage_apply_titles(handle: str) -> None:
         "titles": titles,
         "sections": sections,
     }, indent=2))
+    # Plain-text list of just the suggested titles, one per line, for easy copy-paste.
+    (wd / "titles.txt").write_text("\n".join(titles) + "\n")
 
-    click.echo(f"Saved {len(titles)} section title(s) → {wd / 'titles.json'}:")
+    click.echo(f"Saved {len(titles)} section title(s) → {wd / 'titles.json'} (+ titles.txt):")
     for s in sections:
         click.echo(f"  • {s['title']}   ({s['label']})")
 

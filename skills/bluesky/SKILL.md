@@ -112,8 +112,9 @@ python -m lib.steps.bluesky --user <handle> --apply-titles
 
 Validates `titles-result.json` against `BskySectionTitlesOutput` (pads with the
 neutral label if short), and writes `runs/bsky-<handle>/titles.json`
-(`{titles, sections:[{label,title}]}`). **Legacy parity:** the punny titles are a
-separate artifact and are NOT merged back into the ordered HTML.
+(`{titles, sections:[{label,title}]}`) plus `runs/bsky-<handle>/titles.txt` — just the
+suggested titles, one per line, for easy copy-paste. **Legacy parity:** the punny titles
+are a separate artifact and are NOT merged back into the ordered HTML.
 
 ## Classic mode (cron / CI)
 
@@ -132,7 +133,7 @@ punny titles ARE used as the section headers.
 | `out/bsky-YYYY-MM-DD.html` | Ordered HTML digest (+ `out/latest-bsky.html` symlink) |
 | `download/bsky-images/` | Cached resized post images |
 | `download/bsky-state/<handle>.txt` | Cross-run dedup marker (newest-post URI from last run) |
-| `runs/bsky-<handle>/` | Staged-mode artifacts: `fetch.json`, `reorder-request.json`, `reorder-result.json`, `ordered.json`, `titles-request.json`, `titles-result.json`, `titles.json` |
+| `runs/bsky-<handle>/` | Staged-mode artifacts: `fetch.json`, `reorder-request.json`, `reorder-result.json`, `ordered.json`, `titles-request.json`, `titles-result.json`, `titles.json`, `titles.txt` |
 
 ## LLM Prompts Used
 

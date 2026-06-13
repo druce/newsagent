@@ -364,6 +364,8 @@ def test_staged_apply_titles_saves_separate_artifact(tmp_path, monkeypatch):
 
     titles = json.loads((wd / "titles.json").read_text())
     assert titles["titles"] == ["Sue-perintelligence", "Chips Ahoy"]
+    # plain-text copy/paste artifact: just the titles, one per line
+    assert (wd / "titles.txt").read_text() == "Sue-perintelligence\nChips Ahoy\n"
     # legacy parity: the HTML is NOT rewritten with the puns
     html = (tmp_path / "out" / "latest-bsky.html").read_text()
     assert "Sue-perintelligence" not in html
