@@ -65,8 +65,11 @@ map each input cluster to either:
     duplicative of nothing important).
 
 Guidelines:
-- Aim for 8 to 18 final named sections for a typical 200-250 headline run.
+- Aim for 8 to 14 final named sections for a typical 200-250 headline run
+  (the downstream newsletter caps at 15 sections including the "Other" sink,
+  so more than 14 named sections forces merges later).
 - Each final name should be 4-8 words, descriptive, not generic.
+- Use title case for final names (Capitalize Each Main Word).
 - Merge near-duplicate themes (e.g. "AI Chip Wars" + "Semiconductor Race"
   -> one final name).
 - Do not list "Other" in `final_names`; it is reserved as a sink in `mapping`.

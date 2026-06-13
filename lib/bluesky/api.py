@@ -4,6 +4,8 @@ Uses direct HTTP via httpx (no atproto SDK) to mirror the legacy notebook approa
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 
 _BASE = "https://bsky.social/xrpc"
@@ -34,3 +36,58 @@ def bsky_get_author_feed(
         resp.raise_for_status()
         data = resp.json()
         return data.get("feed", [])
+
+
+def bsky_upload_blob(session: dict, image_path: str | Path, mime_type: str) -> dict:
+    """POST uploadBlob with raw image bytes; returns the blob ref dict.
+
+    The returned dict is the `blob` object suitable for embedding as an
+    `app.bsky.embed.external` thumbnail.
+    """
+    url = f"{_BASE}/com.atproto.repo.uploadBlob"
+    data = Path(image_path).read_bytes()
+    headers = {
+        "Authorization": f"Bearer {session['accessJwt']}",
+        "Content-Type": mime_type,
+    }
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.post(url, headers=headers, content=data)
+        resp.raise_for_status()
+        return resp.json()["blob"]
+
+
+def bsky_create_external_post(
+    session: dict,
+    text: str,
+    uri: str,
+    title: str,
+    description: str,
+    created_at: str,
+    thumb: dict | None = None,
+) -> dict:
+    """Create an app.bsky.feed.post with an external link-preview card.
+
+    `created_at` is an ISO-8601 timestamp supplied by the caller (keeps this
+    module free of wall-clock for testability). Returns the created record
+    ({uri, cid}).
+    """
+    url = f"{_BASE}/com.atproto.repo.createRecord"
+    external: dict = {"uri": uri, "title": title, "description": description}
+    if thumb:
+        external["thumb"] = thumb
+    record = {
+        "$type": "app.bsky.feed.post",
+        "text": text[:300],  # Bluesky 300-grapheme limit
+        "createdAt": created_at,
+        "embed": {"$type": "app.bsky.embed.external", "external": external},
+    }
+    body = {
+        "repo": session["did"],
+        "collection": "app.bsky.feed.post",
+        "record": record,
+    }
+    headers = {"Authorization": f"Bearer {session['accessJwt']}"}
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+        return resp.json()

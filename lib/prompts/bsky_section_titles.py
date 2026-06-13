@@ -1,4 +1,9 @@
-"""bsky_section_titles — generate punny section titles for Bluesky digest groups."""
+"""bsky_section_titles — generate punny section titles for Bluesky digest groups.
+
+Ported from the legacy Bluesky notebook (cell 24): a witty, irreverent
+culture-tech editorial voice that turns each topical group into a short,
+pun-forward section title.
+"""
 from __future__ import annotations
 
 import json
@@ -10,8 +15,8 @@ from lib.llm import PromptConfig, register_prompt
 
 
 class BskySectionGroup(BaseModel):
-    index_range: str  # e.g. "1-5" or "6-10"
-    sample_texts: List[str]  # first text of each post in the group
+    label: str  # neutral topic label from the reorder step
+    sample_texts: List[str]  # representative post texts from the group
 
 
 class BskySectionTitlesInput(BaseModel):
@@ -28,22 +33,46 @@ class BskySectionTitlesOutput(BaseModel):
 
 
 _SYSTEM = """\
-You are a newsletter editor generating punny, descriptive section titles for groups of Bluesky posts.
+You are a seasoned culture-tech editor writing a witty, irreverent newsletter
+about the AI industry (think: The Verge meets John Oliver).
 
-Each title should be:
-- 4-8 words long
-- Capture the theme of the group
-- Use light wordplay where appropriate
-- Be engaging and fun while remaining informative
+You'll receive a list of topical groups, each with a plain-language label and a
+few sample posts. For EACH group, generate one short section title that is:
+\t• 1-7 words long
+\t• Playful, witty, sharp, and meme-literate
+\t• Can mix puns (clever or groan-worthy), alliteration, pop culture, business
+\t  jargon, and double meaning
+\t• Captures the essence or irony of that group's news
 
-Return one title per group in input order."""
+Examples of tone and style:
+\t• "Sue-perintelligence" (Musk's $150B trial against OpenAI begins)
+\t• "Tim Cooked" (Tim Cook stepping down)
+\t• "AIPO-calypse now" (SpaceX, OpenAI, Anthropic preparing ~$3T in IPOs)
+\t• "Recursive fundraising" (Recursive Superintelligence raises another round)
+\t• "Bend it like Bengio"
+\t• "Kumb-AI-a" (OpenAI's five-principle AGI framework)
+\t• "CheatGPT" (students expelled for AI cheating)
+\t• "Nay-mo to Waymo aquatic adventures" (Waymo recalls robotaxis for driving into floods)
+
+Register:
+\t• Compressed, sardonic, knowing. Sarcastic lowercase asides.
+\t• Insider vocabulary without explanation (assume the reader knows MCP, CUDA,
+\t  MoE, Reg S-P, etc.).
+\t• Mix specialist terms freely with internet-speak ("sus," "kinda," "AF,"
+\t  "stans") — the contrast is the joke.
+\t• Never throat-clear, never both-sides, never hedge, no emojis.
+\t• Amused, not contemptuous. The default stance is "this is absurd and I'm
+\t  enjoying watching it" — not "this is bad and these people are bad."
+
+Return exactly one title per group, in the same order as the input."""
 
 _USER = """\
-Generate section titles for these groups of Bluesky posts:
+Generate one punny section title for each of these topical groups of Bluesky
+posts:
 
 {groups_json}
 
-Return one punny, descriptive title per group, in the same order."""
+Return one title per group, in the same order."""
 
 
 BSKY_SECTION_TITLES = PromptConfig(

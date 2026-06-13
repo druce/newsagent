@@ -146,3 +146,25 @@ def test_send_force_email_overrides_idempotency_guard(tmp_path, tmp_db, monkeypa
     runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1"])
     runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--force-email"])
     assert len(calls) == 2
+
+
+def test_render_item_includes_bluesky_share_link():
+    from lib.steps.send import _render_item, _QUEUE_PORT
+
+    html = _render_item({
+        "headline": "Anthropic raises a round",
+        "sources": [("NYT", "https://nyt.com/a?x=1")],
+    })
+    # butterfly glyph + enqueue link to the local daemon, url-encoded
+    assert "\U0001f98b" in html
+    assert f"http://localhost:{_QUEUE_PORT}/enqueue" in html
+    assert "u=https%3A%2F%2Fnyt.com%2Fa%3Fx%3D1" in html
+    assert "t=Anthropic%20raises%20a%20round" in html
+
+
+def test_render_item_omits_share_link_without_source():
+    from lib.steps.send import _render_item
+
+    html = _render_item({"headline": "No source story", "sources": []})
+    assert "/enqueue" not in html
+    assert "\U0001f98b" not in html

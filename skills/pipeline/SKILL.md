@@ -1,14 +1,16 @@
 ---
 name: pipeline
-description: Top-level newsletter orchestrator. Drives the 12-step pipeline (start → send) end-to-end from a parent Claude Code session, dispatching parallel Agents for the seven LLM-using steps. Writes a session summary to runs/<SID>/summary.md.
+description: Top-level newsletter orchestrator. Drives the 12-step pipeline (start → send) end-to-end from a parent Claude Code session, dispatching Agents for the six LLM steps (filter, summarize, cluster, select, draft, rewrite). Writes a session summary to runs/<SID>/summary.md.
 ---
 
 # newsagent:pipeline
 
 This SKILL drives the full newsletter pipeline from a parent Claude Code
-session. For no-LLM steps it invokes the step's Python CLI. For LLM-using
+session. For no-LLM steps it invokes the step's Python CLI. For most LLM
 steps it follows the `--prepare-batches → parallel Agents → --apply-results`
 pattern, dispatching all batches as parallel Agents in a single message.
+Two steps deviate: `select` is three sequential dispatch rounds, and
+`rewrite` is an orchestrator-driven critic loop (see the driver loop below).
 
 For non-interactive use (cron, CI, or any context outside Claude Code), use
 the Python orchestrator `lib.steps.pipeline` directly with an `--engine` override.
@@ -32,13 +34,18 @@ rate → cluster → select → draft → rewrite → send
 | filter | prepare/dispatch/apply | haiku | 25 headlines per batch |
 | download | Python CLI | — | — |
 | dedupe | Python CLI | — | — |
-| summarize | prepare/dispatch/apply | sonnet | 15 articles per batch |
-| rate | Python CLI (uses openai:gpt-4o-mini by default) | — | — |
+| summarize | prepare/dispatch/apply | sonnet | 10 articles per batch |
+| rate | Python CLI (in-process: rate_* prompts default `openai:gpt-4o-mini`, battles `google:gemini-3.1-flash-lite`) | — | — |
 | cluster | prepare/dispatch/apply | haiku | 1 batch (all clusters) |
-| select | prepare/dispatch/apply | haiku | 25 noise per assign batch; 1 merge batch |
+| select | **3 sequential rounds** then apply | sonnet (repechage, consolidate); haiku (reassign) | 50 noise per repechage batch; 1 consolidate batch; 25 headlines per reassign batch |
 | draft | prepare/dispatch/apply | sonnet | 1 batch per section |
-| rewrite | prepare/**critic loop**/apply | sonnet | separate critique → improve → title → assemble dispatches |
+| rewrite | prepare/**critic loop**/finalize | sonnet | separate critique → improve → title dispatches; mechanical `--finalize` (no assemble Agent) |
 | send | Python CLI | — | — |
+
+The Model column is the **default** for each step (it matches the per-step
+SKILL.md and the model named in the `--prepare-*` stdout). The caller may
+override the model per dispatch (e.g. opus for summarize or draft)
+when explicitly asked to; absent an instruction, use the default.
 
 ## Command discipline (stay prompt-free)
 
@@ -80,7 +87,7 @@ For each step in the plan:
    launch with `run_in_background: true` and wait for the completion
    notification rather than polling.
 
-2. **LLM-using fan-out steps** (filter, summarize, cluster, select, draft):
+2. **LLM-using fan-out steps** (filter, summarize, cluster, draft):
    ```bash
    .venv/bin/python -m lib.steps.<step> --session SID --prepare-batches [step-specific args]
    ```
@@ -101,21 +108,34 @@ For each step in the plan:
    the list); read the full path list it prints and dispatch one Agent per
    path.
 
-   (For `select` there are two batch subdirs — `select-assign-batches/` and
-   `select-merge-batches/` — dispatch Agents for both in the same message.)
-
    Wait for all Agents to return. Then:
    ```bash
    .venv/bin/python -m lib.steps.<step> --session SID --apply-results runs/SID/<step>-results
    ```
-   (For `select` use `--apply-results runs/SID` so it can find both result
-   subdirs.)
 
    If apply reports problems on stderr (`missing ...`, `schema mismatch`),
    identify the failing batch numbers, re-dispatch only those Agents
    (overwriting their result files), and re-run apply.
 
-3. **`rewrite` is a sequential critic loop, NOT a fan-out.** After
+3. **`select` is THREE sequential dispatch rounds, NOT one fan-out** (each
+   round's prepare reads the previous round's results — see
+   `skills/select/SKILL.md`):
+   ```bash
+   .venv/bin/python -m lib.steps.select --session SID --prepare-repechage
+   # dispatch one Sonnet Agent per select-repechage-batches/batch-NNN.json
+   .venv/bin/python -m lib.steps.select --session SID --prepare-consolidate
+   # dispatch ONE Sonnet Agent for select-consolidate-batches/batch-000.json
+   .venv/bin/python -m lib.steps.select --session SID --prepare-reassign
+   # dispatch one Haiku Agent per select-reassign-batches/batch-NNN.json
+   .venv/bin/python -m lib.steps.select --session SID --apply-results runs/SID
+   ```
+   Within a round, dispatch all of that round's batches in a single parent
+   message; do not start the next round's prepare until the current round's
+   Agents have returned. The final apply takes `runs/SID` (not a single
+   results subdir) so it can find all three result subdirs; it then runs the
+   in-process global MMR top-K and builds the sections.
+
+4. **`rewrite` is a sequential critic loop, NOT a fan-out.** After
    `--prepare-batches`, do NOT dispatch all batches at once. Instead parent
    Claude drives the loop from `skills/rewrite/SKILL.md`: dispatch a CRITIQUE
    Agent → read its score/accept → if score < 8.0 dispatch an IMPROVE Agent →
@@ -152,7 +172,9 @@ For every Agent dispatch:
   path filled in
 
 Dispatch ALL batches for a step in one parent message (multiple Agent tool
-calls in the same message) so they run in parallel.
+calls in the same message) so they run in parallel. For `select` that means
+all batches of the **current round**; for `rewrite` each critic-loop pass is
+a single sequential dispatch.
 
 ## Flags
 
@@ -172,8 +194,9 @@ calls in the same message) so they run in parallel.
 | `--cached-pages` | off | Gather reads html sources from `runs/<SID>/pages/` (rss/rest still live). Use to resume a halted gather after dropping a manual landing page. |
 
 `--engine` from `lib.steps.pipeline` is NOT supported in the interactive flow —
-the model is fixed per step (table above). For full-pipeline engine override
-use the non-interactive fallback below.
+each step has a default model (table above), overridable per dispatch on
+explicit request. For full-pipeline engine override use the non-interactive
+fallback below.
 
 ## Step plan resolution
 

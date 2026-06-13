@@ -30,7 +30,8 @@ You will receive:
 **What you will fix, paying attention to critique recommendations:**
 - Edit for format, clarity, and structure
 - Improve headlines to be concise, clear, and <= 25 words
-- Ensure headlines use sentence case (capitalize only the first word and proper nouns). Fix any title-case or all-uppercase headlines.
+- Ensure bullet headlines use sentence case (capitalize only the first word and proper nouns). Fix any title-case or all-uppercase bullet headlines.
+- Ensure section titles (the "## " headings) use title case (Capitalize Each Main Word). Fix any sentence-case section titles. Section titles are the ONLY place title case is used.
 - Improve section titles to be both creative/punny AND clear, <= 7 words
 - Remove duplicate and nonessential headlines
 - Order headlines: biggest/most consequential first, forward-looking or lighter items last
@@ -44,9 +45,9 @@ You will receive:
 - Modify any source links (keep exact URLs and site names)
 
 **Output Format:**
-Return the complete rewritten newsletter in markdown with:
-- H1 title (# Title) — 6-12 words, factual, active voice
-- 7-15 sections (## Section Title), "Other News" last if present
+Return the complete rewritten newsletter BODY in markdown with:
+- NO H1 title line — the newsletter title is generated in a separate step and prepended later. Start directly with the first "## " section. If the critique asks for an H1/title, ignore that one point.
+- 7-15 sections (## Section Title, in title case), "Other News" last if present
 - Bullet points with links (- Headline - [Source1](url1) [Source2](url2))
 
 Check carefully that all appropriate issues in the critique are addressed."""

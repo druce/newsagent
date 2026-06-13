@@ -21,9 +21,17 @@ def test_bsky_reorder_registered():
 
 
 def test_bsky_reorder_output_schema():
-    from lib.prompts.bsky_reorder import BskyReorderOutput
-    result = BskyReorderOutput(indexes=[3, 1, 2, 0])
-    assert result.indexes == [3, 1, 2, 0]
+    from lib.prompts.bsky_reorder import BskyReorderOutput, BskyReorderGroup
+
+    result = BskyReorderOutput(
+        groups=[
+            BskyReorderGroup(label="OpenAI", indexes=[3, 1]),
+            BskyReorderGroup(label="Hardware", indexes=[2, 0]),
+        ]
+    )
+    # groups are ordered most→least important; indexes flatten to the full order
+    assert [i for g in result.groups for i in g.indexes] == [3, 1, 2, 0]
+    assert result.groups[0].label == "OpenAI"
 
 
 def test_bsky_reorder_system_prompt_mentions_importance_and_order():
@@ -31,3 +39,13 @@ def test_bsky_reorder_system_prompt_mentions_importance_and_order():
     system_lower = cfg.system_prompt.lower()
     assert "important" in system_lower or "importance" in system_lower
     assert "order" in system_lower
+
+
+def test_bsky_reorder_system_prompt_mentions_grouping_and_factors():
+    """The full port carries the topical-grouping instruction + importance factors."""
+    cfg = get_prompt("bsky_reorder")
+    system_lower = cfg.system_prompt.lower()
+    assert "group" in system_lower
+    # a few of the legacy 13 importance factors should be present
+    assert "magnitude" in system_lower
+    assert "novelty" in system_lower

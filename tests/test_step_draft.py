@@ -91,6 +91,34 @@ def _make_fake_call_prompt(engine_log=None):
 
 
 # ---------------------------------------------------------------------------
+# Test 0: story payload prefers resolved publisher name over link hostname
+# ---------------------------------------------------------------------------
+
+def test_section_input_prefers_site_name_over_hostname():
+    """source = site_name when present (set by download), else link hostname."""
+    from lib.steps.draft import _section_input
+
+    stories = [
+        {
+            "headline": "Redirected story",
+            "link": "https://www.bloomberg.com/news/articles/real-story",
+            "site_name": "Bloomberg",
+            "summary": "s",
+            "rating": 1.0,
+        },
+        {
+            "headline": "Direct story",
+            "link": "https://ai.com/2",
+            "summary": "s",
+            "rating": 2.0,
+        },
+    ]
+    out = _section_input("Cat", stories)
+    assert out["stories"][0]["source"] == "Bloomberg"
+    assert out["stories"][1]["source"] == "ai.com"
+
+
+# ---------------------------------------------------------------------------
 # Test 1: drafts one markdown per cluster
 # ---------------------------------------------------------------------------
 

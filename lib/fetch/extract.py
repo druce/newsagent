@@ -5,10 +5,12 @@ with one change: takes HTML content directly instead of reading from disk.
 """
 from __future__ import annotations
 
+import json
 import re
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
+import trafilatura
 from bs4 import BeautifulSoup
 
 from lib.fetch.types import Article
@@ -16,6 +18,51 @@ from lib.utilities import clean_url
 
 
 _DEFAULT_MINLENGTH = 28
+
+_NEXT_DATA_RE = re.compile(
+    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+    re.DOTALL,
+)
+
+
+def article_body_from_next_data(html: str) -> Optional[str]:
+    """Return ``props.pageProps.data.articleBody`` from a Next.js page, if present.
+
+    Some sites (notably HackerNoon) render article prose only inside the
+    ``__NEXT_DATA__`` JSON payload rather than as server-side HTML, so
+    trafilatura sees only author-bio boilerplate. This recovers the real body.
+    Returns None when the blob is missing, unparseable, or has no articleBody.
+    """
+    m = _NEXT_DATA_RE.search(html or "")
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    body = (
+        ((data.get("props") or {}).get("pageProps") or {}).get("data") or {}
+    ).get("articleBody")
+    if isinstance(body, str) and body.strip():
+        return body
+    return None
+
+
+def extract_article_text(html: str) -> Optional[str]:
+    """Extract article body text from a page's HTML.
+
+    Tries trafilatura first, then falls back to the ``__NEXT_DATA__``
+    ``articleBody`` (for JS-rendered sites like HackerNoon). Returns whichever
+    source yields more text, so server-rendered pages keep their trafilatura
+    extract while JS-only pages recover their real body.
+    """
+    traf = trafilatura.extract(html, include_comments=False, include_tables=False)
+    next_data = article_body_from_next_data(html)
+    if next_data and len(next_data) > len(traf or ""):
+        return next_data
+    return traf
 
 
 def extract_article_links(

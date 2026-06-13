@@ -89,9 +89,11 @@ newsagent/
 │   │   │   rewrite.py, send.py, bluesky.py        # pipeline
 │   │   ├── pipeline.py                            # orchestrator
 │   │   ├── progress.py, sessions.py, show.py      # inspection
-│   │   └── recover.py, reset.py, checkpoint.py,
-│   │       diff.py, gc.py                         # recovery / maintenance
-│   └── bluesky/                      # atproto api, og_tags, image resize
+│   │   ├── recover.py, reset.py, checkpoint.py,
+│   │   │   diff.py, gc.py                         # recovery / maintenance
+│   │   └── bsky_share.py                          # share-to-Bluesky daemon
+│   ├── bsky_queue/                   # share queue (queue.py) + poster.py
+│   └── bluesky/                      # atproto api (+ post), og_tags, image resize
 ├── skills/                           # 21 SKILL.md contracts
 ├── agents/                           # persona reference docs for draft/rewrite
 ├── tests/                            # 266 tests, ~89% coverage
@@ -126,7 +128,7 @@ Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific
 
 ## State and data storage
 
-- `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`.
+- `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`, `bsky_queue`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`. `bsky_queue` backs the share-to-Bluesky daemon (`url` UNIQUE → permanent dedup).
 - `download/` — article text cache (sha256-of-url filename).
 - `download/bsky-images/` — Bluesky image cache.
 - `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `newsagent:pipeline`.
@@ -142,7 +144,8 @@ Copy `dot-env.txt` to `.env`. All keys are optional except the ones you actually
 - `OPENAI_API_KEY` — OpenAI engine + embeddings (required for dedupe/cluster/select)
 - `GOOGLE_API_KEY` — Google engine
 - `NEWSAPI_API_KEY` — only if NewsAPI source is enabled in `sources.yaml`
-- `BSKY_USERNAME` / `BSKY_SECRET` — only for `newsagent:bluesky`
+- `BSKY_USERNAME` / `BSKY_SECRET` — for `newsagent:bluesky` and the share-to-Bluesky daemon (`lib.steps.bsky_share`)
+- `BSKY_QUEUE_PORT` — optional, port for the share-to-Bluesky enqueue daemon (default `8765`). `send.py` bakes this port into the 🦋 enqueue links, so render-time and runtime must agree.
 - `BRIGHTDATA_API_KEY` — only needed if any domain has `sites.bright_data_enabled=1` (paywall routing in `download`). Optional `BRIGHTDATA_ZONE` overrides the Web Unlocker zone.
 - `GMAIL_USER` / `GMAIL_PASSWORD` — only if you want the post-rate email digest. `rate` writes `out/<date>_short.html` + `out/latest_short.html` unconditionally; the email send is auto-attempted but degrades to a warning when these are missing. Use `--no-email` to skip explicitly.
 

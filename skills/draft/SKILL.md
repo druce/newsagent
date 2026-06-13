@@ -46,16 +46,28 @@ Per-Agent config:
     - improve_system_prompt, improve_user_prompt (template; same)
     - output_schema: required JSON shape (DraftSectionResult)
 
-  Run this loop in your own context:
-    1. Call write: system_prompt=write_system_prompt, user_prompt=write_user_prompt
-       → initial section markdown.
-    2. For up to max_edits iterations:
-       a. Substitute {section_markdown} into critique_user_prompt and call critique
-          (system_prompt=critique_system_prompt). Read score (float) and accept (bool).
-       b. If accept is true OR score >= accept_threshold: stop, record this iteration,
-          mark accepted=true.
-       c. Otherwise substitute {section_markdown} + {critique} into improve_user_prompt
-          and call improve → new section markdown. Continue.
+  Perform the write, critique, and improve steps YOURSELF by reasoning through
+  them in your own context. Take as many internal reasoning passes as you need.
+  "Write", "critique", and "improve" are SEPARATE steps you reason through, never
+  one combined step. Fully finish and commit to one step's output before starting
+  the next — do not draft the final section first and then back-fill the scores.
+
+  STEP 1 — WRITE (a distinct pass; adopt write_system_prompt as your role).
+    Apply write_user_prompt → the initial section markdown. This is `draft`.
+
+  STEP 2 — for up to max_edits iterations:
+    a. CRITIQUE (a distinct pass; switch role to critique_system_prompt). Read
+       `draft` as if seeing it for the first time as an adversarial editor.
+       Substitute {section_markdown}=draft into critique_user_prompt. Produce an
+       honest score (float 0-10) and specific, actionable feedback, and accept
+       (bool). Be genuinely critical — score what is on the page, not what you
+       intend to fix. Record this iteration's score and feedback.
+    b. If accept is true OR score >= accept_threshold: stop, mark accepted=true.
+    c. Otherwise IMPROVE (a distinct pass; switch role to improve_system_prompt).
+       Substitute {section_markdown}=draft + {critique}=the feedback you just
+       wrote into improve_user_prompt → a new section. Set draft = new section,
+       then loop back to (a) and re-critique the NEW draft from scratch (a fresh
+       critique pass, not a continuation of the previous one).
 
   Return ONLY a JSON object matching output_schema with:
     cat, final_section_markdown, iterations, scores, feedbacks, accepted.

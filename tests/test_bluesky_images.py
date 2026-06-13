@@ -65,3 +65,44 @@ def test_download_image_rejects_oversized(tmp_path):
         result = download_image("https://cdn.example.com/big.jpg", tmp_path, max_bytes=10)
 
     assert result is None
+
+
+def test_download_image_skips_non_image_content_type(tmp_path):
+    """A non-image content type (e.g. an HTML error page) yields None, never a .img file."""
+    with respx.mock:
+        respx.get("https://cdn.example.com/notimg").mock(
+            return_value=httpx.Response(200, content=b"<html>nope</html>",
+                                        headers={"content-type": "text/html"})
+        )
+        from lib.bluesky.images import download_image
+        result = download_image("https://cdn.example.com/notimg", tmp_path)
+
+    assert result is None
+    assert not list(Path(tmp_path).glob("*.img"))
+
+
+def test_download_image_skips_svg(tmp_path):
+    with respx.mock:
+        respx.get("https://cdn.example.com/logo.svg").mock(
+            return_value=httpx.Response(200, content=b"<svg></svg>",
+                                        headers={"content-type": "image/svg+xml"})
+        )
+        from lib.bluesky.images import download_image
+        result = download_image("https://cdn.example.com/logo.svg", tmp_path)
+
+    assert result is None
+
+
+def test_resize_image_rgba_to_jpeg_does_not_crash(tmp_path):
+    """A .jpg target must be saved as RGB (real-run regression: 'cannot write mode … as JPEG')."""
+    buf = io.BytesIO()
+    Image.new("RGBA", (200, 100), (255, 0, 0, 128)).save(buf, "PNG")
+    img_path = tmp_path / "photo.jpg"
+    img_path.write_bytes(buf.getvalue())  # RGBA bytes behind a .jpg name
+
+    from lib.bluesky.images import resize_image
+    resize_image(img_path, desired_height=50)
+
+    out = Image.open(img_path)
+    assert out.height == 50
+    assert out.mode == "RGB"

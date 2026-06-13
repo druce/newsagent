@@ -1,6 +1,8 @@
 """newsagent:send — render newsletter as HTML, write to out/, email via Gmail."""
 from __future__ import annotations
 
+import html as _html
+import os
 import re
 import sqlite3
 import sys
@@ -13,21 +15,40 @@ import markdown as md
 from dotenv import load_dotenv
 
 from lib.state import NewsletterAgentState
-from lib.utilities import send_gmail
+from lib.utilities import render_row_action_links, send_gmail
 
 
 _OUT_DIR = Path("out")
 _LEADING_H1_RE = re.compile(r"\A(?:\s*#\s+[^\n]*\n+)+", re.MULTILINE)
 
+# --- newsletter HTML template constants -----------------------------------
+_FONT = "'Open Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+_BRAND = "Skynet&amp;Chill"
+_BRAND_URL = "https://skynetandchill.com"
+_SITE = "skynetandchill.com"
+_TAGLINE = "AI News Digest"
+_ACCENT = "#111155"        # header bar + section titles
+_RULE_BAR = "#d2691e"      # headline left border
+_CARD_BG = "#f6f6fc"       # headline background
+
+# Port of the local share-to-Bluesky daemon (lib.steps.bsky_share). Must match
+# the daemon's default so the rendered enqueue links resolve at runtime.
+_QUEUE_PORT = int(os.environ.get("BSKY_QUEUE_PORT", "8765"))
+
+# --- markdown parsing -------------------------------------------------------
+_SECTION_RE = re.compile(r"^\s*##\s+(.*\S)\s*$")
+_BULLET_RE = re.compile(r"^\s*[-*]\s+(.*\S)\s*$")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+# Trailing run of `[label](url)` source links, introduced by an em/en dash.
+_SOURCES_RE = re.compile(r"\s+[—–]\s+((?:\[[^\]]+\]\([^)]+\)\s*,?\s*)+)$")
+
 
 def _markdown_to_html(body_md: str) -> str:
-    """Convert the rewrite step's markdown body into HTML.
+    """Convert a markdown body into HTML (fallback rendering path).
 
-    Strips any leading top-level `# Title` lines (the rewrite step often
-    emits the title at the top of the body even though the template wrapper
-    already renders it as <h1>), then runs python-markdown with the
-    extra/sane_lists/smarty extensions so [link](url), `**bold**`, and
-    `- bullet` lists render as real HTML elements.
+    Strips any leading top-level `# Title` lines, then runs python-markdown
+    with the extra/sane_lists/smarty extensions so [link](url), `**bold**`,
+    and `- bullet` lists render as real HTML elements.
     """
     body = _LEADING_H1_RE.sub("", body_md or "")
     return md.markdown(
@@ -37,29 +58,206 @@ def _markdown_to_html(body_md: str) -> str:
     )
 
 
-def _render_html(title: str, body_md: str, headline_count: int) -> str:
-    body_html = _markdown_to_html(body_md)
-    safe_title = title or "AI Newsletter"
-    return f"""<!doctype html>
+def _parse_bullet(text: str) -> Optional[dict]:
+    """Split a bullet into its headline and trailing `[source](url)` links."""
+    headline = text
+    sources: list[tuple[str, str]] = []
+    m = _SOURCES_RE.search(text)
+    if m:
+        headline = text[: m.start()].strip()
+        for lm in _LINK_RE.finditer(m.group(1)):
+            sources.append((lm.group(1).strip(), lm.group(2).strip()))
+    headline = headline.replace("**", "").strip()
+    if not headline:
+        return None
+    return {"headline": headline, "sources": sources}
+
+
+def _parse_sections(body_md: str) -> list[dict]:
+    """Parse the rewrite markdown into [{title, items:[{headline, sources}]}]."""
+    sections: list[dict] = []
+    cur: Optional[dict] = None
+    for raw in (body_md or "").splitlines():
+        line = raw.rstrip()
+        sm = _SECTION_RE.match(line)
+        if sm:
+            cur = {"title": sm.group(1).strip(), "items": []}
+            sections.append(cur)
+            continue
+        bm = _BULLET_RE.match(line)
+        if bm:
+            if cur is None:
+                cur = {"title": None, "items": []}
+                sections.append(cur)
+            item = _parse_bullet(bm.group(1).strip())
+            if item:
+                cur["items"].append(item)
+    return [s for s in sections if s["items"]]
+
+
+def _render_item(item: dict) -> str:
+    headline = item["headline"]
+    sources = item["sources"]
+    text_html = _html.escape(headline)
+    primary = sources[0][1] if sources else None
+
+    if primary:
+        head = (
+            f'<a href="{_html.escape(primary, quote=True)}" '
+            f'style="font-weight:600; color:#111111; text-decoration:none;">{text_html}</a>'
+        )
+    else:
+        head = f'<span style="font-weight:600; color:#111111;">{text_html}</span>'
+
+    # Copy-headline (⎘) + queue-to-Bluesky (🦋) links — shared with the rated
+    # short digest so both render identically. 🦋 is omitted without a source.
+    actions = render_row_action_links(headline, primary, queue_port=_QUEUE_PORT)
+
+    pills = "".join(
+        f'<a href="{_html.escape(url, quote=True)}" '
+        'style="display:inline-block; padding:1px 6px; border:1px solid #b0b0b0; '
+        'border-radius:4px; font-size:11px; color:#828282; vertical-align:middle; '
+        f'text-decoration:none; margin-right:5px;">{_html.escape(name)}</a>'
+        for name, url in sources
+    )
+    pill_block = f"<br>{pills}" if pills else ""
+
+    return (
+        '<tr><td style="padding:0 0 10px 0;">\n'
+        '  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'style="border-left:4px solid {_RULE_BAR}; background-color:{_CARD_BG};">\n'
+        '  <tr><td style="padding:10px 14px 10px 20px; font-size:14px; line-height:1.5; '
+        f'font-family:{_FONT};">\n'
+        f"    {head}{actions}{pill_block}\n"
+        "  </td></tr>\n"
+        "  </table>\n"
+        "</td></tr>"
+    )
+
+
+def _render_section(section: dict) -> str:
+    rows = "\n".join(_render_item(it) for it in section["items"])
+    title = section.get("title")
+    title_row = (
+        f'<tr><td style="font-size:19px; font-weight:600; color:{_ACCENT}; '
+        f'padding-bottom:14px; font-family:{_FONT};">{_html.escape(title)}</td></tr>\n'
+        if title
+        else ""
+    )
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin-bottom:32px;">\n'
+        f"{title_row}"
+        f"{rows}\n"
+        "</table>"
+    )
+
+
+_DIVIDER = (
+    '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+    '<tr><td style="border-top:1px solid #e0e0e0; padding-bottom:24px;"></td></tr></table>'
+)
+
+
+def _render_html(title: str, body_md: str, local_path: Optional[str] = None) -> str:
+    body = _LEADING_H1_RE.sub("", body_md or "")
+    sections = _parse_sections(body)
+    safe_title = _html.escape(title or "AI Newsletter")
+
+    now = datetime.now()
+    date_long = now.strftime("%B %d, %Y at %-I:%M %p")
+    n_stories = sum(len(s["items"]) for s in sections)
+    n_sources = len({name for s in sections for it in s["items"] for name, _ in it["sources"]})
+
+    if sections:
+        subtitle = f"{date_long} &nbsp;&middot;&nbsp; {n_stories} stories from {n_sources}+ sources"
+        content = ("\n" + _DIVIDER + "\n").join(_render_section(s) for s in sections)
+    else:
+        # Fallback: no parseable sections — drop the markdown HTML straight in.
+        subtitle = date_long
+        content = _markdown_to_html(body)
+
+    local_link = ""
+    if local_path:
+        href = f"file://{local_path}"
+        local_link = (
+            f'<tr><td style="padding:12px 0 0 0; text-align:center;">'
+            f'<a href="{_html.escape(href, quote=True)}" '
+            f'style="font-size:12px; font-weight:600; color:{_ACCENT}; text-decoration:none; '
+            f'font-family:{_FONT};">&#x2398;&nbsp;Open local copy with interactive features</a>'
+            "</td></tr>\n"
+            f'<tr><td style="padding:3px 0 0 0; font-size:11px; color:#828282; text-align:center; '
+            f'font-family:{_FONT}; word-break:break-all;">{_html.escape(href)}</td></tr>'
+        )
+
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>{safe_title}</title>
-  <style>
-    body {{ font-family: -apple-system, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; line-height: 1.5; color: #222; }}
-    h1 {{ border-bottom: 2px solid #333; padding-bottom: .3em; }}
-    h2 {{ margin-top: 1.8em; border-bottom: 1px solid #ddd; padding-bottom: .2em; }}
-    a {{ color: #0366d6; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-    ul {{ padding-left: 1.2em; }}
-    li {{ margin-bottom: .5em; }}
-    .meta {{ color: #666; font-size: .9em; }}
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{safe_title}</title>
+<!--[if mso]><style>table,td{{font-family:Arial,sans-serif!important;}}</style><![endif]-->
 </head>
-<body>
-  <h1>{safe_title}</h1>
-  <p class="meta">{datetime.now().isoformat()} — {headline_count} headlines</p>
-  {body_html}
+<body style="margin:0; padding:0; background-color:#ededf0; font-family:{_FONT};">
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#ededf0;">
+<tr><td align="center" style="padding:20px 12px;">
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="680" style="max-width:680px; width:100%; background-color:#fdfdfd;">
+
+<!-- Header bar -->
+<tr>
+<td style="background-color:{_ACCENT}; padding:16px 32px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+  <tr>
+    <td style="font-size:22px; font-weight:600; color:#ffffff; font-family:{_FONT};">
+      <a href="{_BRAND_URL}" style="color:#ffffff; text-decoration:none;">{_BRAND}</a>
+    </td>
+    <td align="right" style="font-size:13px; color:rgba(255,255,255,0.6); font-family:{_FONT};">
+      {_TAGLINE}
+    </td>
+  </tr>
+  </table>
+</td>
+</tr>
+
+<!-- Title -->
+<tr>
+<td style="padding:40px 32px 8px 32px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+  <tr><td style="font-size:28px; font-weight:600; color:#111111; line-height:1.25; font-family:{_FONT};">{safe_title}</td></tr>
+  <tr><td style="padding-top:10px; font-size:13px; color:#828282; font-family:{_FONT};">{subtitle}</td></tr>
+  </table>
+</td>
+</tr>
+
+<!-- Rule -->
+<tr><td style="padding:20px 32px 0 32px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="border-top:1px solid #e0e0e0;"></td></tr></table></td></tr>
+
+<!-- Content -->
+<tr>
+<td style="padding:24px 32px 16px 32px;">
+{content}
+</td>
+</tr>
+
+<!-- Footer -->
+<tr>
+<td style="padding:0 32px 28px 32px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-top:1px solid #e0e0e0;">
+  <tr><td style="padding:20px 0 0 0; text-align:center;">
+    <a href="{_BRAND_URL}" style="font-size:14px; font-weight:600; color:{_ACCENT}; text-decoration:none; font-family:{_FONT};">{_SITE}</a>
+  </td></tr>
+  <tr><td style="padding:8px 0 0 0; font-size:12px; color:#828282; text-align:center; font-family:{_FONT};">Generated on {date_long} by AI Newsletter Agent</td></tr>
+  {local_link}
+  </table>
+</td>
+</tr>
+
+</table>
+</td></tr>
+</table>
+
 </body>
 </html>
 """
@@ -107,11 +305,11 @@ def deliver_newsletter(
         "without the LLM steps.</em></p>"
     )
     title = state.newsletter_title or "AI Newsletter"
-    html = _render_html(title, body, len(state.headline_data))
 
     _OUT_DIR.mkdir(exist_ok=True)
     today = date.today().isoformat()
     out_file = _OUT_DIR / f"{today}.html"
+    html = _render_html(title, body, local_path=str(out_file.resolve()))
     out_file.write_text(html)
 
     latest = _OUT_DIR / "latest.html"

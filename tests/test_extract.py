@@ -69,3 +69,59 @@ def test_extract_returns_article_objects():
     links = extract_article_links(_HTML, cfg, source_name="Example")
     assert all(a.source == "Example" for a in links)
     assert all(a.published is None for a in links)
+
+
+# --- article body extraction (trafilatura + __NEXT_DATA__ fallback) ---------
+import json as _json
+
+from lib.fetch.extract import article_body_from_next_data, extract_article_text
+
+
+def _next_data_html(body: str) -> str:
+    payload = {"props": {"pageProps": {"data": {"articleBody": body}}}}
+    return (
+        "<html><head>"
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + _json.dumps(payload)
+        + "</script></head><body>"
+        "<div>byKaran Sehgal | About Author</div>"  # boilerplate only
+        "</body></html>"
+    )
+
+
+def test_article_body_from_next_data_returns_articlebody():
+    body = "Real article prose. " * 50
+    html = _next_data_html(body)
+    assert article_body_from_next_data(html) == body
+
+
+def test_article_body_from_next_data_absent_returns_none():
+    assert article_body_from_next_data("<html><body>no next data</body></html>") is None
+
+
+def test_article_body_from_next_data_malformed_json_returns_none():
+    html = (
+        '<html><head><script id="__NEXT_DATA__" type="application/json">'
+        "{not valid json}</script></head></html>"
+    )
+    assert article_body_from_next_data(html) is None
+
+
+def test_extract_article_text_prefers_next_data_when_trafilatura_thin():
+    # trafilatura would only see the tiny boilerplate div; the real body lives
+    # in __NEXT_DATA__. extract_article_text must recover the full body.
+    body = "Climate-risk intelligence has a representation problem. " * 40
+    html = _next_data_html(body)
+    assert extract_article_text(html) == body
+
+
+def test_extract_article_text_uses_trafilatura_when_richer():
+    # A normal server-rendered article (no __NEXT_DATA__) still extracts via
+    # trafilatura.
+    paras = "".join(
+        f"<p>{'This is a substantial paragraph of real article content. ' * 5}</p>"
+        for _ in range(8)
+    )
+    html = f"<html><body><article>{paras}</article></body></html>"
+    text = extract_article_text(html)
+    assert text and "substantial paragraph" in text

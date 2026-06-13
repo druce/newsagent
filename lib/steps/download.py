@@ -27,12 +27,11 @@ from urllib.parse import urlparse
 
 import click
 import httpx
-import trafilatura
-
 import lib.prompts  # noqa: F401 — register SITENAME
 
 from lib.fetch.brightdata import scrape_urls_brightdata
 from lib.fetch.canonical import extract_canonical_url
+from lib.fetch.extract import extract_article_text
 from lib.fetch.playwright_runner import fetch_urls_html_batch
 from lib.llm import call_prompt
 from lib.prompts.sitename import SitenameOutput
@@ -75,7 +74,7 @@ def _clear_download_dirs() -> None:
 
 
 def _extract_text(html: str) -> Optional[str]:
-    return trafilatura.extract(html, include_comments=False, include_tables=False)
+    return extract_article_text(html)
 
 
 def _domain_of(url: str) -> str:
@@ -432,9 +431,16 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
 
     # Resolve and store h['site_name'] on every headline. LLM-fill any
     # domains we don't recognize.
-    n_llm_resolved, n_sites_set = _populate_site_names(state, db_path)
+    n_llm_resolved, _ = _populate_site_names(state, db_path)
     if n_llm_resolved:
         click.echo(f"sitename LLM resolved {n_llm_resolved} new domains.")
+
+    # Always surface which URLs failed to download (after all fallbacks),
+    # so the operator sees them on the console without grepping download.json.
+    if failures:
+        click.echo(f"Failed to download {len(failures)} URL(s):", err=True)
+        for f in failures:
+            click.echo(f"  - [{f['phase']}] {f['url']}: {f['error']}", err=True)
 
     state.complete_step(
         "download",

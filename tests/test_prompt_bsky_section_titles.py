@@ -32,3 +32,21 @@ def test_bsky_section_titles_system_prompt_mentions_punny_and_titles():
     system_lower = cfg.system_prompt.lower()
     assert "title" in system_lower
     assert "pun" in system_lower or "wordplay" in system_lower or "punny" in system_lower
+
+
+def test_bsky_section_titles_carries_editorial_voice():
+    """The full port keeps the legacy witty/irreverent register and example puns."""
+    cfg = get_prompt("bsky_section_titles")
+    system = cfg.system_prompt
+    system_lower = system.lower()
+    assert "irreverent" in system_lower or "witty" in system_lower
+    # at least one of the legacy example puns survives as style guidance
+    assert "Sue-perintelligence" in system or "Tim Cooked" in system
+
+
+def test_bsky_section_group_input_uses_label_and_samples():
+    from lib.prompts.bsky_section_titles import BskySectionGroup, BskySectionTitlesInput
+
+    grp = BskySectionGroup(label="OpenAI drama", sample_texts=["a", "b"])
+    inp = BskySectionTitlesInput(groups=[grp])
+    assert "OpenAI drama" in inp.groups_json

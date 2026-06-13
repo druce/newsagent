@@ -59,7 +59,7 @@ def _section_input(cat: str, stories: List[dict]) -> dict:
                 "title": s.get("headline", ""),
                 "url": s.get("link", ""),
                 "summary": s.get("summary", ""),
-                "source": _hostname(s.get("link", "")),
+                "source": s.get("site_name") or _hostname(s.get("link", "")),
                 "rating": s.get("rating", 0.0),
             }
             for s in stories
@@ -151,6 +151,35 @@ def _load_results(
     return out, problems
 
 
+def _build_section_result_from_work(
+    batch_path: str, body_path: str, scores_csv: str, feedbacks_csv: str, accepted: bool
+) -> DraftSectionResult:
+    """Mechanically assemble one DraftSectionResult from a section's work files.
+
+    Replaces the LLM 'assemble' work: the section body and critique feedbacks
+    already exist on disk, and `cat` is read from the section batch.
+    """
+    cat = json.loads(Path(batch_path).read_text())["cat"]
+    body = Path(body_path).read_text()
+    scores = [float(s) for s in scores_csv.split(",") if s.strip()]
+    fb_paths = [p for p in feedbacks_csv.split(",") if p.strip()]
+    feedbacks = [Path(p).read_text() for p in fb_paths]
+    if len(scores) != len(feedbacks):
+        raise click.ClickException(
+            f"--scores ({len(scores)}) and --feedbacks ({len(feedbacks)}) count mismatch"
+        )
+    if not scores:
+        raise click.ClickException("--assemble-section needs at least one score/feedback pair")
+    return DraftSectionResult(
+        cat=cat,
+        final_section_markdown=body,
+        iterations=len(scores),
+        scores=scores,
+        feedbacks=feedbacks,
+        accepted=accepted,
+    )
+
+
 def _draft_section_classic(
     cat: str, stories: List[dict], max_edits: int, engine: Optional[str],
 ) -> tuple:
@@ -181,6 +210,21 @@ def _draft_section_classic(
               help="Write batches to runs/<SID>/draft-batches/ for subagent dispatch")
 @click.option("--apply-results", "apply_results", default=None,
               help="Read result JSONs from this dir and apply to state")
+@click.option("--assemble-section", is_flag=True,
+              help="Mechanically write one DraftSectionResult from a section's work files "
+                   "(--batch, --body, --scores, --feedbacks, --accepted, --out) — no LLM.")
+@click.option("--batch", "batch_path", default=None,
+              help="[--assemble-section] path to the section's batch JSON (source of `cat`).")
+@click.option("--body", "body_path", default=None,
+              help="[--assemble-section] path to the final section body markdown.")
+@click.option("--scores", default=None,
+              help="[--assemble-section] CSV of per-iteration critique scores.")
+@click.option("--feedbacks", default=None,
+              help="[--assemble-section] CSV of critique feedback file paths, one per iteration.")
+@click.option("--accepted/--not-accepted", "accepted", default=False,
+              help="[--assemble-section] whether the critic loop accepted the section.")
+@click.option("--out", "out_path", default=None,
+              help="[--assemble-section] path to write the DraftSectionResult JSON.")
 def cli(
     db_path: str,
     session_id: str,
@@ -189,9 +233,33 @@ def cli(
     engine: Optional[str],
     prepare_batches: bool,
     apply_results: Optional[str],
+    assemble_section: bool,
+    batch_path: Optional[str],
+    body_path: Optional[str],
+    scores: Optional[str],
+    feedbacks: Optional[str],
+    accepted: bool,
+    out_path: Optional[str],
 ) -> None:
-    if prepare_batches and apply_results:
-        raise click.UsageError("--prepare-batches and --apply-results are mutually exclusive")
+    if sum(bool(x) for x in (prepare_batches, apply_results, assemble_section)) > 1:
+        raise click.UsageError(
+            "--prepare-batches, --apply-results and --assemble-section are mutually exclusive")
+
+    # ── assemble-section mode (mechanical, no state load) ───────────
+    if assemble_section:
+        missing = [n for n, v in
+                   (("--batch", batch_path), ("--body", body_path), ("--scores", scores),
+                    ("--feedbacks", feedbacks), ("--out", out_path)) if not v]
+        if missing:
+            raise click.UsageError(f"--assemble-section requires: {', '.join(missing)}")
+        result = _build_section_result_from_work(
+            batch_path, body_path, scores, feedbacks, accepted)  # type: ignore[arg-type]
+        out = Path(out_path)  # type: ignore[arg-type]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(result.model_dump_json(indent=2))
+        click.echo(f"Wrote section result: {out} (cat={result.cat!r}, "
+                   f"iterations={result.iterations}, accepted={result.accepted})")
+        return
 
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()
     if state is None:

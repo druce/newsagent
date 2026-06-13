@@ -38,8 +38,10 @@ def download_image(
         if len(content) > max_bytes:
             return None
 
-        # Determine extension from content-type
-        ct = resp.headers.get("content-type", "")
+        # Determine extension from content-type. Skip anything that isn't a
+        # raster image Pillow can open/resize (non-image error pages, SVG, etc.)
+        # — matches the legacy notebook, and avoids writing junk ".img" files.
+        ct = resp.headers.get("content-type", "").lower()
         if "jpeg" in ct or "jpg" in ct:
             dest_path = dest_path.with_suffix(".jpg")
         elif "png" in ct:
@@ -49,7 +51,7 @@ def download_image(
         elif "webp" in ct:
             dest_path = dest_path.with_suffix(".webp")
         else:
-            dest_path = dest_path.with_suffix(".img")
+            return None
 
         dest_path.write_bytes(content)
         return dest_path
@@ -68,5 +70,8 @@ def resize_image(input_path: Path, desired_height: int = 240) -> Path:
     ratio = desired_height / orig_height
     new_width = int(orig_width * ratio)
     resized = img.resize((new_width, desired_height), Image.LANCZOS)
+    # JPEG can't hold an alpha channel / palette — flatten to RGB before saving.
+    if input_path.suffix.lower() in (".jpg", ".jpeg") and resized.mode != "RGB":
+        resized = resized.convert("RGB")
     resized.save(input_path)
     return input_path

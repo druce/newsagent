@@ -7,7 +7,12 @@ and DataDome-protected sites don't immediately flag us as automation:
   - User-Agent built from the *actually-bundled* Firefox version so the JS-
     side internals (rv:NNN) match the UA header
   - ignore_default_args=["--enable-automation"] to drop Playwright's flag
-  - Randomized viewport / DPR / timezone / locale / color scheme per launch
+  - Randomized viewport / DPR / color scheme per launch
+  - Timezone / locale PINNED to US-East (America/New_York, en-US) so they
+    stay consistent with our outbound IP — anti-bot vendors (DataDome etc.)
+    flag a timezone/IP-geo mismatch (e.g. Asia/Tokyo clock on a US IP) as a
+    strong automation signal, so randomizing across continents was actively
+    counterproductive.
   - Realistic Accept / Sec-Fetch-* / DNT headers
   - Persistent profile at $FIREFOX_PROFILE_PATH (falls back to
     ./.playwright-profile) so cookies and logged-in sessions survive
@@ -28,6 +33,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# Pinned to match our outbound IP's geolocation (US-East). Keeping the
+# timezone/locale consistent with the IP avoids the geo-mismatch signal that
+# anti-bot vendors weight heavily. Override via env for a different egress.
+_PINNED_TIMEZONE = os.environ.get("PLAYWRIGHT_TIMEZONE", "America/New_York")
+_PINNED_LOCALE = os.environ.get("PLAYWRIGHT_LOCALE", "en-US")
 
 
 def profile_dir() -> Path:
@@ -149,12 +160,9 @@ def _prepare_profile(profile: Path) -> None:
 
 def _launch_kwargs(p: Any, headless: bool) -> dict[str, Any]:
     viewport, dpr = _viewport_and_dpr()
-    timezone_id = random.choice([
-        "America/New_York", "Europe/London", "Europe/Paris",
-        "Asia/Tokyo", "Australia/Sydney", "America/Los_Angeles",
-    ])
+    timezone_id = _PINNED_TIMEZONE
     color_scheme = random.choice(["light", "dark", "no-preference"])
-    locale = random.choice(["en-US", "en-GB"])
+    locale = _PINNED_LOCALE
     return dict(
         headless=headless,
         viewport=viewport,

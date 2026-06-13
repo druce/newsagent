@@ -22,7 +22,7 @@ import asyncio
 import os
 from typing import Any, Iterable, Optional
 
-import trafilatura
+from lib.fetch.extract import extract_article_text
 
 try:
     from brightdata import BrightDataClient, SyncBrightDataClient
@@ -37,7 +37,7 @@ _DEFAULT_CONCURRENCY = 8
 
 
 def _extract_text(html: str) -> Optional[str]:
-    return trafilatura.extract(html, include_comments=False, include_tables=False)
+    return extract_article_text(html)
 
 
 def _interpret_result(

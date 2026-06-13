@@ -30,7 +30,6 @@ from lib.steps.send import deliver_newsletter
 
 
 _BATCHES_SUBDIR = "rewrite-batches"
-_RESULTS_SUBDIR = "rewrite-results"
 
 
 def _initial_draft(state: NewsletterAgentState) -> str:
@@ -69,6 +68,83 @@ def _prepare_batch(session_id: str, draft: str, max_edits: int) -> Path:
     return path
 
 
+def _strip_leading_h1(body: str) -> str:
+    """Drop a leading '# ...' H1 line if present — apply prepends '# {title}'."""
+    stripped = body.lstrip()
+    if stripped.startswith("# "):
+        return stripped.split("\n", 1)[1].lstrip("\n") if "\n" in stripped else ""
+    return body
+
+
+def _build_result_from_work(
+    body_path: str, title: str, scores_csv: str, feedbacks_csv: str, accepted: bool
+) -> RewriteResult:
+    """Mechanically assemble a RewriteResult from loop work files + scalars.
+
+    Replaces the per-run 'assemble' subagent: the body and critique feedbacks
+    already exist on disk, so no LLM is needed to package them.
+    """
+    body = _strip_leading_h1(Path(body_path).read_text())
+    scores = [float(s) for s in scores_csv.split(",") if s.strip()]
+    fb_paths = [p for p in feedbacks_csv.split(",") if p.strip()]
+    feedbacks = [Path(p).read_text() for p in fb_paths]
+    if len(scores) != len(feedbacks):
+        raise click.ClickException(
+            f"--scores ({len(scores)}) and --feedbacks ({len(feedbacks)}) count mismatch"
+        )
+    if not scores:
+        raise click.ClickException("--finalize needs at least one score/feedback pair")
+    return RewriteResult(
+        final_newsletter_markdown=body,
+        title=title,
+        iterations=len(scores),
+        scores=scores,
+        feedbacks=feedbacks,
+        accepted=accepted,
+    )
+
+
+def _apply_result(
+    state: NewsletterAgentState,
+    result: RewriteResult,
+    session_id: str,
+    db_path: str,
+    email_to: Optional[str],
+    no_email: bool,
+) -> None:
+    """Set final newsletter state, write the transcript, render + deliver."""
+    state.final_newsletter = f"# {result.title}\n\n{result.final_newsletter_markdown}"
+    state.newsletter_title = result.title
+    state.complete_step(
+        "rewrite",
+        message=f"Newsletter rewritten. Title: {result.title!r}. "
+                f"Iterations: {result.iterations}. Accepted: {result.accepted}.",
+    )
+    state.save_checkpoint("rewrite")
+
+    runs_dir = Path("runs") / session_id
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "rewrite.json").write_text(json.dumps({
+        "session_id": session_id,
+        "completed_at": datetime.now().isoformat(),
+        "title": result.title,
+        "transcript": {
+            "iterations": result.iterations,
+            "scores": result.scores,
+            "feedbacks": result.feedbacks,
+            "accepted": result.accepted,
+            "final_length": len(result.final_newsletter_markdown),
+        },
+    }, indent=2))
+    click.echo(f"Rewrite: '{result.title}' — {result.iterations} iteration(s), accepted={result.accepted}.")
+    deliver_newsletter(
+        session_id=session_id,
+        db_path=db_path,
+        to=email_to,
+        no_email=no_email,
+    )
+
+
 def _load_result(results_dir: Path) -> tuple[Optional[RewriteResult], list[str]]:
     problems: list[str] = []
     if not results_dir.exists():
@@ -99,6 +175,19 @@ def _load_result(results_dir: Path) -> tuple[Optional[RewriteResult], list[str]]
               help="Write batch to runs/<SID>/rewrite-batches/ for subagent dispatch")
 @click.option("--apply-results", "apply_results", default=None,
               help="Read result JSON from this dir and apply to state")
+@click.option("--finalize", is_flag=True,
+              help="Mechanically assemble the result from loop work files (--body, "
+                   "--title-file, --scores, --feedbacks, --accepted) and apply — no LLM.")
+@click.option("--body", "body_path", default=None,
+              help="[--finalize] path to the final newsletter body markdown.")
+@click.option("--title-file", "title_file", default=None,
+              help="[--finalize] path to a file containing the bare title.")
+@click.option("--scores", default=None,
+              help="[--finalize] CSV of per-iteration critique scores, e.g. 6.2,6.8")
+@click.option("--feedbacks", default=None,
+              help="[--finalize] CSV of critique feedback file paths, one per iteration.")
+@click.option("--accepted/--not-accepted", "accepted", default=False,
+              help="[--finalize] whether the critic loop accepted the final draft.")
 @click.option("--to", "email_to", default=None,
               help="Email recipient for the auto-sent newsletter (defaults to GMAIL_USER).")
 @click.option("--no-email", "no_email", is_flag=True,
@@ -110,11 +199,17 @@ def cli(
     engine: Optional[str],
     prepare_batches: bool,
     apply_results: Optional[str],
+    finalize: bool,
+    body_path: Optional[str],
+    title_file: Optional[str],
+    scores: Optional[str],
+    feedbacks: Optional[str],
+    accepted: bool,
     email_to: Optional[str],
     no_email: bool,
 ) -> None:
-    if prepare_batches and apply_results:
-        raise click.UsageError("--prepare-batches and --apply-results are mutually exclusive")
+    if sum(bool(x) for x in (prepare_batches, apply_results, finalize)) > 1:
+        raise click.UsageError("--prepare-batches, --apply-results and --finalize are mutually exclusive")
 
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()
     if state is None:
@@ -129,12 +224,33 @@ def cli(
             click.echo("Nothing to rewrite (no section markdowns).")
             return
         path = _prepare_batch(session_id, draft, max_edits)
+        # also materialize the initial draft as a standalone work file so the
+        # critic loop's first pass and --finalize can always point at a file
+        # (even when the loop accepts on iteration 0 and no improve draft exists).
+        work_dir = Path("runs") / session_id / "rewrite-work"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / "draft-init.md").write_text(draft)
         click.echo(f"Prepared rewrite batch (max_edits={max_edits}): {path}")
-        click.echo(f"\nDispatch one Sonnet subagent. It runs the critic loop and")
-        click.echo(f"generates the title in its own context. Write result to:")
-        click.echo(f"  runs/{session_id}/{_RESULTS_SUBDIR}/batch-000.json")
-        click.echo(f"Then run: python -m lib.steps.rewrite --session {session_id} "
-                   f"--apply-results runs/{session_id}/{_RESULTS_SUBDIR}")
+        click.echo(f"Initial draft body: runs/{session_id}/rewrite-work/draft-init.md")
+        click.echo("\nDrive the critic loop (see skills/rewrite/SKILL.md): dispatch a")
+        click.echo("CRITIQUE Agent then (if score < 8.0) an IMPROVE Agent per iteration,")
+        click.echo("then a TITLE Agent. Each writes to runs/<SID>/rewrite-work/. Finish with:")
+        click.echo(f"  python -m lib.steps.rewrite --session {session_id} --finalize \\")
+        click.echo(f"    --body runs/{session_id}/rewrite-work/draft-<last>.md \\")
+        click.echo(f"    --title-file runs/{session_id}/rewrite-work/title.txt \\")
+        click.echo("    --scores <csv> --feedbacks <csv-of-critique-paths> --accepted|--not-accepted")
+        return
+
+    # ── finalize mode (mechanical assemble + apply from work files) ──
+    if finalize:
+        missing = [n for n, v in
+                   (("--body", body_path), ("--title-file", title_file),
+                    ("--scores", scores), ("--feedbacks", feedbacks)) if not v]
+        if missing:
+            raise click.UsageError(f"--finalize requires: {', '.join(missing)}")
+        title = Path(title_file).read_text().strip()  # type: ignore[arg-type]
+        result = _build_result_from_work(body_path, title, scores, feedbacks, accepted)  # type: ignore[arg-type]
+        _apply_result(state, result, session_id, db_path, email_to, no_email)
         return
 
     # ── apply mode ─────────────────────────────────────────────────
@@ -146,37 +262,7 @@ def cli(
                 click.echo(f"  - {p}", err=True)
         if result is None:
             raise click.ClickException("no usable rewrite result; redispatch")
-
-        state.final_newsletter = f"# {result.title}\n\n{result.final_newsletter_markdown}"
-        state.newsletter_title = result.title
-        state.complete_step(
-            "rewrite",
-            message=f"Newsletter rewritten. Title: {result.title!r}. "
-                    f"Iterations: {result.iterations}. Accepted: {result.accepted}.",
-        )
-        state.save_checkpoint("rewrite")
-
-        runs_dir = Path("runs") / session_id
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        (runs_dir / "rewrite.json").write_text(json.dumps({
-            "session_id": session_id,
-            "completed_at": datetime.now().isoformat(),
-            "title": result.title,
-            "transcript": {
-                "iterations": result.iterations,
-                "scores": result.scores,
-                "feedbacks": result.feedbacks,
-                "accepted": result.accepted,
-                "final_length": len(result.final_newsletter_markdown),
-            },
-        }, indent=2))
-        click.echo(f"Rewrite: '{result.title}' — {result.iterations} iteration(s), accepted={result.accepted}.")
-        deliver_newsletter(
-            session_id=session_id,
-            db_path=db_path,
-            to=email_to,
-            no_email=no_email,
-        )
+        _apply_result(state, result, session_id, db_path, email_to, no_email)
         return
 
     # ── classic mode ───────────────────────────────────────────────

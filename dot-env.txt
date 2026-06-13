@@ -82,6 +82,10 @@ SPOTIFY_CLIENT_SECRET=''
 BSKY_USERNAME=''
 BSKY_SECRET=''
 
+# Port for the share-to-Bluesky enqueue daemon (lib.steps.bsky_share).
+# Must match the port the newsletter's butterfly links point at. Default 8765.
+BSKY_QUEUE_PORT='8765'
+
 GMAIL_USER=''
 GMAIL_PASSWORD=''
 

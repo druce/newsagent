@@ -7,7 +7,7 @@ description: Mine HDBSCAN noise for new clusters, consolidate the full cluster-n
 
 Step 9 of /newsagent:pipeline. Replaces the prior noise-assign + per-cluster MMR
 flow with a three-round consolidation pipeline that produces a flat
-8–18 named sections + `Other`, with exactly K items globally.
+8–14 named sections + `Other`, with exactly K items globally.
 
 ## Phases
 

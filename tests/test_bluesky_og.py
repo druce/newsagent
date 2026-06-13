@@ -50,7 +50,53 @@ def test_get_og_tags_returns_empty_when_no_og_tags():
             return_value=httpx.Response(200, text=_HTML_WITHOUT_OG,
                                         headers={"content-type": "text/html"})
         )
+        # CardyB fallback also yields nothing for this URL.
+        respx.get("https://cardyb.bsky.app/v1/extract").mock(
+            return_value=httpx.Response(200, json={"title": "", "description": "",
+                                                   "image": "", "url": ""})
+        )
         from lib.bluesky.og_tags import get_og_tags
         result = get_og_tags("https://example.com/plain")
 
     assert result == {}
+
+
+def test_get_og_tags_falls_back_to_cardyb_when_direct_blocked():
+    """Paywalled hosts (WSJ/Bloomberg/FT) 403/401 a direct fetch; CardyB,
+    Bluesky's own card extractor, still returns title/description/image."""
+    with respx.mock:
+        respx.get("https://www.wsj.com/a").mock(
+            return_value=httpx.Response(403, text="blocked")
+        )
+        respx.get("https://cardyb.bsky.app/v1/extract").mock(
+            return_value=httpx.Response(200, json={
+                "title": "Real Article Title",
+                "description": "Real article description.",
+                "image": "https://cardyb.bsky.app/v1/image?url=x",
+                "url": "https://www.wsj.com/a",
+            })
+        )
+        from lib.bluesky.og_tags import get_og_tags
+        result = get_og_tags("https://www.wsj.com/a")
+
+    assert result["title"] == "Real Article Title"
+    assert result["description"] == "Real article description."
+    assert result["image"].startswith("https://cardyb.bsky.app/v1/image")
+
+
+def test_get_og_tags_prefers_direct_image_over_cardyb():
+    """When the publisher serves its own OG image, use it and never call CardyB."""
+    cardyb_route = None
+    with respx.mock:
+        respx.get("https://example.com/article").mock(
+            return_value=httpx.Response(200, text=_HTML_WITH_OG,
+                                        headers={"content-type": "text/html"})
+        )
+        cardyb_route = respx.get("https://cardyb.bsky.app/v1/extract").mock(
+            return_value=httpx.Response(200, json={"image": "https://cardyb/should-not-use"})
+        )
+        from lib.bluesky.og_tags import get_og_tags
+        result = get_og_tags("https://example.com/article")
+
+    assert result["image"] == "https://example.com/image.jpg"
+    assert not cardyb_route.called

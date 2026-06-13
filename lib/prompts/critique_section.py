@@ -27,7 +27,8 @@ For the section, you WILL:
 
 Quality Guidelines:
     - Headlines should be <= 25 words, active voice, specific and concrete, no clickbait, hype or jargon
-    - Headlines must use sentence case (capitalize only the first word and proper nouns). Flag any title-case or all-uppercase headlines.
+    - Bullet headlines must use sentence case (capitalize only the first word and proper nouns). Flag any title-case or all-uppercase bullet headlines.
+    - Section titles (the "## " heading) must use title case (Capitalize Each Main Word). Flag sentence-case section titles. This rule applies ONLY to the section title, never to bullet headlines.
     - Section titles should be <= 7 words, creative/punny but clear
     - Each section should have 2-7 stories (except "Other News" which has no limit)
     - Stories should share a common theme or narrative arc

@@ -12,7 +12,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Iterable, Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlunparse
 
 
 _SMTP_HOST = "smtp.gmail.com"
@@ -79,7 +79,79 @@ def send_gmail(subject: str, html_str: str, *, to: Optional[str] = None) -> None
     send_email([recipient], subject, html_str)
 
 
+# ── Per-row action links (copy headline + queue-to-Bluesky) ──────────────────
+
+
+def _js_attr(text: str) -> str:
+    """Escape `text` for use as a JS double-quoted string inside an HTML attr.
+
+    First escape backslashes/quotes for the JS string literal, then HTML-escape
+    so it is safe inside the double-quoted `onclick="..."` attribute. The
+    browser HTML-unescapes before the JS engine sees it, so `\\&quot;` becomes a
+    valid `\\"` escaped quote and the `&quot;` delimiters become `"`.
+    """
+    js = text.replace("\\", "\\\\").replace('"', '\\"')
+    js = " ".join(js.split())  # collapse newlines/runs of whitespace
+    return _html.escape(js, quote=True)
+
+
+def render_row_action_links(
+    headline: str, url: Optional[str], *, queue_port: Optional[int] = None
+) -> str:
+    """Return the two per-row action glyphs: copy-headline (⎘) + queue-to-Bluesky (🦋).
+
+    Shared by the full newsletter (`send.py`) and the rated short digest so both
+    render the identical links. `headline` is raw text; `url` is the primary
+    article URL — the 🦋 enqueue link is omitted when it is falsy. The enqueue
+    link targets the local `bsky_share` daemon on `queue_port` (defaults to
+    $BSKY_QUEUE_PORT or 8765).
+    """
+    if queue_port is None:
+        queue_port = int(os.environ.get("BSKY_QUEUE_PORT", "8765"))
+
+    copy_js = _js_attr(headline)
+    copy = (
+        '<a href="#" onclick="navigator.clipboard.writeText(&quot;'
+        f'{copy_js}&quot;); return false;" '
+        'style="text-decoration:none; color:#aaaaaa; margin-left:6px; font-size:12px;" '
+        'title="Copy headline">&#x2398;</a>'
+    )
+
+    # Fires a fire-and-forget fetch at the local daemon and flips the glyph to a
+    # check in place; falls back to opening the /enqueue URL if scripting is off.
+    share = ""
+    if url:
+        share_url = (
+            f"http://localhost:{queue_port}/enqueue"
+            f"?u={quote(url, safe='')}&t={quote(headline, safe='')}"
+        )
+        share = (
+            f'<a href="{_html.escape(share_url, quote=True)}" target="_blank" '
+            'onclick="fetch(this.href,{mode:&#39;no-cors&#39;});'
+            "this.textContent=&#39;✓&#39;;return false;\" "
+            'style="text-decoration:none; color:#aaaaaa; margin-left:6px; font-size:12px;" '
+            'title="Queue to Bluesky">\U0001f98b</a>'
+        )
+
+    return f"{copy}{share}"
+
+
 # ── Rated-digest HTML rendering ──────────────────────────────────────────────
+
+
+def _strip_no_content(value: Optional[str]) -> str:
+    """Drop the summarize step's 'no content' sentinel.
+
+    When an article body cannot be extracted, the summarize prompt emits
+    short_summary "no content" and summary "- no content". Those are not real
+    content, so callers should treat them as empty (e.g. to fall back to the
+    scraped title) rather than display them.
+    """
+    if not value:
+        return ""
+    if value.strip().lower() in ("no content", "- no content"):
+        return ""
+    return value
 
 
 def _render_rated_item(h: dict) -> str:
@@ -88,8 +160,11 @@ def _render_rated_item(h: dict) -> str:
 
     rating = float(h.get("rating", 0.0))
     # Prefer the distilled one-liner; fall back to scraped title (which can
-    # be garbage like image-caption text on some sites).
-    headline = _html.escape(h.get("short_summary") or h.get("title") or "(no title)")
+    # be garbage like image-caption text on some sites). The 'no content'
+    # sentinel is treated as empty so it doesn't shadow a real title.
+    headline = _html.escape(
+        _strip_no_content(h.get("short_summary")) or h.get("title") or "(no title)"
+    )
     final_url = h.get("final_url") or h.get("url") or ""
     url = _html.escape(final_url or "#")
     # Prefer the stored site_name (set at download time); fall back to a
@@ -97,8 +172,14 @@ def _render_rated_item(h: dict) -> str:
     source = _html.escape(
         h.get("site_name") or pretty_source(final_url, h.get("source"))
     )
-    summary_raw = (h.get("summary") or "").strip()
+    summary_raw = _strip_no_content(h.get("summary")).strip()
     summary_html = _html.escape(summary_raw).replace("\n", "<br>")
+
+    # Same copy-headline + queue-to-Bluesky links as the full newsletter, at the
+    # end of the row. `headline` is already HTML-escaped; pass the raw one-liner
+    # so the copy/enqueue payloads aren't double-escaped.
+    raw_headline = _strip_no_content(h.get("short_summary")) or h.get("title") or "(no title)"
+    actions = render_row_action_links(raw_headline, final_url or None)
 
     return (
         '<div style="margin-bottom:20px;padding:10px;'
@@ -108,7 +189,7 @@ def _render_rated_item(h: dict) -> str:
         f'<a href="{url}" style="color:#0366d6;text-decoration:none;">{headline}</a>'
         f' &mdash; <span style="color:#666;">{source}</span></h3>\n'
         f'  <p style="margin:5px 0 0 0;color:#444;font-size:13px;'
-        f'line-height:1.5;">{summary_html}</p>\n'
+        f'line-height:1.5;">{summary_html}{actions}</p>\n'
         "</div>"
     )
 

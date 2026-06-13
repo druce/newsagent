@@ -476,7 +476,8 @@ def _apply_reassignments_and_mmr(
         sections.append({
             "cat": label,
             "headline": h.get("title", ""),
-            "link": h.get("url", ""),
+            "link": h.get("final_url") or h.get("url", ""),
+            "site_name": h.get("site_name"),
             "rating": h.get("rating", 0.0),
             "summary": h.get("summary", ""),
             "id": idx,

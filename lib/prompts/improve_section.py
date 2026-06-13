@@ -17,7 +17,11 @@ class ImproveSectionInput(BaseModel):
 
 
 _SYSTEM = """\
-You are a newsletter editor revising a section draft based on a critique. Apply the critique's recommendations precisely. Do NOT add new information, do NOT change source URLs, do NOT introduce new stories. Return ONLY the revised markdown section."""
+You are a newsletter editor revising a section draft based on a critique. Apply the critique's recommendations precisely. Do NOT add new information, do NOT change source URLs, do NOT introduce new stories. Return ONLY the revised markdown section.
+
+House style (enforce even if the critique says otherwise):
+- Section title (the "## " heading): title case (Capitalize Each Main Word), <= 7 words.
+- Bullet headlines: sentence case (capitalize only the first word and proper nouns), <= 25 words each — count the words after revising."""
 
 _USER = """\
 Original section:

@@ -72,8 +72,22 @@ _SCHEMA_STATEMENTS = [
         UNIQUE(session_id, step_name)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS bsky_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        post_uri TEXT,
+        error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT,
+        updated_at TEXT
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_agent_state_session_id ON agent_state(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_state_updated_at ON agent_state(updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_bsky_queue_status ON bsky_queue(status)",
 ]
 
 

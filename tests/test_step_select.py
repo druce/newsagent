@@ -304,6 +304,73 @@ def test_apply_routes_unmapped_to_other(tmp_db, monkeypatch, tmp_path):
     assert "Cluster A" in cats
 
 
+def test_apply_sections_use_final_url_and_site_name(tmp_db, monkeypatch, tmp_path):
+    """Section payloads link to the post-redirect final_url and carry site_name.
+
+    Regression: an aggregator redirect permalink (news.google.com/rss/articles/...)
+    reached the published newsletter because select copied the gather-time url
+    even though download had resolved final_url + site_name.
+    """
+    monkeypatch.chdir(tmp_path)
+    headlines = [
+        {
+            "id": 0,
+            "title": "Redirected story",
+            "url": "https://news.google.com/rss/articles/CBMiabc",
+            "final_url": "https://www.bloomberg.com/news/articles/real-story",
+            "site_name": "Bloomberg",
+            "summary": "s0",
+            "short_summary": "ss0",
+            "cluster_id": 0,
+            "cluster_name": "Artificial Intelligence",
+            "embedding": _emb(1.0, 0.0),
+            "rating": 4.0,
+        },
+        {
+            "id": 1,
+            "title": "Direct story",
+            "url": "https://ai.com/1",
+            "summary": "s1",
+            "short_summary": "ss1",
+            "cluster_id": 0,
+            "cluster_name": "Artificial Intelligence",
+            "embedding": _emb(1.01, 0.0),
+            "rating": 3.0,
+        },
+    ]
+    _seed_state(tmp_db, session_id="s_final", headlines=headlines)
+    rdir = Path("runs/s_final/select-reassign-results")
+    rdir.mkdir(parents=True)
+    (rdir / "batch-000.json").write_text(json.dumps({
+        "assignments": [
+            {"id": "0", "assignment": "AI"},
+            {"id": "1", "assignment": "AI"},
+        ]
+    }))
+    monkeypatch.setattr(
+        "lib.steps.select.embed_texts",
+        lambda texts: [[0.0] * 8 for _ in texts],
+    )
+
+    from lib.steps.select import cli as select_cli
+    runner = CliRunner()
+    result = runner.invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_final",
+        "--apply-results", "runs/s_final",
+        "--k", "2",
+    ])
+    assert result.exit_code == 0, result.output
+
+    state = NewsletterAgentState(session_id="s_final", db_path=tmp_db).load_latest_from_db()
+    by_id = {s["id"]: s for s in state.newsletter_section_data}
+    # Resolved redirect: link is the final article URL, pretty name rides along.
+    assert by_id[0]["link"] == "https://www.bloomberg.com/news/articles/real-story"
+    assert by_id[0]["site_name"] == "Bloomberg"
+    # No final_url (e.g. failed download): fall back to the gather-time url.
+    assert by_id[1]["link"] == "https://ai.com/1"
+    assert by_id[1].get("site_name") is None
+
+
 # ---------------------------------------------------------------------------
 # Classic mode (in-process)
 # ---------------------------------------------------------------------------
