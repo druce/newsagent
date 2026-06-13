@@ -1,4 +1,4 @@
-# CLAUDE.md — beehiiv-daily
+# CLAUDE.md — newsagent:beehiiv
 
 Working notes for Claude in this directory. This is a self-contained **skill** that imports
 an HTML digest into a beehiiv **draft**. Read `SKILL.md` for the workflow,

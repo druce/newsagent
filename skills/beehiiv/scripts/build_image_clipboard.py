@@ -18,7 +18,7 @@ uploader derives the upload MIME type from each basename's extension.
 
 Usage:
   python3 build_image_clipboard.py [DIGEST_HTML] [IMAGES_DIR] [OUT_JSON] [LIMIT]
-Defaults match the beehiiv-daily fixed inputs. LIMIT (optional) caps the number
+Defaults match the beehiiv skill's fixed inputs. LIMIT (optional) caps the number
 of images (used for a smoke test); omit for the full set.
 
 Prints a one-line JSON summary {count, names, bytes} to stdout — does NOT print

@@ -1,10 +1,10 @@
 ---
-name: beehiiv-daily
+name: beehiiv
 description: Turn the newsagent Bluesky digest (out/latest-bsky.html — section headers, post blocks with a summary line, a thumbnail, an og-link headline, and an optional description) into a beehiiv DRAFT post, end-to-end, via the Claude Chrome extension. Uploads every image to beehiiv and populates the full post body (sections, links, descriptions, images in document order). Use when the user wants to build/publish their daily Bluesky roundup, "today's issue", "the bsky digest", or import the bsky digest into beehiiv. Creates the draft from a template and authors the title via beehiiv's internal API, then uploads images and pastes the body.
 compatibility: Requires the Claude Chrome extension (Control Chrome tools: get_current_tab/tabs_context, execute_javascript/javascript_tool, navigate, and the computer tool for native Cmd+C/Cmd+V/click). macOS for the `osascript … set the clipboard` image staging. The user must be logged in to beehiiv with a tab open on app.beehiiv.com.
 ---
 
-# beehiiv-daily
+# newsagent:beehiiv
 
 Import the newsagent **Bluesky digest** (`out/latest-bsky.html`) into a beehiiv **draft**:
 upload all images, then populate the body (`<h2>` section headers, per-post summary lines,

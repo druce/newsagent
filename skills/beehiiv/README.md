@@ -1,4 +1,4 @@
-# beehiiv-daily
+# newsagent:beehiiv
 
 A Claude Code skill that turns the newsagent **Bluesky digest** (`out/latest-bsky.html`)
 into a beehiiv **draft** post — uploading every image and populating the full body (`<h2>`
@@ -12,22 +12,20 @@ then uploads images and pastes the body. The auth model and endpoint map live in
 
 ## Installation & invocation
 
-This is installed as a **project skill** at
-`/Users/drucev/projects/newsagent/.claude/skills/beehiiv-daily/`, so any Claude Code session
-started inside `/Users/drucev/projects/newsagent` can invoke it as a slash command:
+This ships as part of the **newsagent plugin** at `skills/beehiiv/`, so any Claude Code
+session in this repo can invoke it as a namespaced slash command:
 
 ```
-/beehiiv-daily
+/newsagent:beehiiv
 ```
 
-(New skills are picked up at session start — if `/beehiiv-daily` doesn't appear, restart
-Claude Code in this project. To make it available in *every* project instead of just this
-one, copy the folder to `~/.claude/skills/beehiiv-daily/`.)
+(New skills are picked up at session start — if `/newsagent:beehiiv` doesn't appear, restart
+Claude Code in this project.)
 
 You can also just describe the task and Claude will load the skill, e.g.:
 
-> Run beehiiv-daily: import `out/latest-bsky.html` (images in `download/bsky-images/`) into a
-> new "Daily" draft titled "AI Reading for Saturday June 13". Don't publish.
+> Run /newsagent:beehiiv: import `out/latest-bsky.html` (images in `download/bsky-images/`)
+> into a new "Daily" draft titled "AI Reading for Saturday June 13". Don't publish.
 
 The digest and images always live at the same fixed paths, so you don't need to specify
 them — just give today's title:
@@ -38,8 +36,8 @@ them — just give today's title:
 
 **Daily checklist:** generate the Bluesky digest (`newsagent:bluesky` → writes
 `out/latest-bsky.html` + `download/bsky-images/`) → `cd /Users/drucev/projects/newsagent &&
-claude --chrome` with a logged-in `app.beehiiv.com` tab → `/beehiiv-daily` (give it today's
-title) → don't touch the keyboard/mouse during the image paste → review the returned
+claude --chrome` with a logged-in `app.beehiiv.com` tab → `/newsagent:beehiiv` (give it
+today's title) → don't touch the keyboard/mouse during the image paste → review the returned
 `draft_url` and publish from beehiiv yourself.
 
 ## What it produces

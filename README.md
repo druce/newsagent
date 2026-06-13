@@ -32,12 +32,12 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
    suggestion artifact (`runs/bsky-<handle>/titles.json`). Details under
    *Bluesky digest*.
 
-6. **`/beehiiv-daily`** — imports `out/latest-bsky.html` into a beehiiv **draft**: upload every
+6. **`/newsagent:beehiiv`** — imports `out/latest-bsky.html` into a beehiiv **draft**: upload every
    image and paste the body (sections, links, descriptions, images in document order). You can
    apply suggested punny rewrites, do final edit in beehiiv, then **send from beehiiv
    yourself** — the skill only ever creates a draft, never publishes. Requires a
    `claude --chrome` session with a logged-in `app.beehiiv.com` tab. See
-   [.claude/skills/beehiiv-daily/README.md](.claude/skills/beehiiv-daily/README.md).
+   [skills/beehiiv/README.md](skills/beehiiv/README.md).
 
 ---
 
@@ -58,6 +58,7 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 | `newsagent:rewrite` | Whole-newsletter critic-optimizer + title generation. |
 | `newsagent:send` | Render HTML, write `out/<date>.html` + `out/latest.html`. |
 | `newsagent:bluesky` | Standalone Bluesky digest. |
+| `newsagent:beehiiv` | Import the Bluesky digest (`out/latest-bsky.html`) into a beehiiv draft via the Chrome extension. Draft only — never publishes. |
 | `newsagent:pipeline` | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
 | `newsagent:progress`, `sessions`, `show` | State inspection. |
 | `newsagent:recover`, `reset` | Error recovery. |
