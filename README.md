@@ -25,7 +25,7 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
    card = the URL). Details under *Share newsletter items to Bluesky*. Bluesky is used a CMS
    to stage posts for Beehiiv.
 
-5. **`/newsagent:bluesky`** — harvests the ;Bluesky druce.ai](https://bsky.app/profile/druce.ai) feed since the last run (per-handle dedup
+5. **`/newsagent:bluesky`** — harvests the [Bluesky druce.ai](https://bsky.app/profile/druce.ai) feed since the last run (per-handle dedup
    marker, capped at `--limit`), downloads + resize the post images, and reorders posts into
    topical groups ranked by a news-importance rubric. Writes `out/latest-bsky.html`. It also
    generates witty, pun-forward / alliterative hooks as a **separate**
