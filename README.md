@@ -29,7 +29,7 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
    marker, capped at `--limit`), downloads + resize the post images, and reorders posts into
    topical groups ranked by a news-importance rubric. Writes `out/latest-bsky.html`. It also
    generates witty, pun-forward / alliterative hooks as a **separate**
-   suggestion artifact (`runs/bsky-<handle>/titles.json`). Details under
+   suggestion artifact (`runs/bsky-<handle>/titles.json`). Generates `out/latest-bsky.html`. Details under
    *Bluesky digest*.
 
 6. **`/newsagent:beehiiv`** — Skill imports `out/latest-bsky.html` into a beehiiv
