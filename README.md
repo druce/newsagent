@@ -23,9 +23,9 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
    `latest.html` refined newsletter and `latest_short.html` bullet-point summaries you
    want to feature. Each posts to Bluesky as a link-preview card (post text = the title,
    card = the URL). Details under *Share newsletter items to Bluesky*. Bluesky is used a CMS
-   to stage posts for
+   to stage posts for Beehiiv.
 
-5. **`/newsagent:bluesky`** — harvests the Bluesky feed since the last run (per-handle dedup
+5. **`/newsagent:bluesky`** — harvests the Bluesky druce.ai feed since the last run (per-handle dedup
    marker, capped at `--limit`), downloads + resize the post images, and reorders posts into
    topical groups ranked by a news-importance rubric. Writes `out/latest-bsky.html`. It also
    generates witty, pun-forward / alliterative hooks as a **separate**
@@ -37,7 +37,7 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
    apply suggested rewrites and do final edit in beehiiv. then **send from beehiiv
    yourself** — the skill only creates a draft, never publishes. Requires a
    `claude --chrome` session with a logged-in `app.beehiiv.com` tab. See
-   [skills/beehiiv/README.md](skills/beehiiv/README.md).
+   [skills/beehiiv/README.md](skills/beehiiv/README.md). See also [final result after editing](https://skynetandchill.druce.ai/)
 
 ---
 
