@@ -7,16 +7,17 @@ Classic (default, all-in-one — needs a non-subagent ``--engine`` to avoid
     python -m lib.steps.bluesky --user <handle> [--engine ENGINE]
 
 Staged (in-session Agent dispatch — no ``claude -p``, no API engine):
-    python -m lib.steps.bluesky --user <handle> --fetch          # 1. python: fetch + images
+    python -m lib.steps.bluesky --user <handle> --fetch           # 1. python: fetch + images
     # 2. dispatch a reorder Agent: reads reorder-request.json → writes reorder-result.json
-    python -m lib.steps.bluesky --user <handle> --apply-reorder  # 3. python: ordered.json + HTML
-    # 4. dispatch a titles Agent: reads titles-request.json → writes titles-result.json
-    python -m lib.steps.bluesky --user <handle> --apply-titles   # 5. python: save titles artifact
+    python -m lib.steps.bluesky --user <handle> --apply-reorder   # 3. python: ordered.json + HTML
+    # 4. dispatch a headlines Agent: reads headlines-request.json → writes headlines-result.json
+    python -m lib.steps.bluesky --user <handle> --apply-headlines # 5. python: save punny-headline artifact
 
-The staged flow keeps the two prompts (bsky_reorder, bsky_section_titles) as
+The staged flow keeps the two prompts (bsky_reorder, bsky_headlines) as
 materialized request files the parent Claude session fulfils by dispatching
-Agents under the current session. Per legacy parity the punny titles are a
-SEPARATE artifact and are not merged back into the ordered HTML.
+Agents under the current session. The digest HTML is a flat list of posts in
+importance order (legacy skynet.html format — no section headers). The punny
+headline rewrites are a SEPARATE artifact and are not merged into the HTML.
 
 Env vars required (fetch + classic modes only):
     BSKY_USERNAME — Bluesky login identifier
@@ -40,11 +41,8 @@ from lib.bluesky.og_tags import get_og_tags
 from lib.bluesky.images import download_image, resize_image
 from lib.llm import call_prompt, get_prompt
 from lib.prompts.bsky_reorder import BskyPost, BskyReorderInput, BskyReorderOutput
-from lib.prompts.bsky_section_titles import (
-    BskySectionGroup,
-    BskySectionTitlesInput,
-    BskySectionTitlesOutput,
-)
+from lib.prompts.bsky_headlines import BskyHeadlinesInput, BskyHeadlinesOutput
+from lib.sources import pretty_source
 
 # Strip a trailing inline-URL abbreviation Bluesky appends to truncated posts,
 # e.g. "...run all the AI chips newatlas.com/technology/e..." (legacy notebook
@@ -195,23 +193,37 @@ def _render_reorder_request(posts: list[BskyPost]) -> dict:
     }
 
 
-def _render_titles_request(groups: list[tuple[str, list[dict]]]) -> dict:
-    section_groups = [
-        BskySectionGroup(
-            label=label,
-            sample_texts=[_extract_text(item) for item in items[:5]],
-        )
-        for label, items in groups
-    ]
-    cfg = get_prompt("bsky_section_titles")
-    inp = BskySectionTitlesInput(groups=section_groups)
+def _ordered_headlines(groups: list[tuple[str, list[dict]]]) -> list[str]:
+    """Flatten groups into the final ordered list of post headlines (post text)."""
+    return [_extract_text(item) for _label, items in groups for item in items]
+
+
+def _render_headlines_request(groups: list[tuple[str, list[dict]]]) -> dict:
+    headlines = _ordered_headlines(groups)
+    cfg = get_prompt("bsky_headlines")
+    inp = BskyHeadlinesInput(headlines=headlines)
     return {
-        "prompt": "bsky_section_titles",
+        "prompt": "bsky_headlines",
         "system_prompt": cfg.system_prompt,
-        "user_prompt": cfg.user_prompt.format(groups_json=inp.groups_json),
-        "output_schema": BskySectionTitlesOutput.model_json_schema(),
-        "labels": [label for label, _ in groups],
+        "user_prompt": cfg.user_prompt.format(headlines_json=inp.headlines_json),
+        "output_schema": BskyHeadlinesOutput.model_json_schema(),
+        "headlines": headlines,
     }
+
+
+def _site_name(url: str, og: dict, db_path: str = "newsletter_agent.db") -> str:
+    """Source label for a post (mirrors the legacy BlueSky notebook):
+    og:site_name, else the curated ``sites`` table name for the URL's domain
+    (with subdomain stripping), else the bare domain (sans www.).
+
+    The sites-table lookup is what turns e.g. ``lemonde.fr`` into "Le Monde";
+    without it, posts whose target page exposes no ``og:site_name`` (common on
+    the Playwright/redirect fetch path) fall through to a raw domain.
+    """
+    name = og.get("site_name")
+    if name:
+        return name
+    return pretty_source(url, db_path=db_path)
 
 
 def _render_html(
@@ -219,8 +231,15 @@ def _render_html(
     og_cache: dict[str, dict],
     image_cache: dict[str, Path | None],
     today: str,
+    handle: str,
 ) -> str:
-    """Render full HTML digest."""
+    """Render the digest as a flat list of posts (legacy skynet.html format).
+
+    Posts come pre-ordered by importance (related items adjacent); the group
+    labels are NOT rendered — there are no section headers. Each post is an
+    optional image paragraph, then either a linked headline ending with the
+    source name in italics, or — for link-less posts — the bare post text.
+    """
     lines: list[str] = [
         "<!DOCTYPE html>",
         "<html lang='en'>",
@@ -229,52 +248,47 @@ def _render_html(
         f"  <title>Bluesky Digest — {today}</title>",
         "  <style>",
         "    body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }",
-        "    .post { border: 1px solid #ddd; border-radius: 6px; padding: 12px; margin: 12px 0; }",
-        "    .post img { height: 240px; width: auto; display: block; margin: 8px 0; }",
-        "    .og-link { color: #0066cc; text-decoration: none; font-weight: bold; }",
-        "    .og-desc { color: #555; font-size: 0.9em; }",
-        "    h1 { color: #333; }",
-        "    h2 { color: #555; border-bottom: 1px solid #eee; padding-bottom: 4px; }",
+        "    img { height: 240px; width: auto; display: block; margin: 8px 0; }",
+        "    a { color: #0066cc; }",
         "  </style>",
         "</head>",
         "<body>",
-        f"  <h1>Bluesky Digest — {today}</h1>",
     ]
 
-    for section_title, posts in grouped_posts:
-        lines.append(f"  <h2>{section_title}</h2>")
+    for _label, posts in grouped_posts:
         for item in posts:
             text = _extract_text(item)
             url = _extract_url(item)
             og = og_cache.get(url, {}) if url else {}
             img_path = image_cache.get(url) if url else None
 
-            lines.append("  <div class='post'>")
-            lines.append(f"    <p>{text}</p>")
-
             if img_path and img_path.exists():
                 rel_path = img_path.resolve().as_posix()
-                lines.append(f"    <img src='file://{rel_path}' alt='post image'>")
+                lines.append(f"  <p><img alt='image' src='file://{rel_path}'></p>")
             elif og.get("image"):
-                lines.append(f"    <img src='{og['image']}' alt='post image'>")
+                lines.append(f"  <p><img alt='image' src='{og['image']}'></p>")
 
             if url:
-                og_title = og.get("title") or url
-                og_desc = og.get("description", "")
-                lines.append(f"    <a class='og-link' href='{url}'>{og_title}</a>")
-                if og_desc:
-                    lines.append(f"    <p class='og-desc'>{og_desc}</p>")
+                lines.append(
+                    f"  <p><a href='{url}'>{text}</a>  - <em>{_site_name(url, og)}</em></p>"
+                )
+            else:
+                lines.append(f"  <p>{text}</p>")
 
-            lines.append("  </div>")
+            lines.append("  <hr />")
 
+    lines.append(
+        f"  <p>Follow the latest AI headlines via "
+        f"<a href='https://bsky.app/profile/{handle}'>{handle} on Bluesky</a></p>"
+    )
     lines += ["</body>", "</html>"]
     return "\n".join(lines)
 
 
-def _write_digest(grouped_posts, og_cache, image_cache) -> tuple[Path, Path]:
+def _write_digest(grouped_posts, og_cache, image_cache, handle) -> tuple[Path, Path]:
     """Render + write out/bsky-<date>.html and the latest-bsky.html symlink."""
     today = date.today().isoformat()
-    html = _render_html(grouped_posts, og_cache, image_cache, today)
+    html = _render_html(grouped_posts, og_cache, image_cache, today, handle)
     out_dir = Path("out")
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / f"bsky-{today}.html"
@@ -349,66 +363,80 @@ def _stage_apply_reorder(handle: str) -> None:
         feed_items, [g.model_dump() for g in reorder.groups]
     )
 
-    out_path, symlink_path = _write_digest(groups, og_cache, image_cache)
+    out_path, symlink_path = _write_digest(groups, og_cache, image_cache, handle)
 
-    # Persist the ordered structure for the titles stage + as a record.
+    # Persist the ordered structure for the headlines stage + as a record.
     (wd / "ordered.json").write_text(json.dumps({
         "handle": handle,
         "date": date.today().isoformat(),
         "groups": [{"label": label, "posts": items} for label, items in groups],
     }, indent=2))
 
-    (wd / "titles-request.json").write_text(json.dumps(_render_titles_request(groups), indent=2))
+    (wd / "headlines-request.json").write_text(
+        json.dumps(_render_headlines_request(groups), indent=2)
+    )
 
     _advance_marker(handle, fetch.get("newest_uri"))
 
+    n_posts = sum(len(items) for _, items in groups)
     click.echo(f"Written: {out_path}")
     click.echo(f"Symlink: {symlink_path}")
-    click.echo(f"Ordered {len(groups)} topical section(s) → {wd / 'ordered.json'}.")
-    click.echo("Next: dispatch a titles Agent that reads titles-request.json and writes")
-    click.echo(f"  {wd / 'titles-result.json'}")
-    click.echo(f"Then run: python -m lib.steps.bluesky --user {handle} --apply-titles")
+    click.echo(f"Ordered {n_posts} post(s) → {wd / 'ordered.json'}.")
+    click.echo("Next: dispatch a headlines Agent that reads headlines-request.json and writes")
+    click.echo(f"  {wd / 'headlines-result.json'}")
+    click.echo(f"Then run: python -m lib.steps.bluesky --user {handle} --apply-headlines")
 
 
-def _stage_apply_titles(handle: str) -> None:
+def _stage_apply_headlines(handle: str) -> None:
     wd = _workdir(handle)
     ordered_path = wd / "ordered.json"
-    result_path = wd / "titles-result.json"
+    request_path = wd / "headlines-request.json"
+    result_path = wd / "headlines-result.json"
     if not ordered_path.exists():
         raise click.ClickException(f"missing {ordered_path}; run --apply-reorder first")
     if not result_path.exists():
-        raise click.ClickException(f"missing {result_path}; dispatch the titles Agent first")
-
-    ordered = json.loads(ordered_path.read_text())
-    labels = [g["label"] for g in ordered["groups"]]
-
-    try:
-        parsed = BskySectionTitlesOutput.model_validate_json(result_path.read_text())
-    except ValidationError as exc:
         raise click.ClickException(
-            f"titles-result.json failed schema validation ({exc.error_count()} errors); "
-            f"redispatch the titles Agent"
+            f"missing {result_path}; dispatch the headlines Agent first"
         )
 
-    titles = list(parsed.titles)
-    # Fall back to the neutral topic label if the Agent returned too few titles.
-    while len(titles) < len(labels):
-        titles.append(labels[len(titles)])
-    titles = titles[: len(labels)]
+    # The original headlines, in final order, come from the request file.
+    request = json.loads(request_path.read_text()) if request_path.exists() else {}
+    originals = request.get("headlines", [])
 
-    sections = [{"label": label, "title": title} for label, title in zip(labels, titles)]
-    (wd / "titles.json").write_text(json.dumps({
+    try:
+        parsed = BskyHeadlinesOutput.model_validate_json(result_path.read_text())
+    except ValidationError as exc:
+        raise click.ClickException(
+            f"headlines-result.json failed schema validation ({exc.error_count()} errors); "
+            f"redispatch the headlines Agent"
+        )
+
+    rewrites = list(parsed.headlines)
+    # Fall back to the original headline if the Agent returned too few rewrites.
+    while len(rewrites) < len(originals):
+        rewrites.append(originals[len(rewrites)])
+    if originals:
+        rewrites = rewrites[: len(originals)]
+
+    pairs = [
+        {"headline": originals[i] if i < len(originals) else "", "rewrite": r}
+        for i, r in enumerate(rewrites)
+    ]
+    (wd / "headlines.json").write_text(json.dumps({
         "handle": handle,
-        "date": ordered.get("date"),
-        "titles": titles,
-        "sections": sections,
+        "date": json.loads(ordered_path.read_text()).get("date"),
+        "headlines": rewrites,
+        "pairs": pairs,
     }, indent=2))
-    # Plain-text list of just the suggested titles, one per line, for easy copy-paste.
-    (wd / "titles.txt").write_text("\n".join(titles) + "\n")
+    # Plain-text list of just the punny rewrites, one per line, for easy copy-paste.
+    (wd / "headlines.txt").write_text("\n".join(rewrites) + "\n")
 
-    click.echo(f"Saved {len(titles)} section title(s) → {wd / 'titles.json'} (+ titles.txt):")
-    for s in sections:
-        click.echo(f"  • {s['title']}   ({s['label']})")
+    click.echo(
+        f"Saved {len(rewrites)} punny headline rewrite(s) → "
+        f"{wd / 'headlines.json'} (+ headlines.txt):"
+    )
+    for r in rewrites:
+        click.echo(f"  • {r}")
 
 
 def _run_classic(handle: str, limit: int, no_dedup: bool, engine: str | None) -> None:
@@ -432,23 +460,27 @@ def _run_classic(handle: str, limit: int, no_dedup: bool, engine: str | None) ->
     )
     groups = _groups_from_reorder(feed_items, [g.model_dump() for g in reorder_result.groups])
 
-    section_groups = [
-        BskySectionGroup(label=label, sample_texts=[_extract_text(it) for it in items[:5]])
-        for label, items in groups
-    ]
-    titles_result = call_prompt(
-        "bsky_section_titles", BskySectionTitlesInput(groups=section_groups),
+    # The digest itself is the flat, plain-headline format (legacy skynet.html).
+    out_path, symlink_path = _write_digest(groups, og_cache, image_cache, handle)
+
+    # Punny headline rewrites are a SEPARATE artifact (not merged into the HTML).
+    headlines = _ordered_headlines(groups)
+    rewrites_result = call_prompt(
+        "bsky_headlines", BskyHeadlinesInput(headlines=headlines),
         **({"engine": engine} if engine else {}),
     )
-    titles = list(titles_result.titles)
-    while len(titles) < len(groups):
-        titles.append(groups[len(titles)][0])
+    rewrites = list(rewrites_result.headlines)
+    while len(rewrites) < len(headlines):
+        rewrites.append(headlines[len(rewrites)])
+    rewrites = rewrites[: len(headlines)]
+    wd = _workdir(handle)
+    wd.mkdir(parents=True, exist_ok=True)
+    (wd / "headlines.txt").write_text("\n".join(rewrites) + "\n")
 
-    grouped_posts = list(zip(titles, [items for _, items in groups]))
-    out_path, symlink_path = _write_digest(grouped_posts, og_cache, image_cache)
     _advance_marker(handle, newest_uri)
     click.echo(f"Written: {out_path}")
     click.echo(f"Symlink: {symlink_path}")
+    click.echo(f"Punny headline rewrites → {wd / 'headlines.txt'}")
 
 
 @click.command()
@@ -464,9 +496,9 @@ def _run_classic(handle: str, limit: int, no_dedup: bool, engine: str | None) ->
 @click.option("--fetch", "fetch_mode", is_flag=True, default=False,
               help="Staged stage 1: fetch + images, write fetch.json + reorder-request.json")
 @click.option("--apply-reorder", "apply_reorder", is_flag=True, default=False,
-              help="Staged stage 3: read reorder-result.json → ordered.json + HTML + titles-request.json")
-@click.option("--apply-titles", "apply_titles", is_flag=True, default=False,
-              help="Staged stage 5: read titles-result.json → save titles.json artifact")
+              help="Staged stage 3: read reorder-result.json → ordered.json + HTML + headlines-request.json")
+@click.option("--apply-headlines", "apply_headlines", is_flag=True, default=False,
+              help="Staged stage 5: read headlines-result.json → save punny headlines.json/.txt artifact")
 def cli(
     handle: str,
     limit: int,
@@ -474,20 +506,20 @@ def cli(
     engine: str | None,
     fetch_mode: bool,
     apply_reorder: bool,
-    apply_titles: bool,
+    apply_headlines: bool,
 ) -> None:
     """Fetch Bluesky posts and render a daily digest HTML."""
-    if sum([fetch_mode, apply_reorder, apply_titles]) > 1:
+    if sum([fetch_mode, apply_reorder, apply_headlines]) > 1:
         raise click.UsageError(
-            "--fetch, --apply-reorder, and --apply-titles are mutually exclusive"
+            "--fetch, --apply-reorder, and --apply-headlines are mutually exclusive"
         )
 
     if fetch_mode:
         _stage_fetch(handle, limit, no_dedup)
     elif apply_reorder:
         _stage_apply_reorder(handle)
-    elif apply_titles:
-        _stage_apply_titles(handle)
+    elif apply_headlines:
+        _stage_apply_headlines(handle)
     else:
         _run_classic(handle, limit, no_dedup, engine)
 

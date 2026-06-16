@@ -61,9 +61,9 @@ executing.
   `ClipboardEvent('paste')` with the corrected `<p>…</p>` fragment.
 - After the body paste, run an integrity diff before calling it done: pbcopy the digest,
   paste it into a temporary `<textarea>` catcher on the /edit page, `DOMParser` it in-page,
-  and check every digest `<h2>` section header, `<a class='og-link'>` headline, and `<p>`
-  summary/`og-desc` text appears in `.ProseMirror.textContent`. This caught both a deleted
-  character and a stray trailing "x" after the footer link on the legacy digest.
+  and check every digest `<a>` headline and `<p>` text (the post text plus its `- source`
+  suffix) appears in `.ProseMirror.textContent` (the digest is flat — no `<h2>` sections).
+  This caught both a deleted character and a stray trailing "x" after the footer link.
 
 ## Requirements
 
@@ -80,9 +80,10 @@ executing.
 
 - Digest: `/Users/drucev/projects/newsagent/out/latest-bsky.html` (symlink to the dated
   `out/bsky-YYYY-MM-DD.html` from the `newsagent:bluesky` step; regenerated daily — image &
-  section count vary, read it fresh each run). Body shape: `<h2>` section headers + repeated
-  `<div class='post'>` blocks (`<p>` summary, optional `<img>`, `<a class='og-link'>` headline,
-  optional `<p class='og-desc'>`).
+  post count vary, read it fresh each run). Body shape: a **flat list of posts** (no `<h2>`
+  sections) — each post is an optional `<p><img></p>` thumbnail, then either
+  `<p><a href>post text</a>  - <em>source</em></p>` or a bare `<p>post text</p>`, then `<hr />`,
+  ending with a "Follow … on Bluesky" footer paragraph.
 - Images dir: `/Users/drucev/projects/newsagent/download/bsky-images`. Filenames are content
   hashes with **mixed extensions** (`.jpg`/`.png`/`.webp`), referenced as absolute `file://`
   srcs — not relative `download/images/ImageN.jpg`.

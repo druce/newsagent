@@ -2,9 +2,9 @@
 
 Daily AI newsletter agent built as a Claude Code skill plugin (`newsagent:*`).
 
-Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads + summarizes articles, clusters by topic, scores via multi-axis ratings + Bradley-Terry pairwise battles, picks a diverse top-K per cluster (MMR with LLM noise-assignment and cluster-merge), and writes a polished newsletter through parallel critic-optimizer loops. Plus a standalone Bluesky digest pipeline.
+Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads + summarizes articles, clusters by topic, scores via multi-axis ratings + Bradley-Terry pairwise battles, picks a diverse top-K per cluster (MMR with LLM noise-assignment and cluster-merge), and writes a polished newsletter through parallel critic-optimizer loops. Plus a standalone Beehiiv publishing pipeline.
 
-**Status:** all 9 build phases complete (`phase-0-complete` … `phase-8-complete`). 266 tests, ~89% coverage.
+**Status:** all build phases complete (`phase-0-complete` … `phase-8-complete`). 266 tests, ~89% coverage.
 
 **Design doc:** [CLAUDE_REFACTOR.md](CLAUDE_REFACTOR.md) · **Phase plans:** [docs/superpowers/plans/](docs/superpowers/plans/) · **Conventions:** [CLAUDE.md](CLAUDE.md)
 
@@ -14,16 +14,16 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 
 The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 
-1. **`/newsagent:pipeline`** — run the full 12-step pipeline from scraping and gathering, to
-   selecting items and writing proposed newsletter. Writes the newsletter to
-   `out/latest.html` (fully AI-eddited issue) and the rated-bullet digest to `out/latest_short.html`
+1. **`/newsagent:pipeline`** — Claude skill to run the full 12-step pipeline from scraping
+   and gathering, to selecting items and writing proposed newsletter. Writes the newsletter to `out/latest.html` (fully AI-eddited issue) and the rated-bullet digest to `out/latest_short.html`
    (both also dated: `out/<date>.html`, `out/<date>_short.html`). Details under *How to run*.
 
 3. **Post to Bluesky** — open the **local `file://` copy** of `out/latest.html`, start the
    share daemon (`python -m lib.steps.bsky_share`), and click the 🦋 link on each story from
-   `latest.html` refined newsletter and `latest_short.html` you
-   want to feature. Each posts to your Bluesky as a link-preview card (post text = the title,
-   card = the URL). Details under *Share newsletter items to Bluesky*.
+   `latest.html` refined newsletter and `latest_short.html` bullet-point summaries you
+   want to feature. Each posts to Bluesky as a link-preview card (post text = the title,
+   card = the URL). Details under *Share newsletter items to Bluesky*. Bluesky is used a CMS
+   to stage posts for
 
 5. **`/newsagent:bluesky`** — harvests the Bluesky feed since the last run (per-handle dedup
    marker, capped at `--limit`), downloads + resize the post images, and reorders posts into
@@ -32,10 +32,10 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
    suggestion artifact (`runs/bsky-<handle>/titles.json`). Details under
    *Bluesky digest*.
 
-6. **`/newsagent:beehiiv`** — imports `out/latest-bsky.html` into a beehiiv **draft**: upload every
-   image and paste the body (sections, links, descriptions, images in document order). You can
-   apply suggested punny rewrites, do final edit in beehiiv, then **send from beehiiv
-   yourself** — the skill only ever creates a draft, never publishes. Requires a
+6. **`/newsagent:beehiiv`** — Skill imports `out/latest-bsky.html` into a beehiiv
+   **draft**, uploads every image and pastes the body (sections, links, descriptions, images in document order). You can
+   apply suggested rewrites and do final edit in beehiiv. then **send from beehiiv
+   yourself** — the skill only creates a draft, never publishes. Requires a
    `claude --chrome` session with a logged-in `app.beehiiv.com` tab. See
    [skills/beehiiv/README.md](skills/beehiiv/README.md).
 

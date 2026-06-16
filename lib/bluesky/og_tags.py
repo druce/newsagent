@@ -39,6 +39,8 @@ def _get_og_tags_direct(url: str, timeout: float) -> dict:
             result["image"] = content
         elif prop == "og:url" and content:
             result["url"] = content
+        elif prop == "og:site_name" and content:
+            result["site_name"] = content
 
     return result
 
@@ -60,7 +62,10 @@ def _get_og_tags_cardyb(url: str, timeout: float) -> dict:
 
 
 def get_og_tags(url: str, timeout: float = _TIMEOUT) -> dict:
-    """Fetch OG metadata for `url` as a {title, description, image, url} dict.
+    """Fetch OG metadata for `url` as a {title, description, image, url, site_name} dict.
+
+    `site_name` (from `og:site_name`) is only present on the direct-fetch path;
+    CardyB does not provide it, so callers must tolerate its absence.
 
     Tries a direct fetch first (gives the publisher's own OG image for normal
     sites); when that yields no image — e.g. a paywalled host blocked the

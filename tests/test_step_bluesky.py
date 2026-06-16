@@ -58,24 +58,25 @@ def _reorder_groups(groups: list[list[int]]):
     )
 
 
-def _make_titles_output(n_groups: int):
-    """Returns a BskySectionTitlesOutput with n_groups titles."""
-    from lib.prompts.bsky_section_titles import BskySectionTitlesOutput
-    return BskySectionTitlesOutput(titles=[f"Section Title {i+1}" for i in range(n_groups)])
+def _make_headlines_output(n: int):
+    """Returns a BskyHeadlinesOutput with n punny rewrites."""
+    from lib.prompts.bsky_headlines import BskyHeadlinesOutput
+    return BskyHeadlinesOutput(headlines=[f"Punny Rewrite {i+1}" for i in range(n)])
 
 
 def _smart_call_prompt(name, inputs, **kwargs):
-    """Adaptive mock: reorder → one group of all indexes; titles → one per group."""
+    """Adaptive mock: reorder → one group of all indexes; headlines → one per headline."""
     if name == "bsky_reorder":
         n = len(inputs.posts)
         return _reorder_groups([list(range(n))])
-    if name == "bsky_section_titles":
-        return _make_titles_output(len(inputs.groups))
+    if name == "bsky_headlines":
+        return _make_headlines_output(len(inputs.headlines))
     raise ValueError(f"Unexpected prompt: {name}")
 
 
-def test_bluesky_step_renders_html_with_title_and_posts(tmp_path, monkeypatch):
-    """Step renders an HTML file with digest title and post content."""
+def test_bluesky_step_renders_flat_html_with_posts(tmp_path, monkeypatch):
+    """Step renders a flat HTML digest (legacy skynet.html format): no section
+    headers, post text as the link, source in <em>, <hr /> separators, footer."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BSKY_USERNAME", "testuser.bsky.social")
     monkeypatch.setenv("BSKY_SECRET", "test-secret")
@@ -90,8 +91,8 @@ def test_bluesky_step_renders_html_with_title_and_posts(tmp_path, monkeypatch):
         patch("lib.steps.bluesky.call_prompt") as mock_call_prompt,
     ):
         mock_call_prompt.side_effect = [
-            _reorder_groups([[0, 1, 2]]),  # one topical group of all 3 posts
-            _make_titles_output(1),
+            _reorder_groups([[0, 1, 2]]),  # one ordered group of all 3 posts
+            _make_headlines_output(3),
         ]
 
         from lib.steps.bluesky import cli
@@ -99,13 +100,53 @@ def test_bluesky_step_renders_html_with_title_and_posts(tmp_path, monkeypatch):
         result = runner.invoke(cli, ["--user", "testuser.bsky.social"])
 
     assert result.exit_code == 0, result.output
-    # Check HTML was written
     out_dir = tmp_path / "out"
     html_files = list(out_dir.glob("bsky-*.html"))
     assert len(html_files) == 1
-    html_content = html_files[0].read_text()
-    assert "Bluesky Digest" in html_content
-    assert "GPT-5" in html_content or "GPT" in html_content
+    html = html_files[0].read_text()
+
+    # Flat format: NO section headers, post text present.
+    assert "<h2>" not in html
+    assert "GPT-5" in html
+    # Post 0 has a link → rendered as <a>post text</a> + source <em>, with the
+    # domain as the source fallback (no og:site_name in the mock).
+    assert "<a href='https://openai.com/gpt5'>" in html
+    assert "<em>openai.com</em>" in html
+    # Link-less posts render as bare paragraphs (no source).
+    assert "diffusion models" in html
+    # Separators + footer present.
+    assert "<hr />" in html
+    assert "on Bluesky</a></p>" in html
+    # Punny rewrites are NOT injected into the digest HTML.
+    assert "Punny Rewrite" not in html
+
+
+def test_site_name_uses_sites_table_then_bare_domain(tmp_path):
+    """_site_name mirrors the legacy notebook: og:site_name wins, else the
+    curated sites-table name for the URL's domain, else the bare domain."""
+    import sqlite3
+    from lib.steps.bluesky import _site_name
+    from lib.sources import reset_db_cache
+
+    db = tmp_path / "sites.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE sites (domain TEXT, name TEXT)")
+    conn.execute("INSERT INTO sites VALUES ('lemonde.fr', 'Le Monde')")
+    conn.commit()
+    conn.close()
+    reset_db_cache()
+    try:
+        # og:site_name absent → curated sites-table name (subdomain stripped)
+        assert _site_name("https://www.lemonde.fr/a", {}, db_path=str(db)) == "Le Monde"
+        # og:site_name present → it wins over the table
+        assert (
+            _site_name("https://www.lemonde.fr/a", {"site_name": "Le Monde Tech"}, db_path=str(db))
+            == "Le Monde Tech"
+        )
+        # unknown domain → bare-domain fallback (sans www.)
+        assert _site_name("https://www.example.org/x", {}, db_path=str(db)) == "example.org"
+    finally:
+        reset_db_cache()
 
 
 def test_bluesky_step_requires_env_vars(tmp_path, monkeypatch):
@@ -122,8 +163,8 @@ def test_bluesky_step_requires_env_vars(tmp_path, monkeypatch):
     assert result.exit_code != 0
 
 
-def test_bluesky_step_calls_llm_reorder_and_titles(tmp_path, monkeypatch):
-    """Step invokes call_prompt for both bsky_reorder and bsky_section_titles."""
+def test_bluesky_step_calls_llm_reorder_and_headlines(tmp_path, monkeypatch):
+    """Step invokes call_prompt for both bsky_reorder and bsky_headlines."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BSKY_USERNAME", "testuser.bsky.social")
     monkeypatch.setenv("BSKY_SECRET", "test-secret")
@@ -149,7 +190,7 @@ def test_bluesky_step_calls_llm_reorder_and_titles(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "bsky_reorder" in call_prompt_calls
-    assert "bsky_section_titles" in call_prompt_calls
+    assert "bsky_headlines" in call_prompt_calls
 
 
 def _run_cli(args, feed=_FAKE_FEED, og=None):
@@ -166,17 +207,18 @@ def _run_cli(args, feed=_FAKE_FEED, og=None):
         return CliRunner().invoke(cli, args)
 
 
-def test_bluesky_topical_grouping_yields_multiple_sections(tmp_path, monkeypatch):
-    """Reorder returns N topical groups → N <h2> sections, one punny title each."""
+def test_bluesky_groups_flatten_to_ordered_posts_no_sections(tmp_path, monkeypatch):
+    """Reorder groups are flattened into a single ordered list — NO <h2> headers.
+    Posts appear in group-flattened order ([0,2] then [1])."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BSKY_USERNAME", "u.bsky.social")
     monkeypatch.setenv("BSKY_SECRET", "s")
 
     def two_groups(name, inputs, **kwargs):
         if name == "bsky_reorder":
-            return _reorder_groups([[0, 2], [1]])  # two distinct topic groups
-        if name == "bsky_section_titles":
-            return _make_titles_output(len(inputs.groups))
+            return _reorder_groups([[0, 2], [1]])  # adjacency for ordering only
+        if name == "bsky_headlines":
+            return _make_headlines_output(len(inputs.headlines))
         raise ValueError(name)
 
     fake_session = {"accessJwt": "t", "did": "did:plc:test", "handle": "u"}
@@ -192,11 +234,13 @@ def test_bluesky_topical_grouping_yields_multiple_sections(tmp_path, monkeypatch
 
     assert result.exit_code == 0, result.output
     html = (tmp_path / "out" / "latest-bsky.html").read_text()
-    assert html.count("<h2>") == 2
-    # all three posts appear, grouped by the LLM's topical assignment
-    assert "GPT-5" in html
-    assert "diffusion models" in html
-    assert "H200" in html
+    # No section headers and no group labels in the body.
+    assert "<h2>" not in html
+    assert "Topic 1" not in html and "Topic 2" not in html
+    # all three posts appear
+    assert "GPT-5" in html and "diffusion models" in html and "H200" in html
+    # flattened order is [0, 2, 1]: GPT-5 (0) → H200 (2) → diffusion (1)
+    assert html.index("GPT-5") < html.index("H200") < html.index("diffusion models")
 
 
 def test_bluesky_cross_run_dedup_skips_seen_posts(tmp_path, monkeypatch):
@@ -321,25 +365,30 @@ def test_staged_apply_reorder_renders_ordered_html(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
 
     html = (tmp_path / "out" / "latest-bsky.html").read_text()
-    assert html.count("<h2>") == 2
-    # neutral topic labels are the headers at this stage (titles not yet applied)
-    assert "OpenAI news" in html and "Hardware and research" in html
+    # Flat format: no section headers, no group labels in the body.
+    assert "<h2>" not in html
+    assert "OpenAI news" not in html and "Hardware and research" not in html
     assert "GPT-5" in html and "diffusion models" in html and "H200" in html
+    # flattened order follows the groups: [0] then [2, 1]
+    assert html.index("GPT-5") < html.index("H200") < html.index("diffusion models")
+    assert "on Bluesky</a></p>" in html  # footer
 
     ordered = json.loads((wd / "ordered.json").read_text())
     assert [g["label"] for g in ordered["groups"]] == ["OpenAI news", "Hardware and research"]
 
-    # titles-request prepped for the next dispatch
-    treq = json.loads((wd / "titles-request.json").read_text())
-    assert treq["prompt"] == "bsky_section_titles"
-    assert "irreverent" in treq["system_prompt"].lower() or "witty" in treq["system_prompt"].lower()
+    # headlines-request prepped for the next dispatch (punny rewrites)
+    hreq = json.loads((wd / "headlines-request.json").read_text())
+    assert hreq["prompt"] == "bsky_headlines"
+    assert "irreverent" in hreq["system_prompt"].lower() or "witty" in hreq["system_prompt"].lower()
+    # the request carries the ordered headlines (flattened post text)
+    assert hreq["headlines"][0].startswith("GPT-5")
 
     # dedup marker advanced to the newest fetched post
     marker = (tmp_path / "download" / "bsky-state" / "u.bsky.social.txt").read_text().strip()
     assert marker == "at://did:plc:test/app.bsky.feed.post/1"
 
 
-def test_staged_apply_titles_saves_separate_artifact(tmp_path, monkeypatch):
+def test_staged_apply_headlines_saves_separate_artifact(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BSKY_USERNAME", "u.bsky.social")
     monkeypatch.setenv("BSKY_SECRET", "s")
@@ -354,19 +403,22 @@ def test_staged_apply_titles_saves_separate_artifact(tmp_path, monkeypatch):
     }))
     assert _run_staged(["--user", "u.bsky.social", "--apply-reorder"]).exit_code == 0
 
-    # Simulate the dispatched titles Agent's output.
-    (wd / "titles-result.json").write_text(json.dumps({
-        "titles": ["Sue-perintelligence", "Chips Ahoy"]
+    # Simulate the dispatched headlines Agent's output (one rewrite per post).
+    (wd / "headlines-result.json").write_text(json.dumps({
+        "headlines": ["GPT-fived", "H-two-hundred proof", "Diffuse the situation"]
     }))
 
-    result = _run_staged(["--user", "u.bsky.social", "--apply-titles"])
+    result = _run_staged(["--user", "u.bsky.social", "--apply-headlines"])
     assert result.exit_code == 0, result.output
 
-    titles = json.loads((wd / "titles.json").read_text())
-    assert titles["titles"] == ["Sue-perintelligence", "Chips Ahoy"]
-    # plain-text copy/paste artifact: just the titles, one per line
-    assert (wd / "titles.txt").read_text() == "Sue-perintelligence\nChips Ahoy\n"
-    # legacy parity: the HTML is NOT rewritten with the puns
+    hl = json.loads((wd / "headlines.json").read_text())
+    assert hl["headlines"] == ["GPT-fived", "H-two-hundred proof", "Diffuse the situation"]
+    # pairs map each rewrite back to its original (flattened) headline
+    assert hl["pairs"][0]["rewrite"] == "GPT-fived"
+    assert hl["pairs"][0]["headline"].startswith("GPT-5")
+    # plain-text copy/paste artifact: just the rewrites, one per line
+    assert (wd / "headlines.txt").read_text() == "GPT-fived\nH-two-hundred proof\nDiffuse the situation\n"
+    # the digest HTML is NOT rewritten with the puns
     html = (tmp_path / "out" / "latest-bsky.html").read_text()
-    assert "Sue-perintelligence" not in html
-    assert "Chips Ahoy" not in html
+    assert "GPT-fived" not in html
+    assert "Diffuse the situation" not in html

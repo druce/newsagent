@@ -1,14 +1,14 @@
 ---
 name: beehiiv
-description: Turn the newsagent Bluesky digest (out/latest-bsky.html — section headers, post blocks with a summary line, a thumbnail, an og-link headline, and an optional description) into a beehiiv DRAFT post, end-to-end, via the Claude Chrome extension. Uploads every image to beehiiv and populates the full post body (sections, links, descriptions, images in document order). Use when the user wants to build/publish their daily Bluesky roundup, "today's issue", "the bsky digest", or import the bsky digest into beehiiv. Creates the draft from a template and authors the title via beehiiv's internal API, then uploads images and pastes the body.
+description: Turn the newsagent Bluesky digest (out/latest-bsky.html — a flat list of posts, each a thumbnail, a headline link with the source name appended, and an <hr />; no sections) into a beehiiv DRAFT post, end-to-end, via the Claude Chrome extension. Uploads every image to beehiiv and populates the full post body (links + images in document order). Use when the user wants to build/publish their daily Bluesky roundup, "today's issue", "the bsky digest", or import the bsky digest into beehiiv. Creates the draft from a template and authors the title via beehiiv's internal API, then uploads images and pastes the body.
 compatibility: Requires the Claude Chrome extension (Control Chrome tools: get_current_tab/tabs_context, execute_javascript/javascript_tool, navigate, and the computer tool for native Cmd+C/Cmd+V/click). macOS for the `osascript … set the clipboard` image staging. The user must be logged in to beehiiv with a tab open on app.beehiiv.com.
 ---
 
 # newsagent:beehiiv
 
 Import the newsagent **Bluesky digest** (`out/latest-bsky.html`) into a beehiiv **draft**:
-upload all images, then populate the body (`<h2>` section headers, per-post summary lines,
-thumbnails, `og-link` headline links, and `og-desc` descriptions — in document order).
+upload all images, then populate the body (a flat list of posts in document order — each a
+thumbnail, a headline link with the source name appended, and an `<hr />`; no sections).
 Produces a draft only — **never publish**.
 
 Everything runs as same-origin JavaScript inside the logged-in `app.beehiiv.com` tab,
@@ -29,12 +29,13 @@ this work:
 
 - **Digest file** — `/Users/drucev/projects/newsagent/out/latest-bsky.html` (a symlink to
   the dated `out/bsky-YYYY-MM-DD.html`, written by the `newsagent:bluesky` step). Its body is
-  an `<h1>` title, then repeating `<h2>section name</h2>` headers each followed by one or more
-  `<div class='post'>` blocks. A post block contains: a bare `<p>` summary line, usually an
-  `<img src='file:///…/download/bsky-images/<hash>.<ext>' alt='post image'>` thumbnail, an
-  `<a class='og-link' href='…'>headline</a>`, and an optional `<p class='og-desc'>` blurb.
-  (Some posts have no image.) Regenerated daily in place — read it fresh each run; section
-  count and image count vary day to day.
+  a **flat list of posts** (legacy skynet.html format — **no `<h1>`/`<h2>` headers, no
+  sections**). Each post is, in order: usually an
+  `<p><img alt='image' src='file:///…/download/bsky-images/<hash>.<ext>'></p>` thumbnail, then
+  either `<p><a href='…'>post text</a>  - <em>source</em></p>` (linked headline with the
+  source name appended) or — for link-less posts — a bare `<p>post text</p>`, then `<hr />`.
+  The body ends with a "Follow … on Bluesky" footer paragraph. (Some posts have no image.)
+  Regenerated daily in place — read it fresh each run; post and image count vary day to day.
 - **Images dir** — `/Users/drucev/projects/newsagent/download/bsky-images`. The digest's
   `file://…/download/bsky-images/<hash>.<ext>` srcs resolve here. Filenames are content
   hashes with **mixed extensions** (`.jpg`, `.png`, `.webp`) — not sequential `ImageN.jpg`.
@@ -167,17 +168,17 @@ the batch path (which sends raw bytes with the right MIME) is the reliable route
   broke a run: the body filled with base64 text). The synthetic paste sidesteps the clipboard
   entirely. The Cmd+C/Cmd+V dance (`stageCopyDiv()` + green box) is kept only as a documented
   fallback in `scripts/build_hosted_html.js`.
-- The editor imports the `<h2>` section headers, `<a>` links, `<p>` summary/description
-  lines, and images — and **re-hosts the pasted `media.beehiiv.com` images onto its own S3**
-  (`beehiiv-images-production.s3…`). It auto-syncs (status shows "Synced"). Then
-  `localStorage.removeItem('__bh_hosted_html')` to clean up. (Allow a few seconds for the
-  image re-hosting before verifying.) Note: the `og-link`/`og-desc` class attributes are
-  dropped by TipTap on import — only the link/text content survives, which is what we want.
+- The editor imports the `<a>` links, `<p>` headline/text paragraphs (including the
+  ` - <em>source</em>` suffix), and images — and **re-hosts the pasted `media.beehiiv.com`
+  images onto its own S3** (`beehiiv-images-production.s3…`). It auto-syncs (status shows
+  "Synced"). Then `localStorage.removeItem('__bh_hosted_html')` to clean up. (Allow a few
+  seconds for the image re-hosting before verifying.) The digest is flat — there are no
+  `<h2>` sections to import.
 
 ### 5. Verify (do NOT publish)
-- Query the `.ProseMirror` DOM: counts of `img` (== image count), `a` (== headline count),
-  and `h2` (== section count); first image `complete && naturalWidth>0`; last node is your
-  final paragraph.
+- Query the `.ProseMirror` DOM: counts of `img` (== image count) and `a` (== headline /
+  linked-post count); first image `complete && naturalWidth>0`; last node is your
+  final paragraph (the "Follow … on Bluesky" footer).
 - Screenshot the top of the body (leading image + first headline) to eyeball it.
 - Report the `draft_url`. Leave it as a draft.
 

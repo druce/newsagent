@@ -10,6 +10,7 @@ _HTML_WITH_OG = """<!DOCTYPE html>
   <meta property="og:description" content="A compelling article description." />
   <meta property="og:image" content="https://example.com/image.jpg" />
   <meta property="og:url" content="https://example.com/article" />
+  <meta property="og:site_name" content="Example News" />
 </head>
 <body><p>Content</p></body>
 </html>"""
@@ -31,6 +32,7 @@ def test_get_og_tags_parses_og_fields():
     assert result["description"] == "A compelling article description."
     assert result["image"] == "https://example.com/image.jpg"
     assert result["url"] == "https://example.com/article"
+    assert result["site_name"] == "Example News"
 
 
 def test_get_og_tags_returns_empty_on_http_error():

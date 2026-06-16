@@ -68,6 +68,13 @@ To keep the whole run prompt-free:
 - **Never run `sleep` and never poll.** The harness blocks chained sleeps. For
   a long no-LLM step (e.g. `download`), launch it with `run_in_background: true`
   and wait for the completion notification — do not babysit it with `tail`.
+- **Never call `ScheduleWakeup` (or otherwise schedule a `/loop` wakeup) to wait
+  for a backgrounded step.** A background step launched with `run_in_background:
+  true` re-invokes the driver automatically via its task-completion notification —
+  that is the only wait mechanism. Passing the slash command as a wakeup `prompt`
+  makes the command re-fire itself later as a phantom second run (this silently
+  re-ran the whole pipeline on 2026-06-14). If you ever do schedule a wakeup, you
+  own cancelling it.
 - **Enumerate batch files from the `--prepare-batches` stdout**, which prints
   the full path of every batch file it wrote. Do NOT `ls` the directory and do
   NOT pipe prepare's output through `head`/`tail` (truncating it reintroduces

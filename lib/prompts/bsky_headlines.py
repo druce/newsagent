@@ -1,8 +1,10 @@
-"""bsky_section_titles — generate punny section titles for Bluesky digest groups.
+"""bsky_headlines — punny rewrites of Bluesky digest headlines.
 
 Ported from the legacy Bluesky notebook (cell 24): a witty, irreverent
-culture-tech editorial voice that turns each topical group into a short,
-pun-forward section title.
+culture-tech editorial voice that turns each headline into a short, pun-forward
+rewrite. One rewrite per input headline, in the same order. These rewrites are a
+SEPARATE artifact — they are not injected into the digest HTML, which uses the
+plain post text (matching the legacy skynet.html).
 """
 from __future__ import annotations
 
@@ -14,35 +16,32 @@ from pydantic import BaseModel, computed_field
 from lib.llm import PromptConfig, register_prompt
 
 
-class BskySectionGroup(BaseModel):
-    label: str  # neutral topic label from the reorder step
-    sample_texts: List[str]  # representative post texts from the group
-
-
-class BskySectionTitlesInput(BaseModel):
-    groups: List[BskySectionGroup]
+class BskyHeadlinesInput(BaseModel):
+    headlines: List[str]  # the digest headlines (post texts), in final order
 
     @computed_field
     @property
-    def groups_json(self) -> str:
-        return json.dumps([g.model_dump() for g in self.groups])
+    def headlines_json(self) -> str:
+        return json.dumps(
+            [{"index": i, "headline": h} for i, h in enumerate(self.headlines)]
+        )
 
 
-class BskySectionTitlesOutput(BaseModel):
-    titles: List[str]  # one title per group, same order
+class BskyHeadlinesOutput(BaseModel):
+    headlines: List[str]  # one punny rewrite per input headline, same order
 
 
 _SYSTEM = """\
 You are a seasoned culture-tech editor writing a witty, irreverent newsletter
 about the AI industry (think: The Verge meets John Oliver).
 
-You'll receive a list of topical groups, each with a plain-language label and a
-few sample posts. For EACH group, generate one short section title that is:
+You'll receive a list of article headlines. For EACH headline, generate one
+short, funny, pun-heavy, or referential rewrite that is:
 \t• 1-7 words long
 \t• Playful, witty, sharp, and meme-literate
 \t• Can mix puns (clever or groan-worthy), alliteration, pop culture, business
 \t  jargon, and double meaning
-\t• Captures the essence or irony of that group's news
+\t• Captures the essence or irony of that headline's news
 
 Examples of tone and style:
 \t• "Sue-perintelligence" (Musk's $150B trial against OpenAI begins)
@@ -64,25 +63,24 @@ Register:
 \t• Amused, not contemptuous. The default stance is "this is absurd and I'm
 \t  enjoying watching it" — not "this is bad and these people are bad."
 
-Return exactly one title per group, in the same order as the input."""
+Return exactly one rewrite per headline, in the same order as the input."""
 
 _USER = """\
-Generate one punny section title for each of these topical groups of Bluesky
-posts:
+Generate one punny rewrite for each of these headlines, in the same order:
 
-{groups_json}
+{headlines_json}
 
-Return one title per group, in the same order."""
+Return one rewrite per headline, in the same order."""
 
 
-BSKY_SECTION_TITLES = PromptConfig(
-    name="bsky_section_titles",
+BSKY_HEADLINES = PromptConfig(
+    name="bsky_headlines",
     system_prompt=_SYSTEM,
     user_prompt=_USER,
-    input_schema=BskySectionTitlesInput,
-    output_schema=BskySectionTitlesOutput,
+    input_schema=BskyHeadlinesInput,
+    output_schema=BskyHeadlinesOutput,
     default_engine="subagent",
     reasoning_effort=4,
 )
 
-register_prompt(BSKY_SECTION_TITLES)
+register_prompt(BSKY_HEADLINES)
