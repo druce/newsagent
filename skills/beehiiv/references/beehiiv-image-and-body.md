@@ -4,18 +4,29 @@ How to upload images and populate a post body via beehiiv's internal API + edito
 discovered empirically against the live app (May 2026). Pairs with
 `references/beehiiv-internal-api.md` (auth model, posts endpoints).
 
-## Image upload endpoint
+## Image upload endpoint — use ASSETS (what a real paste uses), NOT /images
 
-`POST https://app.beehiiv.com/api/v2/publications/<pub>/images`
-(note: `<pub>` is in the **path** here, not the `?publication_id=` query param the
-posts endpoints use).
+`POST https://app.beehiiv.com/api/v2/publications/<pub>/assets`
+(`<pub>` is in the **path**, not the `?publication_id=` query param the posts endpoints use).
 
-- Multipart body: `file` = the image blob, `url_type` = `"landscape"`.
+- Multipart body: **`asset[file]`** = the image blob (Rails strong-param; a bare `file` field
+  returns `400 {"error":"param is missing or the value is empty: asset"}`). No `url_type`.
 - Headers: `Authorization: Bearer <token>`, `x-csrf-token: <csrf>`, `accept: application/json`.
   Do **not** set `Content-Type` — let the browser set the multipart boundary.
-- Response: `{ "url": "https://media.beehiiv.com/cdn-cgi/image/fit=scale-down,format=auto,onerror=redirect,quality=80/uploads/publication/file/<pub>/landscape_<filename>" }`
-- The hosted path uses the **filename** you send, so prefix it (e.g. `20260529-`) to avoid
-  collisions across runs.
+- Response: `{ "id":"<uuid>", "file":{ "url":"https://beehiiv-images-production.s3.amazonaws.com/uploads/asset/file/<id>/<filename>" }, "title":"<filename>", "file_type":"image/…", "width":…, "height":…, … }`
+- The `imageBlock` you then insert uses `attrs.id = <id>` and `attrs.src = file.url + "?t=<ts>"`.
+  The asset id is unique per upload, so filenames need **no** collision prefix.
+
+This is the exact call the editor fires when you paste an image (discovered by pasting into a
+scratch draft and reading `read_network_requests` + `editor.getJSON()`).
+
+### Why NOT `POST /publications/<pub>/images`
+
+That older endpoint (multipart field `file`, `url_type:"landscape"`) returns a
+`media.beehiiv.com/cdn-cgi/image/.../uploads/**publication/file**/<pub>/landscape_<filename>`
+CDN url — a **different namespace** (publication media library, not a post asset). Dropped into
+the body as a bare `<img>`, it renders in the live editor but is **silently dropped from the
+published web page and the EMAIL**. Only asset-backed `imageBlock` nodes survive. Do not use it.
 
 ## Getting image bytes into the page (the transport)
 
@@ -25,20 +36,20 @@ Two clipboard-based routes work; **prefer the batch one**.
 ### Batch (preferred): all images in ONE paste, as base64 text
 
 The clipboard transport doesn't have to carry *bitmaps* — it can carry **text**. Base64
-every referenced image into one `{basename: b64}` JSON map, `pbcopy` it, and deliver the
-whole map with a **single** `Cmd+V` into a `<textarea>` catcher that `JSON.parse`s the
-pasted text and, per entry, decodes b64→`Blob`→multipart POST to the upload endpoint
-(keyed by basename). See `scripts/build_image_clipboard.py` (builder + `pbcopy`) and
+every referenced image into one `{ "<src>": {n:filename, b:base64} }` JSON map keyed by the
+digest's exact `<img src>`, `pbcopy` it, and deliver the whole map with a **single** `Cmd+V`
+into a `<textarea>` catcher that `JSON.parse`s the pasted text and, per entry, decodes
+b64→`Blob`→multipart POST to **`/assets`** (`asset[file]`), stashing `{id, src}` into
+`window.__assets[<src>]`. See `scripts/build_image_clipboard.py` (builder + `pbcopy`; it also
+downloads remote images and transcodes AVIF→JPEG with Pillow) and
 `scripts/batch_image_uploader.js` (page-side decoder/uploader). Why this is the default:
-- **~3 tool calls for the whole set** instead of ~3 *per image* (the per-image loop
-  dominated wall-clock — ~57 calls for a 19-image digest).
-- **No index-desync failure mode** — uploads are keyed by filename, so the order in which
-  the concurrent POSTs finish is irrelevant (the per-image loop relied on a running paste
-  index that a single missed paste would shift).
+- **~3 tool calls for the whole set** instead of ~3 *per image*.
+- **No index-desync failure mode** — uploads are keyed by `src`, so completion order is irrelevant.
 - **Zero model tokens for the bytes** — the base64 lives on the OS clipboard, never in the
   model context (unlike base64-injecting through `execute_javascript`).
-- A single large text paste (tens of KB to a few MB) delivers fine via `clipboardData
-  .getData('text/plain')`. Verified with 3-image and full-set runs.
+- A single large text paste (tens of KB to a few MB) delivers fine via
+  `clipboardData.getData('text/plain')`. Verified with full-set (54-image / 2.4 MB) runs.
+- Keyed by the literal `src` so `build_doc.js` maps each digest `<img>` straight to its asset.
 
 ### Per-image (fallback): one bitmap per paste
 
@@ -60,64 +71,54 @@ paste event**, one image at a time:
    ordered basename list + an index so each paste is named correctly; checkpoint the index
    periodically (a missed paste would desync the mapping).
 
-## Populating the body: paste into the editor (REST does NOT work)
+## Populating the body: build a doc of real nodes + insert it in chunks (REST does NOT work)
 
-`PATCH /posts/<id>` with `tiptap_state` **or** `draft_tiptap_state` (object **or**
-JSON-string) returns `200 {timestamp}` but the body is **silently unchanged**. Only
-whitelisted fields (`title`, `web_title`, …) persist via PATCH. The body is authored
-exclusively through the editor's collaborative (ydoc) sync.
+`PATCH /posts/<id>` with `tiptap_state` **or** `draft_tiptap_state` returns `200 {timestamp}`
+but the body is **silently unchanged**. Only whitelisted fields (`title`, `web_title`, …)
+persist via PATCH. The body is authored exclusively through the editor's collaborative (ydoc)
+sync.
 
-So: assemble the digest as **HTML with hosted image URLs** and hand it to the editor.
-The robust transport is a **synthetic paste event** — not the OS clipboard.
+So: build a TipTap **doc JSON of real beehiiv nodes** (`imageBlock` for images, `paragraph`
+with `<a>`→link / `<em>`→italic marks for headlines, `horizontalRule` for `<hr>`) and write it
+into the live editor. `scripts/build_doc.js` does the whole thing.
 
-1. Replace every `file://…/download/bsky-images/<hash>.<ext>` src in the digest HTML with its
-   hosted `media.beehiiv.com` URL from the upload step (regex-replace the **whole** `file://`
-   URL, not just the basename, or the `file://…/` prefix is left dangling); apply `\$`→`$`
-   text cleanup. Stash it in `localStorage['__bh_hosted_html']` (survives the navigation to
-   `/edit`; `window.*` does not).
-2. `navigate` to `/posts/<id>/edit`, re-inject `build_hosted_html.js`, and **clear the
-   template stub with real keystrokes**: computer-tool click the single `.ProseMirror` body
-   (the title is a separate input), then `Cmd+A` (optionally `Backspace`). Real keystrokes
-   update ProseMirror's *internal* selection; a programmatic DOM `Range` does not, so the
-   paste would land in the wrong place without this.
-3. Call `window.bh.pasteHostedHtml()` — it builds a `DataTransfer` with the `text/html`,
-   constructs `new ClipboardEvent('paste', {clipboardData})`, and dispatches it at the
-   `.ProseMirror` node. TipTap's paste handler consumes it (returns `defaultPrevented:true`)
-   and imports the whole body. **No OS clipboard is touched.**
-4. The editor parses `<h2>` → section headings, `<a>` → links, `<p>` → paragraphs
-   (summary + `og-desc` lines), `<img>` → images — and **re-hosts** the pasted
-   `media.beehiiv.com` images onto `beehiiv-images-production.s3.amazonaws.com` (the same host
-   real published posts use). The `og-link`/`og-desc` class attributes are dropped on import
-   (only the content survives). It auto-syncs ("Synced"); `has_ydoc` becomes `true`. Allow a
-   few seconds for re-hosting.
-
-### Why not the OS clipboard (native Cmd+C / Cmd+V)?
-
-The old route rendered the HTML into a `contentEditable`, selected it with a `Range`, did a
-native **Cmd+C** (the computer tool — `document.execCommand('copy')` returns false without a
-user gesture), then `Cmd+A`+`Cmd+V` into the editor. Two failure modes made it fragile:
-- A native **Cmd+C on a programmatic selection often does not overwrite the OS clipboard**,
-  so the subsequent `Cmd+V` pastes whatever was copied *earlier* — e.g. the digest base64
-  from `build_image_clipboard.py`. Observed: the body filled with base64 text instead of the
-  digest.
-- A page-level **`Cmd+A` can escape the `contentEditable`** and select the whole document, so
-  the copy grabs only the first image. Observed: body pasted one image instead of the full
-  digest.
-
-The synthetic `ClipboardEvent` avoids both — it hands TipTap the exact `text/html` with no
-clipboard round-trip. The Cmd+C/Cmd+V dance (`stageCopyDiv()` + the green box) is kept as a
-documented fallback in `scripts/build_hosted_html.js` only.
+1. (dashboard, after uploads) `window.bh.buildDoc(digestHtml)` walks the digest DOM:
+   `<p><img></p>` → `imageBlock` node from `window.__assets[img src]`; `<p>` text → paragraph;
+   `<hr>` → `horizontalRule`. Stashes the doc in `window.__bh_doc` and
+   `localStorage['__bh_doc']` (survives the nav to `/edit`; `window.*` does not). Returns
+   `{nodes, imgs, hrs, links, missing}` — `missing:[]` means every `<img src>` matched an asset.
+2. `navigate` to `/posts/<id>/edit`, wait for `.ProseMirror` (with `.editor`), re-inject
+   `build_doc.js`.
+3. **Insert in CHUNKS — do NOT `setContent` the whole doc.** A single `setContent` of ~50
+   `imageBlock` node-views throws **React error #185** ("max update depth exceeded") — the
+   renderer loops, the editor crashes, and the doc **never syncs to ydoc** (the in-memory model
+   looks right but reloads/publishes EMPTY). Instead call `window.bh.applyChunk(12)` repeatedly,
+   **one call per `execute_javascript`** (the tool round-trip is the React-settle time — an
+   in-page `setTimeout` loop gets clamped to ~1/s in a background tab and races itself). The
+   first call seeds the doc (`setContent` of the first chunk); later calls `insertContentAt` the
+   end. Stop at `{done:true}`. ~12 nodes (≈4 images) per chunk is safe; bigger risks #185.
+4. **Strip seam blanks.** Each chunk insert leaves an empty paragraph at its boundary. After
+   `done:true`, call `window.bh.stripEmptyParagraphs()` **once** (a single delete transaction;
+   unmounting nodes does NOT trigger #185).
+5. **Verify by the editor MODEL — `window.bh.editorCounts()` (parses `editor.getJSON()`).**
+   Count `imageBlock` NODES, NOT `<img>` tags: an `imageBlock` does **not** serialize to `<img>`
+   in `getHTML()`, so an `<img>` count is 0 even on success. Success = `imgs === N` (total
+   `<img>` in digest = local + already-remote), `hrs === P`, `links === L`, `emptyParas === 0`,
+   `lastText` ends with the "Follow … on Bluesky" footer.
+6. **Confirm PERSISTENCE (mandatory).** Wait ~5s for "Synced", `navigate` to the same `/edit`
+   URL, re-inject `build_doc.js`, re-run `editorCounts()`. Counts must be unchanged. (If the
+   body reloads empty, a #185 crash ate the sync — redo step 3 with a smaller chunk.) Then
+   `localStorage.removeItem('__bh_doc')`.
 
 `localStorage` is the **only** state that survives navigation — `window.*` (helpers,
-`__urls`, the built HTML) is wiped on the page load into `/edit`. `buildHostedHtml` saves the
-HTML to `localStorage['__bh_hosted_html']` before you navigate; `pasteHostedHtml` reads it
-back on the `/edit` page.
+`__assets`, `__bh_doc`) is wiped on the load into `/edit`. `buildDoc` saves the doc to
+`localStorage['__bh_doc']` before you navigate; `applyChunk` reads it back on `/edit`.
 
 ## Verified TipTap `imageBlock` schema (reference)
 
-This is the node shape beehiiv stores (read from a real published post). You do **not**
-build this yourself in the working flow — the editor builds it from the pasted `<img>`.
-It's kept here for the record and in case REST body-write becomes available later.
+This is the node shape beehiiv stores, read from `editor.getJSON()` right after a real paste.
+`build_doc.js`:`imageBlockNode(asset)` builds exactly this (`attrs.id` = the `/assets` id,
+`attrs.src` = `file.url + "?t=<ts>"`). Inserting it is what makes the image survive publish + email.
 
 ```json
 {
@@ -134,29 +135,33 @@ It's kept here for the record and in case REST body-write becomes available late
 }
 ```
 
-Link paragraph: `paragraph` with `attrs.id`; content =
-`[ {text, marks:[{type:"link", attrs:{rel:"noopener noreferrer nofollow", href, class:null, color:null, target:"_blank"}}]}, {text:"  - "}, {text:source, marks:[{type:"italic", attrs:{}}]} ]`.
+Link paragraph: `paragraph`; content =
+`[ {text, marks:[{type:"link", attrs:{rel:"noopener noreferrer nofollow", href, class:null, color:null, target:"_blank"}}]}, {text:"  - "}, {text:source, marks:[{type:"italic"}]} ]`.
 Divider: `{ "type":"horizontalRule" }`. Root: `{ "type":"doc", "content":[…] }`.
 
 ## Approaches that do NOT work (guardrails)
 
-- **Shell `curl`** → Cloudflare 403 "Just a moment" challenge, even with a valid Bearer
-  token. Browser same-origin only.
+- **Bare `<img>` in the body / `POST /publications/<pub>/images`** → renders in the live
+  editor but is **silently dropped from the published web page AND the email** (different asset
+  namespace, `uploads/publication/file/…`). Use `POST /publications/<pub>/assets` + `imageBlock`.
+- **`setContent()` of the whole doc** (≥~dozens of imageBlocks) → **React #185** ("max update
+  depth"), editor crash, NOTHING persists. Insert in small chunks, caller-driven. (2 imageBlocks
+  in one `setContent` is fine; ~50 is not.)
+- **In-page `setTimeout` loop to drive the chunks** → background-tab timer clamp (~1/s) +
+  self-racing. Drive one chunk per `execute_javascript` call instead.
+- **Verifying the body with an `<img>` count or the live `.ProseMirror` DOM** → `imageBlock`
+  doesn't emit `<img>` in `getHTML()` (count always 0), and the live DOM reads empty for seconds
+  during async load. Count `imageBlock` nodes via `editor.getJSON()`.
+- **`asset[file]` field name** is required for `/assets`; a bare `file` field 400s
+  ("param is missing or the value is empty: asset").
+- **Shell `curl`** → Cloudflare 403 "Just a moment". Browser same-origin only.
 - **`fetch('http://127.0.0.1:…')` from the https page** → silently hangs (Chrome
-  private-network protection). Can't pull local files over a local HTTP server.
-- **`navigator.clipboard.readText()/read()`** → rejects "Document is not focused", then
-  hangs on a permission prompt you can't grant headlessly. Use a native **paste event**
-  instead (no permission needed).
-- **`document.execCommand('copy')`** outside a user gesture → returns `false`. Use the
-  computer tool's native **Cmd+C** on a selection.
-- **AppleScript `System Events` keystroke "v"`** → needs macOS Accessibility permission;
-  silently does nothing without it. Use the computer tool's `key cmd+v`.
-- **`PATCH tiptap_state` / `draft_tiptap_state`** → 200 but ignored. Body must be pasted
-  into the editor.
-- **`data:` (base64) image `src` in the body** → rejected by the editor. Only real hosted
-  URLs (`media.beehiiv.com`, which the editor re-hosts to S3).
-- **Hooking `window.fetch`** to discover endpoints → the SPA captured `fetch` at load, so
-  your wrapper won't see its traffic. Use
-  `performance.getEntriesByType('resource').map(e=>e.name)` instead.
-- **Base64-injecting image bytes through `execute_javascript`** → works but is very
-  token-expensive (~250k+ tokens for ~35 thumbnails). The clipboard-paste route avoids it.
+  private-network protection).
+- **`navigator.clipboard.readText()/read()`** → rejects / permission-gated. Use a native
+  **paste event** (computer tool `key cmd+v`) instead.
+- **`PATCH tiptap_state` / `draft_tiptap_state`** → 200 but ignored. Body only via the live editor.
+- **`data:` (base64) image `src` in the body** → rejected by the editor. Upload to `/assets` first.
+- **Hooking `window.fetch`** to discover endpoints → the SPA captured `fetch` at load. Use
+  `read_network_requests` (extension) or `performance.getEntriesByType('resource')`.
+- **Base64-injecting image bytes through `execute_javascript`** → ~250k+ tokens. The
+  clipboard-paste route avoids it.

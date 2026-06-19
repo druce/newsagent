@@ -89,6 +89,15 @@ collaborative (ydoc) sync; see `references/beehiiv-image-and-body.md`.
 Drafts are reversible (`deletable: true`). If you create a malformed draft while
 iterating, delete it rather than leaving junk.
 
+### Upload a post image asset (for the body)
+`POST /publications/<pub>/assets` — `<pub>` in the **path**. Multipart, field **`asset[file]`**
+(NOT `file`; NOT the `?publication_id=` query param). → `{ id, file:{ url }, title, file_type,
+width, height }` at `…s3…/uploads/asset/file/<id>/<name>`. This is the call the editor makes on
+an image paste; the inserted `imageBlock` references `id` + `file.url`. **Do not** use the
+older `POST /publications/<pub>/images` (field `file`, `uploads/publication/file/…`) — that
+namespace renders only as a bare `<img>` and is dropped on publish/email. Full detail +
+the body-insertion method in `beehiiv-image-and-body.md`.
+
 ## "Default style"
 
 The post's style is its `post_theme_id`, inherited from the template when you

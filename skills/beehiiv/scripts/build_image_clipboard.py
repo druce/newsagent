@@ -3,53 +3,101 @@
 clipboard as a single base64 JSON map, so the whole set uploads in ONE paste (no
 per-image loop, no model-token cost — the bytes ride the clipboard as text).
 
-Reads `out/latest-bsky.html`, pulls the referenced `download/bsky-images/<hash>.<ext>`
-basenames IN DOCUMENT ORDER (de-duped, first occurrence wins), base64-encodes each
-file, writes {basename: b64} to a JSON file, and copies that JSON onto the clipboard
-via pbcopy.
+Reads `out/latest-bsky.html`, pulls EVERY `<img src=...>` IN DOCUMENT ORDER (de-duped,
+first occurrence wins), gets the raw bytes for each, and writes a JSON map keyed by the
+image's **exact digest `src` string** to a file + the clipboard (pbcopy):
 
-The bsky digest references images as absolute file:// URLs with hash filenames and
-mixed extensions, e.g.
-  <img src='file:///Users/drucev/projects/newsagent/download/bsky-images/50159b4dd7985e0d.jpg' alt='post image'>
-so we match on the `bsky-images/<basename>` portion regardless of the file:// prefix.
+    { "<src>": { "n": "<filename>", "b": "<base64 bytes>" }, ... }
 
-Pairs with scripts/batch_image_uploader.js (the page-side decoder/uploader); the
-uploader derives the upload MIME type from each basename's extension.
+Two kinds of `src` appear in the digest and both are handled:
+  - local thumbnails: `file:///…/download/bsky-images/<hash>.<ext>` (jpg/png/webp) — read
+    straight off disk.
+  - already-remote images the digest embeds directly: `https://…` (e.g. thenextweb `.avif`)
+    — downloaded here. Non-(jpeg|png|webp|gif) bytes (notably AVIF) are transcoded to JPEG
+    with Pillow, because beehiiv's email renderer can't be relied on to handle AVIF. A
+    manual paste would hand the editor decoded PNG/JPEG pixels anyway, so this matches the
+    "exactly as if I pasted it" intent.
+
+The map is keyed by the literal `src` (not the basename) so the page-side builder can map
+each digest `<img>` straight to its uploaded asset. Pairs with:
+  - scripts/batch_image_uploader.js — decodes each entry and POSTs it to the editor's
+    **asset** endpoint (`POST /publications/<pub>/assets`, field `asset[file]`), the same
+    call the editor itself makes on a paste, stashing `window.__assets[src] = {id, src}`.
+  - scripts/build_doc.js — builds a TipTap doc with real `imageBlock` nodes from that map.
 
 Usage:
-  python3 build_image_clipboard.py [DIGEST_HTML] [IMAGES_DIR] [OUT_JSON] [LIMIT]
-Defaults match the beehiiv skill's fixed inputs. LIMIT (optional) caps the number
-of images (used for a smoke test); omit for the full set.
+  python3 build_image_clipboard.py [DIGEST_HTML] [OUT_JSON] [LIMIT]
+Defaults match the beehiiv skill's fixed inputs. LIMIT (optional) caps the number of
+images (smoke test); omit for the full set.
 
-Prints a one-line JSON summary {count, names, bytes} to stdout — does NOT print
-the base64 (keep it out of the model context).
+Prints a one-line JSON summary {count, local, remote, bytes, names} to stdout — never the
+base64 (keep it out of the model context).
 """
-import sys, os, re, json, base64, subprocess
+import sys, os, re, io, json, base64, subprocess, urllib.request, urllib.parse
 
 REPO   = '/Users/drucev/projects/newsagent'
 DIGEST = sys.argv[1] if len(sys.argv) > 1 else os.path.join(REPO, 'out/latest-bsky.html')
-IMGDIR = sys.argv[2] if len(sys.argv) > 2 else os.path.join(REPO, 'download/bsky-images')
-OUT    = sys.argv[3] if len(sys.argv) > 3 else '/tmp/bh_imgs.json'
-LIMIT  = int(sys.argv[4]) if len(sys.argv) > 4 else None
+OUT    = sys.argv[2] if len(sys.argv) > 2 else '/tmp/bh_imgs.json'
+LIMIT  = int(sys.argv[3]) if len(sys.argv) > 3 else None
+
+_RASTER = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+           'webp': 'image/webp', 'gif': 'image/gif'}
+
+
+def _ext(name):
+    return (name.rsplit('.', 1)[-1] if '.' in name else '').lower()
+
+
+def _fetch_remote(url):
+    """Download a remote image; transcode anything that isn't a web-safe raster
+    (e.g. AVIF) to JPEG. Returns (filename, bytes)."""
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    data = urllib.request.urlopen(req, timeout=30).read()
+    base = os.path.basename(urllib.parse.urlparse(url).path) or 'image'
+    if _ext(base) in _RASTER:
+        return base, data
+    # unknown / AVIF / etc → decode + re-encode JPEG (matches a real paste's pixels)
+    from PIL import Image
+    im = Image.open(io.BytesIO(data)); im.load()
+    buf = io.BytesIO()
+    im.convert('RGB').save(buf, 'JPEG', quality=85)
+    stem = base.rsplit('.', 1)[0] if '.' in base else base
+    return stem + '.jpg', buf.getvalue()
+
+
+def _read_local(src):
+    """Resolve a file:// src to a path and read it. Returns (filename, bytes)."""
+    path = urllib.parse.unquote(urllib.parse.urlparse(src).path)
+    with open(path, 'rb') as f:
+        return os.path.basename(path), f.read()
+
 
 # `out/latest-bsky.html` is a symlink to the dated digest — follow it.
 html = open(os.path.realpath(DIGEST), encoding='utf-8').read()
-# referenced basenames in document order, de-duped keeping first occurrence.
-# hashes are hex; extensions vary (jpg/jpeg/png/webp).
-seen, order = set(), []
-for n in re.findall(r'bsky-images/([A-Za-z0-9]+\.(?:jpe?g|png|webp))', html):
-    if n not in seen:
-        seen.add(n); order.append(n)
+
+# every <img src='...'> / src="..." in document order, de-duped (first wins).
+srcs, seen = [], set()
+for m in re.finditer(r'<img\b[^>]*?\bsrc=([\'"])(.*?)\1', html, re.I | re.S):
+    s = m.group(2)
+    if s not in seen:
+        seen.add(s); srcs.append(s)
 if LIMIT:
-    order = order[:LIMIT]
+    srcs = srcs[:LIMIT]
 
-m = {}
-for n in order:
-    with open(os.path.join(IMGDIR, n), 'rb') as f:
-        m[n] = base64.b64encode(f.read()).decode('ascii')
+out, names, n_local, n_remote = {}, [], 0, 0
+for s in srcs:
+    if s.startswith('file:'):
+        fn, raw = _read_local(s); n_local += 1
+    elif s.startswith('http:') or s.startswith('https:'):
+        fn, raw = _fetch_remote(s); n_remote += 1
+    else:
+        continue  # data: or unknown scheme — skip
+    out[s] = {'n': fn, 'b': base64.b64encode(raw).decode('ascii')}
+    names.append(fn)
 
-payload = json.dumps(m)  # dict preserves insertion order; JSON.parse keeps it
+payload = json.dumps(out)  # dict preserves insertion order; JSON.parse keeps it
 open(OUT, 'w').write(payload)
 subprocess.run(['pbcopy'], input=payload.encode('utf-8'), check=True)
 
-print(json.dumps({'count': len(order), 'names': order, 'bytes': len(payload)}))
+print(json.dumps({'count': len(out), 'local': n_local, 'remote': n_remote,
+                  'bytes': len(payload), 'names': names}))

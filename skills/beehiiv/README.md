@@ -60,40 +60,44 @@ no manual image placement.
 ## How it works (short version)
 
 1. Create a draft from the template via the internal API, set the dated title.
-2. **Upload images:** base64 every referenced image into one `{basename: b64}` JSON map,
-   `pbcopy` it, and deliver the whole set with a **single** `Cmd+V` into a hidden catcher;
-   the catcher decodes each entry and POSTs it (with the right MIME for jpg/png/webp) to
-   `/api/v2/publications/<pub>/images`, collecting the hosted `media.beehiiv.com` URL per
-   basename.
-3. **Populate the body:** swap the digest's `file://…/bsky-images/…` paths for the hosted
-   URLs, open `/posts/<id>/edit`, and feed the rich HTML to the editor via a **synthetic
-   paste event** (no OS clipboard). The editor imports sections/links/descriptions/images
-   and re-hosts the images onto its own S3, auto-syncing the draft.
+2. **Upload images:** base64 every referenced image (local thumbnails + any remote ones,
+   AVIF→JPEG) into one `{src: {n, b}}` JSON map, `pbcopy` it, and deliver the whole set with a
+   **single** `Cmd+V` into a hidden catcher; the catcher decodes each entry and POSTs it to the
+   post **asset** endpoint `/api/v2/publications/<pub>/assets` (field `asset[file]`) — the same
+   call the editor makes on a paste — collecting `{id, s3 url}` per `src`.
+3. **Populate the body:** build a TipTap doc of real beehiiv nodes (`imageBlock` from the
+   uploaded assets, `paragraph` with link/italic marks, `horizontalRule`), open
+   `/posts/<id>/edit`, and insert it in **small chunks** (a single `setContent` of ~50 images
+   crashes the editor's renderer). Strip seam blanks, verify by the editor model, then reload
+   to confirm it persisted (and thus renders in web + email).
 
-The body is authored through the editor on purpose: beehiiv **silently ignores** REST
-writes to the post body (see below).
+The body is authored through the editor on purpose: beehiiv **silently ignores** REST writes
+to the post body, and only first-class `imageBlock` nodes (not bare `<img>`) survive to the
+published page and the email.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | The step-by-step workflow Claude follows. Start here. |
-| `references/beehiiv-internal-api.md` | Internal-API auth model (token + publication id + CSRF), status codes, the create-from-template + set-title primitive, and the full endpoint map. |
-| `references/beehiiv-image-and-body.md` | Image-upload endpoint, the clipboard/paste transport, the editor-paste body method, the verified TipTap `imageBlock` schema, and the full "approaches that don't work" list. |
+| `references/beehiiv-internal-api.md` | Internal-API auth model (token + publication id + CSRF), status codes, the create-from-template + set-title primitive, and the full endpoint map (incl. the asset upload). |
+| `references/beehiiv-image-and-body.md` | The asset upload endpoint, the clipboard transport, the imageBlock + chunked-insert body method, the verified TipTap `imageBlock` schema, and the full "approaches that don't work" list. |
 | `scripts/beehiiv_browser.js` | Internal-API auth helpers (`getAuth`, `bhGet/Post/Patch/Delete`, `findTemplate`, `setTitle`, `createDraftFromTemplate`). |
-| `scripts/build_image_clipboard.py` | Reads `out/latest-bsky.html`, base64s every referenced `bsky-images/` thumbnail into one `{basename: b64}` JSON map, and `pbcopy`s it for a single-paste upload. |
-| `scripts/batch_image_uploader.js` | The textarea catcher that JSON-parses the pasted map and uploads every image in one in-page loop (MIME per extension). |
-| `scripts/paste_image_uploader.js` | Fallback: contentEditable catcher that uploads pasted images one at a time, in order. |
-| `scripts/build_hosted_html.js` | Swaps the digest's `file://…/bsky-images/…` srcs for hosted URLs and dispatches the synthetic body paste. |
+| `scripts/build_image_clipboard.py` | Reads `out/latest-bsky.html`, collects every `<img src>` (local + remote, AVIF→JPEG), base64s them into one `{src:{n,b}}` JSON map, and `pbcopy`s it for a single-paste upload. |
+| `scripts/batch_image_uploader.js` | The textarea catcher that JSON-parses the pasted map and uploads every image to `/assets` in one in-page loop, keyed by `src`. |
+| `scripts/build_doc.js` | Builds a TipTap doc of real `imageBlock`/paragraph/`hr` nodes from the digest + asset map, and inserts it into the live editor in React-safe chunks (`buildDoc`, `applyChunk`, `stripEmptyParagraphs`, `editorCounts`). |
 
 ## Key gotchas (the ones that cost the most time)
 
 - **No REST body-write.** `PATCH` of `tiptap_state` / `draft_tiptap_state` returns `200`
-  but is silently dropped. The body must be pasted into the editor.
+  but is silently dropped. The body must be written through the live editor.
+- **Images must be `imageBlock` nodes uploaded to `/assets`.** Bare `<img>` tags (and the
+  `/images` publication-media endpoint) render in the editor but are **silently dropped from
+  the published page and the email**. This is the bug the asset+imageBlock flow fixes.
+- **Never `setContent` the whole doc.** ~50 imageBlock node-views in one transaction throw
+  React #185 and the body never persists. Insert in small chunks, one per tool call, then
+  reload to confirm it persisted.
 - **No curl.** beehiiv is behind Cloudflare; shell `curl` gets a 403 challenge even with a
   valid token. Same-origin browser JS only.
-- **Clipboard, not base64.** Image bytes ride the OS clipboard + a native paste event;
-  `localhost` fetch is blocked, `clipboard.read()` is permission-gated, and
-  base64-through-the-conversation is hugely token-expensive.
-- Pre-authorize `Bash(osascript:*)` in `.claude/settings.local.json` to avoid one
-  permission prompt per image.
+- **Clipboard, not base64.** Image bytes ride the OS clipboard (`pbcopy`) + a native paste
+  event; base64-through-the-conversation is hugely token-expensive.
