@@ -305,6 +305,59 @@ def test_clean_text_strips_trailing_url_abbreviation():
     assert _clean_text("Just a normal post.") == "Just a normal post."
 
 
+def test_strip_source_attribution_removes_trailing_credit():
+    from lib.steps.bluesky import _strip_source_attribution as s
+
+    # journalism verbs after a comma-set-off publication name
+    assert s(
+        "Semiconductor stocks slid as AI spending doubts grew, Bloomberg reports"
+    ) == "Semiconductor stocks slid as AI spending doubts grew"
+    assert s("Chip stocks fell, Bloomberg reports.") == "Chip stocks fell"
+    assert s("Meta plans a cloud business, the Financial Times reported") == (
+        "Meta plans a cloud business"
+    )
+    assert s("Nvidia offers GPUs on layaway, TechCrunch writes") == (
+        "Nvidia offers GPUs on layaway"
+    )
+    # per / according-to source clauses
+    assert s(
+        "AI server supply chains face bottlenecks through 2027, per industry analysis."
+    ) == "AI server supply chains face bottlenecks through 2027"
+    assert s("Fable 5 access cut to one week, according to Reuters") == (
+        "Fable 5 access cut to one week"
+    )
+    # analysis / report / study + attribution verb
+    assert s("AI capex keeps growing, FT analysis says") == "AI capex keeps growing"
+    assert s("Layoffs accelerate, a new study finds") == "Layoffs accelerate"
+
+
+def test_strip_source_attribution_leaves_primary_sources_and_main_verbs():
+    from lib.steps.bluesky import _strip_source_attribution as s
+
+    # "says" by a primary source (not a media outlet) stays — it's meaningful
+    assert s("AI could displace 15 million jobs, Goldman Sachs says") == (
+        "AI could displace 15 million jobs, Goldman Sachs says"
+    )
+    assert s("OpenAI says it will open-source its next model") == (
+        "OpenAI says it will open-source its next model"
+    )
+    # "reports/writes" as the sentence's own verb (no comma) stays
+    assert s("Nvidia reports record Q4 revenue") == "Nvidia reports record Q4 revenue"
+    # publication credit that is not the last clause stays
+    assert s("Bloomberg reports a record deal closed today") == (
+        "Bloomberg reports a record deal closed today"
+    )
+    # plain post untouched
+    assert s("Just a normal post.") == "Just a normal post."
+
+
+def test_extract_text_applies_source_attribution_strip():
+    from lib.steps.bluesky import _extract_text
+
+    item = {"post": {"record": {"text": "AI capex keeps climbing, Bloomberg reports"}}}
+    assert _extract_text(item) == "AI capex keeps climbing"
+
+
 # ── Staged mode (in-session Agent dispatch — no claude -p, no API engine) ──────
 
 def _run_staged(args, feed=_FAKE_FEED, og=None):

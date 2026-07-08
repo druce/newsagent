@@ -1,12 +1,19 @@
 ---
 name: send
-description: Render the session's newsletter as styled HTML, write to out/YYYY-MM-DD.html, update out/latest.html symlink, insert a row in the newsletters table, and email via Gmail (GMAIL_USER/GMAIL_PASSWORD).
+description: Render the session's newsletter as styled HTML, write to out/YYYY-MM-DD.html, update out/latest.html symlink, insert a row in the newsletters table, record survivors to the published_articles cross-day dedup store, and email via Gmail (GMAIL_USER/GMAIL_PASSWORD).
 ---
 
 # newsagent:send
 
-Step 12 (final) of `/newsagent:pipeline`. Also invoked automatically at the end of
+Step 13 (final) of `/newsagent:pipeline`. Also invoked automatically at the end of
 `newsagent:rewrite` so every successful rewrite delivers the newsletter.
+
+On first delivery for a session, `send` also records each published article
+(url, title, short_summary, and a `title + short_summary` OpenAI
+text-embedding-3-large vector) into the `published_articles` table. That store
+is what `newsagent:crossdedupe` reads to suppress stories already published in
+the last few days. Recording is best-effort — a failure logs a warning and never
+blocks the send.
 
 ## How to invoke
 

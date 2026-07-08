@@ -1,6 +1,6 @@
 """newsagent:pipeline — non-interactive newsletter orchestrator (cron / CI).
 
-Sequences all 12 pipeline steps in order, supports resume/from/only flags,
+Sequences all 13 pipeline steps in order, supports resume/from/only flags,
 and forwards engine overrides to the appropriate steps. Use this entry point
 when you cannot drive parent-Claude Agent dispatch (cron, CI, headless
 scripts). Requires --engine to avoid the subagent engine (which calls
@@ -33,6 +33,7 @@ from lib.steps import filter as step_filter
 from lib.steps import download
 from lib.steps import dedupe
 from lib.steps import summarize
+from lib.steps import crossdedupe
 from lib.steps import rate
 from lib.steps import cluster
 from lib.steps import select
@@ -47,6 +48,7 @@ _STEP_CLIS: dict = {
     "download": download.cli,
     "dedupe": dedupe.cli,
     "summarize": summarize.cli,
+    "crossdedupe": crossdedupe.cli,
     "rate": rate.cli,
     "cluster": cluster.cli,
     "select": select.cli,
@@ -58,7 +60,7 @@ _STEP_CLIS: dict = {
 _STEP_IDS: list[str] = [step_id for step_id, *_ in WORKFLOW_STEPS]
 
 # Steps that accept --engine
-_ENGINE_STEPS = frozenset({"filter", "summarize", "rate", "cluster", "select", "draft", "rewrite"})
+_ENGINE_STEPS = frozenset({"filter", "summarize", "crossdedupe", "rate", "cluster", "select", "draft", "rewrite"})
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +145,7 @@ def cli(
     no_summary: bool,
     cached_pages: bool,
 ) -> None:
-    """Non-interactive newsletter orchestrator (cron / CI). Sequences all 12 pipeline steps."""
+    """Non-interactive newsletter orchestrator (cron / CI). Sequences all 13 pipeline steps."""
 
     # ---- Resolve session ----
     if resume_sid:
@@ -179,9 +181,10 @@ def cli(
     # ---- Ensure we have a session id ----
     if session_id is None:
         if plan[0] == "start":
-            # Autogenerate now so all subsequent steps use the same id
-            from datetime import datetime
-            session_id = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+            # Autogenerate now so all subsequent steps use the same id.
+            # Shared helper guarantees a timestamped (never bare-date) id.
+            from lib.steps.start import _generate_session_id
+            session_id = _generate_session_id()
         else:
             raise click.ClickException(
                 "Must provide --session or --resume, or include the start step"

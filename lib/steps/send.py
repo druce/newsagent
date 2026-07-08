@@ -14,6 +14,8 @@ import click
 import markdown as md
 from dotenv import load_dotenv
 
+from lib.db import PublishedArticle
+from lib.embeddings import embed_texts
 from lib.state import NewsletterAgentState
 from lib.utilities import render_row_action_links, send_gmail
 
@@ -263,6 +265,49 @@ def _render_html(title: str, body_md: str, local_path: Optional[str] = None) -> 
 """
 
 
+def _record_published_articles(
+    state: NewsletterAgentState, session_id: str, db_path: str
+) -> int:
+    """Store each published article (title + short_summary embedding) in the
+    `published_articles` table so future runs can suppress cross-day repeats.
+
+    Canonical representation = OpenAI text-embedding-3-large of
+    `title + short_summary` — matches what `crossdedupe` embeds for candidates.
+    Returns the number of rows written.
+    """
+    items = state.newsletter_section_data or []
+    if not items:
+        return 0
+    now = datetime.now().isoformat()
+    texts: list[str] = []
+    metas: list[tuple[str, str, str]] = []  # (url, title, short_summary)
+    for it in items:
+        idx = it.get("id")
+        h = (
+            state.headline_data[idx]
+            if isinstance(idx, int) and 0 <= idx < len(state.headline_data)
+            else {}
+        )
+        title = it.get("headline") or h.get("title", "")
+        short_summary = h.get("short_summary") or it.get("summary", "") or ""
+        url = it.get("link") or h.get("final_url") or h.get("url", "")
+        if not url:
+            continue
+        texts.append((title + "\n" + short_summary).strip())
+        metas.append((url, title, short_summary))
+    if not texts:
+        return 0
+
+    vectors = embed_texts(texts)
+    with sqlite3.connect(db_path) as conn:
+        for (url, title, short_summary), vec in zip(metas, vectors):
+            PublishedArticle(
+                session_id=session_id, url=url, title=title,
+                short_summary=short_summary, embedding=vec, published_at=now,
+            ).insert(conn)
+    return len(texts)
+
+
 def _already_sent(db_path: str, session_id: str) -> bool:
     """True if a newsletters row already exists for this session."""
     try:
@@ -328,6 +373,16 @@ def deliver_newsletter(
             (session_id, title, html, None, datetime.now().isoformat()),
         )
         conn.commit()
+
+    # Record survivors (articles that made it into this newsletter) into the
+    # cross-day dedup store, once per session. Never let this break a send.
+    if not previously_sent:
+        try:
+            n = _record_published_articles(state, session_id, db_path)
+            if echo and n:
+                click.echo(f"Recorded {n} article(s) to the cross-day dedup store.")
+        except Exception as exc:  # pragma: no cover - defensive
+            click.echo(f"Warning: could not record published articles: {exc}", err=True)
 
     if echo:
         click.echo(f"Newsletter written to {out_file}")

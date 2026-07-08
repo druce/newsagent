@@ -14,7 +14,7 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 
 The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 
-1. **`/newsagent:pipeline`** — Claude skill to run the full 12-step pipeline from scraping
+1. **`/newsagent:pipeline`** — Claude skill to run the full 13-step pipeline from scraping
    and gathering, to selecting items and writing proposed newsletter. Writes the newsletter to `out/latest.html` (fully AI-eddited issue) and the rated-bullet digest to `out/latest_short.html`
    (both also dated: `out/<date>.html`, `out/<date>_short.html`). Details under *How to run*.
 
@@ -51,6 +51,7 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 | `newsagent:download` | Playwright fetch + trafilatura extract. |
 | `newsagent:dedupe` | Cosine-similarity dedup on OpenAI embeddings (runs before `summarize` so duplicates aren't summarized). |
 | `newsagent:summarize` | Per-article bullet summary. |
+| `newsagent:crossdedupe` | Drop stories already published in the last N days (default 4), even from a different outlet/URL — cosine shortlist on `title+short_summary` embeddings + a Haiku same-story judge. |
 | `newsagent:rate` | Multi-axis confidence + Swiss-paired Bradley-Terry → composite rating. |
 | `newsagent:cluster` | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
 | `newsagent:select` | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
@@ -113,7 +114,7 @@ The default engine for every prompt is `"subagent"` — that uses your Claude Co
 #### A. End-to-end (the orchestrator)
 
 ```bash
-# Fresh full run — creates a new session, runs all 12 steps, writes out/<date>.html
+# Fresh full run — creates a new session, runs all 13 steps, writes out/<date>.html
 .venv/bin/python -m lib.steps.pipeline --sources sources.yaml
 
 # All steps with a specific engine forced for LLM prompts
@@ -226,7 +227,7 @@ per `--interval` for gentle rate-limiting; the queue lives in the `bsky_queue` t
 Output:
 ```
 Session:  2026-05-18-091533
-Progress: 58.3% (7/12 steps)
+Progress: 53.8% (7/13 steps)
 Next:     cluster
 Headlines: 412
 Clusters:  0
@@ -327,7 +328,7 @@ Never touches `articles`, `urls`, `newsletters`, `sites` tables — those are co
 ## Pipeline reference
 
 ```
-start → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send
+start → gather → filter → download → dedupe → summarize → crossdedupe → rate → cluster → select → draft → rewrite → send
 ```
 
 Plus the standalone Bluesky digest and recovery/maintenance skills.

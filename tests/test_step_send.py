@@ -1,6 +1,8 @@
 import sqlite3
+import json
 from pathlib import Path
 from datetime import date
+from unittest.mock import patch
 from click.testing import CliRunner
 
 from lib.db import init_db
@@ -168,3 +170,69 @@ def test_render_item_omits_share_link_without_source():
     html = _render_item({"headline": "No source story", "sources": []})
     assert "/enqueue" not in html
     assert "\U0001f98b" not in html
+
+
+# ── cross-day dedup store: recording survivors ──────────────────────
+
+def _setup_with_sections(tmp_db):
+    init_db(tmp_db)
+    state = NewsletterAgentState(session_id="s1", db_path=tmp_db)
+    state.complete_step("start")
+    state.headline_data = [
+        {"title": "Title 0", "url": "https://e.com/0",
+         "short_summary": "Story zero about AI."},
+        {"title": "Title 1", "url": "https://e.com/1",
+         "short_summary": "Story one about AI."},
+    ]
+    state.newsletter_section_data = [
+        {"cat": "AI", "headline": "Title 0", "link": "https://e.com/0",
+         "summary": "s0", "id": 0},
+        {"cat": "AI", "headline": "Title 1", "link": "https://e.com/1",
+         "summary": "s1", "id": 1},
+    ]
+    state.final_newsletter = "<p>body</p>"
+    state.newsletter_title = "Test Newsletter"
+    state.save_checkpoint("start")
+    return state
+
+
+def test_send_records_published_articles(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _setup_with_sections(tmp_db)
+
+    def fake_embed(texts):
+        return [[0.1, 0.2] for _ in texts]
+
+    with patch("lib.steps.send.embed_texts", side_effect=fake_embed):
+        runner = CliRunner()
+        result = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
+    assert result.exit_code == 0, result.output
+
+    with sqlite3.connect(tmp_db) as conn:
+        rows = conn.execute(
+            "SELECT url, title, short_summary, embedding FROM published_articles "
+            "ORDER BY url"
+        ).fetchall()
+    assert len(rows) == 2
+    assert rows[0][0] == "https://e.com/0"
+    assert rows[0][2] == "Story zero about AI."
+    assert json.loads(rows[0][3]) == [0.1, 0.2]  # embedding stored, non-null
+
+
+def test_send_recording_failure_is_swallowed(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _setup_with_sections(tmp_db)
+
+    def boom(texts):
+        raise RuntimeError("no OpenAI key")
+
+    with patch("lib.steps.send.embed_texts", side_effect=boom):
+        runner = CliRunner()
+        result = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
+    # Send still succeeds; recording error is a warning, not a failure.
+    assert result.exit_code == 0, result.output
+    out_file = Path(f"out/{date.today().isoformat()}.html")
+    assert out_file.exists()
+    with sqlite3.connect(tmp_db) as conn:
+        n = conn.execute("SELECT COUNT(*) FROM published_articles").fetchone()[0]
+    assert n == 0

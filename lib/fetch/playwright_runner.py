@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import random
+import sys
+import time
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -18,6 +20,17 @@ from lib.fetch.browser import launch_stealth_context_async
 
 
 _DEFAULT_NAV_TIMEOUT_MS = 30_000
+# Hard ceiling on total time spent on a single URL inside the batch, over and
+# above the navigation timeout. Bounds the otherwise-unbounded awaits
+# (page.content(), route handling) so one stuck page can't hang asyncio.gather
+# — and therefore the whole download step — forever.
+_PER_URL_SLACK_MS = 40_000
+
+
+def _plog(msg: str) -> None:
+    """Per-URL progress line to stderr (flushed) so a hang is visible live."""
+    sys.stderr.write(f"[pw] {msg}\n")
+    sys.stderr.flush()
 _BLOCKED_TYPES_DEFAULT = frozenset({"image", "media", "font"})
 
 # Hosts whose pages do a JS-based redirect to the real article after DCL.
@@ -192,31 +205,68 @@ async def fetch_urls_html_batch_async(
 
     results: dict[str, tuple[Optional[str], Optional[str], Optional[str]]] = {}
     sem = asyncio.Semaphore(max(1, parallel))
+    ceiling_s = (timeout_ms + _PER_URL_SLACK_MS) / 1000.0
+    total = len(urls)
+    done = 0
+
+    async def _fetch_one(u: str):
+        """Inner fetch; raises on any Playwright error (caught by caller)."""
+        page = await ctx.new_page()
+        try:
+            if block_resources:
+                await _enable_fast_mode(page)
+            await page.goto(u, timeout=timeout_ms, wait_until="domcontentloaded")
+            await _await_aggregator_redirect(page)
+            await _await_hydration(page)
+            html = await page.content()
+            return html, page.url
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
 
     async with async_playwright() as p:
         ctx = await launch_stealth_context_async(p, headless=True)
         try:
             async def _one(u: str) -> None:
+                nonlocal done
                 async with sem:
-                    page = await ctx.new_page()
+                    _plog(f"→ {u}")
+                    t0 = time.monotonic()
                     try:
-                        if block_resources:
-                            await _enable_fast_mode(page)
-                        await page.goto(u, timeout=timeout_ms, wait_until="domcontentloaded")
-                        await _await_aggregator_redirect(page)
-                        await _await_hydration(page)
-                        html = await page.content()
-                        results[u] = (html, page.url, None)
+                        # Hard per-URL ceiling: bounds page.content() and any
+                        # other unbounded await so one stuck page can't hang
+                        # the whole batch.
+                        html, final_url = await asyncio.wait_for(
+                            _fetch_one(u), timeout=ceiling_s
+                        )
+                        results[u] = (html, final_url, None)
+                        done += 1
+                        _plog(
+                            f"✓ {u} ({len(html)} chars, "
+                            f"{time.monotonic() - t0:.1f}s) [{done}/{total}]"
+                        )
+                    except asyncio.TimeoutError:
+                        results[u] = (None, None, f"per-url timeout after {ceiling_s:.0f}s")
+                        done += 1
+                        _plog(
+                            f"✗ TIMEOUT {u} after {time.monotonic() - t0:.1f}s "
+                            f"[{done}/{total}]"
+                        )
                     except Exception as exc:
                         results[u] = (None, None, str(exc)[:300])
-                    finally:
-                        try:
-                            await page.close()
-                        except Exception:
-                            pass
+                        done += 1
+                        _plog(
+                            f"✗ {u}: {str(exc)[:120]} "
+                            f"({time.monotonic() - t0:.1f}s) [{done}/{total}]"
+                        )
             await asyncio.gather(*(_one(u) for u in urls))
         finally:
-            await ctx.close()
+            try:
+                await asyncio.wait_for(ctx.close(), timeout=30.0)
+            except Exception:
+                pass
     return results
 
 

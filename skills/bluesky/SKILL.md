@@ -1,6 +1,6 @@
 ---
 name: bluesky
-description: Standalone Bluesky digest pipeline. Fetches recent posts from a Bluesky account, enriches with OG metadata and resized images, reorders by importance via LLM, and renders a flat HTML digest (post text linked to the article, source name appended) matching the legacy skynet.html format. Also generates punny headline rewrites as a separate artifact. Independent from the main 12-step newsletter pipeline.
+description: Standalone Bluesky digest pipeline. Fetches recent posts from a Bluesky account, enriches with OG metadata and resized images, reorders by importance via LLM, and renders a flat HTML digest (post text linked to the article, source name appended) matching the legacy skynet.html format. Also generates punny headline rewrites as a separate artifact. Independent from the main 13-step newsletter pipeline.
 ---
 
 # newsagent:bluesky
@@ -28,7 +28,7 @@ Two execution paths, mirroring the main pipeline's interactive/classic split:
 | Flag | Default | Notes |
 |---|---|---|
 | `--user HANDLE` | (required) | Bluesky handle to fetch posts from |
-| `--limit N` | 80 | Max posts to fetch via getAuthorFeed |
+| `--limit N` | 100 | Max posts to fetch via getAuthorFeed |
 | `--no-dedup` | off | Ignore the cross-run dedup marker and render the full feed |
 | `--fetch` | off | Staged stage 1 (Python): fetch + images → `fetch.json` + `reorder-request.json` |
 | `--apply-reorder` | off | Staged stage 3 (Python): `reorder-result.json` → `ordered.json` + HTML + `headlines-request.json` |

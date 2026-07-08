@@ -6,10 +6,11 @@ via init_db() but their dataclasses will be added in later phases as needed.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 
 # ---------- Schema (CREATE TABLE statements) ----------
@@ -63,6 +64,17 @@ _SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS published_articles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        title TEXT,
+        short_summary TEXT,
+        embedding TEXT,
+        published_at TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS agent_state (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -88,6 +100,8 @@ _SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_agent_state_session_id ON agent_state(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_state_updated_at ON agent_state(updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_bsky_queue_status ON bsky_queue(status)",
+    "CREATE INDEX IF NOT EXISTS idx_published_articles_published_at "
+    "ON published_articles(published_at)",
 ]
 
 
@@ -312,3 +326,54 @@ class Site:
                    scrape_method=row[4],
                    bright_data_enabled=bool(row[5]),
                    last_seen=row[6])
+
+
+@dataclass
+class PublishedArticle:
+    """One article that survived into a final published newsletter.
+
+    Backs cross-day story-level de-dup: `crossdedupe` compares today's
+    candidates against the last N days of these rows. `embedding` is the
+    OpenAI text-embedding-3-large vector of `title + short_summary`.
+    """
+    session_id: str
+    url: str
+    title: Optional[str] = None
+    short_summary: Optional[str] = None
+    embedding: Optional[List[float]] = None
+    published_at: Optional[str] = None
+    id: Optional[int] = None
+
+    def insert(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "INSERT INTO published_articles "
+            "(session_id, url, title, short_summary, embedding, published_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                self.session_id, self.url, self.title, self.short_summary,
+                json.dumps(self.embedding) if self.embedding is not None else None,
+                self.published_at,
+            ),
+        )
+        conn.commit()
+
+    @classmethod
+    def recent(
+        cls, conn: sqlite3.Connection, since: datetime
+    ) -> List["PublishedArticle"]:
+        """Rows published at/after `since`, newest first. ISO timestamps sort
+        lexicographically, so a string comparison is a correct date filter."""
+        rows = conn.execute(
+            "SELECT id, session_id, url, title, short_summary, embedding, "
+            "published_at FROM published_articles WHERE published_at >= ? "
+            "ORDER BY published_at DESC",
+            (_iso(since),),
+        ).fetchall()
+        out: List["PublishedArticle"] = []
+        for r in rows:
+            emb = json.loads(r[5]) if r[5] else None
+            out.append(cls(
+                id=r[0], session_id=r[1], url=r[2], title=r[3],
+                short_summary=r[4], embedding=emb, published_at=r[6],
+            ))
+        return out

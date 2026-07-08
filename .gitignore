@@ -32,3 +32,4 @@ dist/
 # Emacs autosave/lock files
 \#*\#
 .\#*
+.superpowers/

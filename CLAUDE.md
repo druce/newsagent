@@ -50,7 +50,7 @@ newsagent/
 ├── pyproject.toml, requirements.txt  # deps
 ├── pyrightconfig.json                # pyright IDE config
 ├── lib/
-│   ├── state.py                      # NewsletterAgentState + WorkflowState (12 steps)
+│   ├── state.py                      # NewsletterAgentState + WorkflowState (13 steps)
 │   ├── db.py                         # SQLite schema + AgentState/Site dataclasses
 │   ├── llm.py                        # call_prompt + registry + call_prompt_batch
 │   ├── critic.py                     # critic-optimizer loop helper
@@ -82,11 +82,12 @@ newsagent/
 │   │   ├── name_topic.py, assign_noise.py, merge_clusters.py
 │   │   ├── write_section.py, critique_section.py, improve_section.py
 │   │   ├── critique_newsletter.py, improve_newsletter.py, generate_title.py
-│   │   └── bsky_reorder.py, bsky_section_titles.py
-│   ├── steps/                        # 18 step CLIs
-│   │   ├── start.py, gather.py, filter.py, download.py, summarize.py,
-│   │   │   dedupe.py, rate.py, cluster.py, select.py, draft.py,
-│   │   │   rewrite.py, send.py, bluesky.py        # pipeline
+│   │   ├── bsky_reorder.py, bsky_section_titles.py
+│   │   └── same_story.py                 # cross-day dedup pairwise judge
+│   ├── steps/                        # 19 step CLIs
+│   │   ├── start.py, gather.py, filter.py, download.py, dedupe.py,
+│   │   │   summarize.py, crossdedupe.py, rate.py, cluster.py, select.py,
+│   │   │   draft.py, rewrite.py, send.py, bluesky.py   # pipeline
 │   │   ├── pipeline.py                            # orchestrator
 │   │   ├── progress.py, sessions.py, show.py      # inspection
 │   │   ├── recover.py, reset.py, checkpoint.py,
@@ -104,11 +105,13 @@ newsagent/
 
 ## Workflow
 
-`start → gather → filter → download → dedupe → summarize → rate → cluster → select → draft → rewrite → send`
+`start → gather → filter → download → dedupe → summarize → crossdedupe → rate → cluster → select → draft → rewrite → send`
 
 Plus the standalone `newsagent:bluesky` and seven recovery/maintenance skills.
 
 `dedupe` runs between `download` and `summarize` so duplicate articles aren't summarized twice. It's a full member of `WORKFLOW_STEPS` (see `lib/state.py:25`).
+
+`crossdedupe` runs between `summarize` and `rate`: it drops stories the newsletter already published in the last N days (default 4), even from a different outlet/URL. It embeds `title + short_summary` (OpenAI text-embedding-3-large), shortlists against the `published_articles` store by cosine (default 0.70), and a Haiku `same_story` judge confirms same/different per pair (Agent-dispatch batch pattern, 25 pairs/batch — like `filter`). The store is populated by `send` from each delivered newsletter, so protection is live once a prior newsletter exists in the window. Distinct from `dedupe`, which is within-session syndicated-reprint removal on full bodies at cosine 0.95.
 
 ## Engine layer
 
@@ -128,7 +131,7 @@ Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific
 
 ## State and data storage
 
-- `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`, `bsky_queue`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`. `bsky_queue` backs the share-to-Bluesky daemon (`url` UNIQUE → permanent dedup).
+- `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`, `bsky_queue`, `published_articles`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`. `bsky_queue` backs the share-to-Bluesky daemon (`url` UNIQUE → permanent dedup). `published_articles` records what each newsletter actually published (url, title, short_summary, `title+short_summary` embedding, `published_at`) — written by `send`, read by `crossdedupe` for cross-day story-level suppression.
 - `download/` — article text cache (sha256-of-url filename).
 - `download/bsky-images/` — Bluesky image cache.
 - `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `newsagent:pipeline`.

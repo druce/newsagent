@@ -49,6 +49,48 @@ from lib.sources import pretty_source
 # truncate_last_occurrence).
 _TRAILING_URL_RE = re.compile(r"\s+\S+\.{3}$")
 
+# Strip a redundant trailing source-attribution clause — the source name is
+# already appended separately as the "- <em>source</em>" suffix, so an inline
+# "..., Bloomberg reports" / "..., FT analysis says" / "..., per industry
+# analysis" reads as duplicate credit. Conservative: only trailing clauses set
+# off from the sentence (a comma, or a "per"/"according to" lead-in), and only
+# with clear journalism verbs — so primary-source "..., Goldman says" and a
+# sentence's own verb ("Nvidia reports record revenue") are left intact.
+_ATTRIB_TAIL_RES = [
+    # ", Bloomberg reports" / ", the Financial Times reported" / ", TechCrunch writes"
+    # (capitalized publication + journalism verb as the final clause; NOT "says",
+    # which is usually a primary source rather than the reporting outlet).
+    re.compile(
+        r",\s*(?:[Tt]he\s+)?[A-Z][A-Za-z0-9.&'’\- ]*?\s"
+        r"(?:reports?|reported|writes?|wrote|notes?|noted|adds?|added)\.?\s*$"
+    ),
+    # ", per industry analysis." / ", according to Reuters"
+    re.compile(r",\s*(?:per|according to)\s+[A-Za-z0-9.&'’\- ]{1,45}?\.?\s*$", re.I),
+    # ", FT analysis says" / ", a new study finds" / ", the report found"
+    re.compile(
+        r",\s*(?:the\s+|an?\s+)?[A-Za-z0-9.&'’\- ]*?\b(?:analysis|report|study|survey|poll)\b\s+"
+        r"(?:says?|said|finds?|found|shows?|showed|suggests?|reveals?|reported|estimates?)\.?\s*$",
+        re.I,
+    ),
+]
+
+
+def _strip_source_attribution(text: str) -> str:
+    """Remove a trailing, redundant source-attribution clause from post text.
+
+    The digest already shows the source as a "- <em>source</em>" suffix, so an
+    inline "..., Bloomberg reports" is duplicate credit. Only strips a clause
+    that is clearly a media attribution set off at the very end; leaves the text
+    untouched (and never returns an empty/near-empty string) otherwise.
+    """
+    for rx in _ATTRIB_TAIL_RES:
+        m = rx.search(text)
+        if m and m.start() > 0:
+            stripped = text[: m.start()].rstrip(" ,;—-").strip()
+            if len(stripped) >= 10:
+                return stripped
+    return text
+
 # Per-account dedup marker (the URI of the newest post seen on the last run).
 _STATE_DIR = Path("download/bsky-state")
 _IMAGE_DIR = Path("download/bsky-images")
@@ -67,9 +109,13 @@ def _extract_url(post: dict) -> str | None:
 
 
 def _extract_text(post: dict) -> str:
-    """Extract (and clean) post text from a feed item."""
+    """Extract (and clean) post text from a feed item.
+
+    Also strips a redundant trailing source-attribution clause ("..., Bloomberg
+    reports") since the source is surfaced separately in the digest.
+    """
     raw = post.get("post", {}).get("record", {}).get("text", "") or ""
-    return _clean_text(raw)
+    return _strip_source_attribution(_clean_text(raw))
 
 
 def _post_uri(post: dict) -> str:
@@ -485,7 +531,7 @@ def _run_classic(handle: str, limit: int, no_dedup: bool, engine: str | None) ->
 
 @click.command()
 @click.option("--user", "handle", required=True, help="Bluesky handle to fetch")
-@click.option("--limit", default=80, show_default=True, help="Max posts to fetch")
+@click.option("--limit", default=100, show_default=True, help="Max posts to fetch")
 @click.option(
     "--no-dedup",
     is_flag=True,
