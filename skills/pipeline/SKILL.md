@@ -1,6 +1,6 @@
 ---
 name: pipeline
-description: Top-level newsletter orchestrator. Drives the 13-step pipeline (start → send) end-to-end from a parent Claude Code session, dispatching Agents for the seven LLM steps (filter, summarize, crossdedupe, cluster, select, draft, rewrite). Writes a session summary to runs/<SID>/summary.md.
+description: Top-level newsletter orchestrator. Drives the 14-step pipeline (start → send) end-to-end from a parent Claude Code session, dispatching Agents for the eight LLM steps (filter, summarize, crossdedupe, coverage, cluster, select, draft, rewrite). Writes a session summary to runs/<SID>/summary.md.
 ---
 
 # newsagent:pipeline
@@ -18,11 +18,11 @@ See "Non-interactive fallback" below.
 
 ## Step plan
 
-The pipeline runs these 13 steps in order:
+The pipeline runs these 14 steps in order:
 
 ```
 start → gather → filter → download → dedupe → summarize → crossdedupe →
-rate → cluster → select → draft → rewrite → send
+coverage → rate → cluster → select → draft → rewrite → send
 ```
 
 ## Per-step model & batch table
@@ -36,6 +36,7 @@ rate → cluster → select → draft → rewrite → send
 | dedupe | Python CLI | — | — |
 | summarize | prepare/dispatch/apply | sonnet | 10 articles per batch |
 | crossdedupe | prepare/dispatch/apply | haiku | 25 pairs per batch (often 0 batches — no candidates) |
+| coverage | prepare/dispatch/apply | haiku | 25 pairs per batch (often 0 batches — no candidates) |
 | rate | Python CLI (in-process: rate_* prompts default `openai:gpt-4o-mini`, battles `google:gemini-3.1-flash-lite`) | — | — |
 | cluster | prepare/dispatch/apply | haiku | 1 batch (all clusters) |
 | select | **3 sequential rounds** then apply | sonnet (repechage, consolidate); haiku (reassign) | 50 noise per repechage batch; 1 consolidate batch; 25 headlines per reassign batch |
@@ -95,7 +96,7 @@ For each step in the plan:
    launch with `run_in_background: true` and wait for the completion
    notification rather than polling.
 
-2. **LLM-using fan-out steps** (filter, summarize, crossdedupe, cluster, draft):
+2. **LLM-using fan-out steps** (filter, summarize, crossdedupe, coverage, cluster, draft):
    ```bash
    .venv/bin/python -m lib.steps.<step> --session SID --prepare-batches [step-specific args]
    ```
@@ -108,6 +109,8 @@ For each step in the plan:
    `crossdedupe` frequently prepares **zero** batches (no story clears the
    cross-day shortlist). That is the normal case — dispatch nothing and run
    `--apply-results` straight away; it completes the step as a no-op.
+   `coverage` behaves the same way — most stories are singletons, so zero
+   batches is the common case there too.
 
    **Enumerate batch files from the `--prepare-batches` stdout, which prints
    the full path of every batch file it wrote — do NOT assume the index
@@ -172,6 +175,7 @@ should receive:
 - `skills/filter/SKILL.md`
 - `skills/summarize/SKILL.md`
 - `skills/crossdedupe/SKILL.md`
+- `skills/coverage/SKILL.md`
 - `skills/cluster/SKILL.md`
 - `skills/select/SKILL.md`
 - `skills/draft/SKILL.md`
@@ -234,7 +238,7 @@ when the user explicitly asks to resume one.**
 2. `--from STEP` → run STEP and every step that follows it in workflow order.
 3. `--resume SID` → load state via `.venv/bin/python -m lib.steps.progress --session SID`,
    find the first non-complete step, run from there.
-4. Default → run all 13 steps starting from start.
+4. Default → run all 14 steps starting from start.
 
 ## Resuming / recovery
 

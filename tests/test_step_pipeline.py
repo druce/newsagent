@@ -13,7 +13,7 @@ from lib.state import NewsletterAgentState, WORKFLOW_STEPS
 
 _ALL_STEP_IDS = [step_id for step_id, *_ in WORKFLOW_STEPS]
 # Steps that accept --engine
-_ENGINE_STEPS = {"filter", "summarize", "crossdedupe", "rate", "cluster", "select", "draft", "rewrite"}
+_ENGINE_STEPS = {"filter", "summarize", "crossdedupe", "coverage", "rate", "cluster", "select", "draft", "rewrite"}
 # Steps that do NOT accept --engine
 _NO_ENGINE_STEPS = {"start", "gather", "download", "send"}
 
@@ -259,3 +259,13 @@ def test_build_args_omits_cached_pages_for_non_gather_steps():
 
 def test_build_args_no_cached_pages_when_flag_off():
     assert "--cached-pages" not in _args("gather", cached_pages=False)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: coverage step wired between crossdedupe and rate
+# ---------------------------------------------------------------------------
+
+def test_coverage_step_between_crossdedupe_and_rate():
+    ids = [sid for sid, *_ in WORKFLOW_STEPS]
+    assert "coverage" in ids
+    assert ids.index("crossdedupe") < ids.index("coverage") < ids.index("rate")

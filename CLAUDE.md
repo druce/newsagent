@@ -50,7 +50,7 @@ newsagent/
 ├── pyproject.toml, requirements.txt  # deps
 ├── pyrightconfig.json                # pyright IDE config
 ├── lib/
-│   ├── state.py                      # NewsletterAgentState + WorkflowState (13 steps)
+│   ├── state.py                      # NewsletterAgentState + WorkflowState (14 steps)
 │   ├── db.py                         # SQLite schema + AgentState/Site dataclasses
 │   ├── llm.py                        # call_prompt + registry + call_prompt_batch
 │   ├── critic.py                     # critic-optimizer loop helper
@@ -83,11 +83,12 @@ newsagent/
 │   │   ├── write_section.py, critique_section.py, improve_section.py
 │   │   ├── critique_newsletter.py, improve_newsletter.py, generate_title.py
 │   │   ├── bsky_reorder.py, bsky_section_titles.py
-│   │   └── same_story.py                 # cross-day dedup pairwise judge
-│   ├── steps/                        # 19 step CLIs
+│   │   ├── same_story.py                 # cross-day dedup pairwise judge
+│   │   └── same_story_sameday.py         # same-day coverage-count judge
+│   ├── steps/                        # 20 step CLIs
 │   │   ├── start.py, gather.py, filter.py, download.py, dedupe.py,
-│   │   │   summarize.py, crossdedupe.py, rate.py, cluster.py, select.py,
-│   │   │   draft.py, rewrite.py, send.py, bluesky.py   # pipeline
+│   │   │   summarize.py, crossdedupe.py, coverage.py, rate.py, cluster.py,
+│   │   │   select.py, draft.py, rewrite.py, send.py, bluesky.py   # pipeline
 │   │   ├── pipeline.py                            # orchestrator
 │   │   ├── progress.py, sessions.py, show.py      # inspection
 │   │   ├── recover.py, reset.py, checkpoint.py,
@@ -105,13 +106,15 @@ newsagent/
 
 ## Workflow
 
-`start → gather → filter → download → dedupe → summarize → crossdedupe → rate → cluster → select → draft → rewrite → send`
+`start → gather → filter → download → dedupe → summarize → crossdedupe → coverage → rate → cluster → select → draft → rewrite → send`
 
 Plus the standalone `newsagent:bluesky` and seven recovery/maintenance skills.
 
 `dedupe` runs between `download` and `summarize` so duplicate articles aren't summarized twice. It's a full member of `WORKFLOW_STEPS` (see `lib/state.py:25`).
 
 `crossdedupe` runs between `summarize` and `rate`: it drops stories the newsletter already published in the last N days (default 4), even from a different outlet/URL. It embeds `title + short_summary` (OpenAI text-embedding-3-large), shortlists against the `published_articles` store by cosine (default 0.70), and a Haiku `same_story` judge confirms same/different per pair (Agent-dispatch batch pattern, 25 pairs/batch — like `filter`). The store is populated by `send` from each delivered newsletter, so protection is live once a prior newsletter exists in the window. Distinct from `dedupe`, which is within-session syndicated-reprint removal on full bodies at cosine 0.95.
+
+`coverage` runs between `crossdedupe` and `rate`: it counts how many of today's articles report the same event (title+short_summary cosine shortlist + Haiku `same_story_sameday` judge on full summaries, union-find grouping) and stamps `coverage_count`; `rate` adds `c_coverage * log2(coverage_count)` so widely-covered stories rank higher, and `select`'s MMR keeps one representative.
 
 ## Engine layer
 
