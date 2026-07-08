@@ -5,7 +5,7 @@ description: Count how many of today's articles report the same event and boost 
 
 # newsagent:coverage
 
-Step 7 of /newsagent:pipeline (after `crossdedupe`, before `rate`). Restores the
+Step after `crossdedupe` (before `rate`) in /newsagent:pipeline. Restores the
 legacy "widely-covered stories are more important" signal that the split of
 merge-vs-rank dropped. Two execution paths.
 
