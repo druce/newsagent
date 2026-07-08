@@ -9,6 +9,7 @@ Rating coefficients are additive (legacy do_rating.py:511 parity):
            - c_quality_low  * quality_low
            + c_bt_z         * bt_z
            + c_recency      * recency_score
+           + c_coverage     * log2(coverage_count)
 
 Each term is roughly unit-scale, so totals fall in ~[0, 8] for typical articles.
 Tune individual coefficients to bias the rating without touching rate.py.
@@ -23,6 +24,7 @@ RATING_COEFFS = {
     "quality_low": 1.0,   # 0..1 LLM confidence — subtracted as penalty
     "bt_z": 1.0,          # z-scored Bradley-Terry score
     "recency": 1.0,       # 2 * exp(-ln2 * age_days) - 1  in [-1, +1]
+    "coverage": 1.0,      # c_coverage * log2(coverage_count); singleton (N=1) -> 0
 }
 
 # Drop articles older than this many days (legacy do_rating.py:426).

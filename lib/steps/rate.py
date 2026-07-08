@@ -8,6 +8,7 @@ Composite:
            - c_quality_low  * quality_low
            + c_bt_z         * bt_z
            + c_recency      * recency_score
+           + c_coverage     * log2(coverage_count)
 
 Terms:
   reputation     — sites.reputation lookup by URL domain (default 0.0)
@@ -15,6 +16,7 @@ Terms:
   on_topic/importance/quality_low — LLM 0..1 confidences
   bt_z           — z-scored Bradley-Terry score
   recency_score  — 2*exp(-ln2 * age_days) - 1   (≈ +1 today, 0 at 1d, -0.5 at 2d, -1 floor)
+  coverage_score — log2(coverage_count) where coverage_count is the same-story group size
 
 Published-date fallback chain (resolved at rate-time, best→worst):
   1. h["published"] parsed via parsedate_to_datetime or fromisoformat
@@ -325,6 +327,8 @@ def cli(
         adjusted_len = _adjusted_len(content_len)
         reputation = _lookup_reputation(db_path, h.get("final_url") or h.get("url", ""))
         recency = _recency_score(h.get("age_days", 1.0))
+        coverage_count = max(int(h.get("coverage_count", 1) or 1), 1)
+        coverage_score = math.log2(coverage_count)
 
         rating = (
             c["reputation"]   * reputation
@@ -334,6 +338,7 @@ def cli(
             - c["quality_low"]  * quality_low
             + c["bt_z"]         * btz
             + c["recency"]      * recency
+            + c["coverage"]     * coverage_score
         )
 
         h["quality_low"] = quality_low
@@ -345,6 +350,8 @@ def cli(
         h["content_length"] = content_len
         h["adjusted_len"] = adjusted_len
         h["recency_score"] = recency
+        h["coverage_count"] = coverage_count
+        h["coverage_score"] = coverage_score
         h["rating"] = rating
 
     state.complete_step("rate", message=f"{len(rated_indices)} articles rated")
