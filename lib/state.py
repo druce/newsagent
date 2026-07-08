@@ -30,6 +30,7 @@ WORKFLOW_STEPS: list[tuple[str, str, str]] = [
     ("dedupe",    "Dedupe Articles",   "Cosine-similarity dedup on full article bodies"),
     ("summarize", "Summarize",         "Bullet-point summaries + one-line headlines"),
     ("crossdedupe", "Cross-day Dedupe", "Drop stories already published in the last N days"),
+    ("coverage",  "Coverage Count",    "Count same-day same-event coverage; boost ratings"),
     ("rate",      "Rate Articles",     "Multi-axis rating + Bradley-Terry composite"),
     ("cluster",   "Cluster Topics",    "UMAP+HDBSCAN clustering and naming"),
     ("select",    "Select Sections",   "MMR-diverse top-K per cluster"),
