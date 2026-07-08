@@ -17,6 +17,7 @@ from lib.prompts import bsky_reorder  # noqa: F401
 from lib.prompts import bsky_headlines  # noqa: F401
 from lib.prompts import sitename  # noqa: F401
 from lib.prompts import same_story  # noqa: F401
+from lib.prompts import same_story_sameday  # noqa: F401
 
 __all__ = [
     "filter_urls",
@@ -40,4 +41,5 @@ __all__ = [
     "bsky_headlines",
     "sitename",
     "same_story",
+    "same_story_sameday",
 ]
