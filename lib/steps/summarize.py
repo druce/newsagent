@@ -27,6 +27,7 @@ import lib.prompts  # noqa: F401 — register EXTRACT_SUMMARIES
 from lib.llm import call_prompt, get_prompt
 from lib.prompts.extract_summaries import ExtractSummariesInput, ExtractSummariesOutput
 from lib.state import NewsletterAgentState
+from lib.utilities import strip_source_attribution
 
 _DEFAULT_BATCH = 10
 _MAX_TEXT_CHARS = 8_000
@@ -170,6 +171,10 @@ def _apply_summaries(
         key = str(item_pos)
         if key in summaries:
             short_summary, summary = summaries[key]
+            # Safety net: the prompt forbids "..., Washington Post reports"
+            # tails, but strip any that slip through — digests render the
+            # source separately after the headline.
+            short_summary = strip_source_attribution(short_summary)
             state.headline_data[headline_idx]["short_summary"] = short_summary
             state.headline_data[headline_idx]["summary"] = summary
             applied += 1

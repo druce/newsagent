@@ -141,3 +141,36 @@ def test_summarize_writes_report(tmp_db, monkeypatch, tmp_path):
     assert report["session_id"] == "s1"
     assert report["total"] == 1   # only 1 headline had text_path
     assert report["summarized"] == 1
+
+
+def test_summarize_strips_trailing_source_attribution(tmp_db, monkeypatch, tmp_path):
+    """A trailing '..., Washington Post reports' clause must not survive into
+    state — the digest already appends the source name after the headline."""
+    monkeypatch.chdir(tmp_path)
+    _seed(tmp_db, tmp_path)
+
+    def fake_call_prompt(name, inputs, *, engine=None):
+        ids = [it["id"] for it in inputs["items"]]
+        return ExtractSummariesOutput(summaries=[
+            ArticleSummary(
+                id=ids[0],
+                short_summary=(
+                    "Trump administration weighs framework for US open models, "
+                    "Washington Post reports."
+                ),
+                summary="- bullet one\n- bullet two\n- bullet three",
+            ),
+        ])
+
+    with patch("lib.steps.summarize.call_prompt", side_effect=fake_call_prompt):
+        runner = CliRunner()
+        result = runner.invoke(summarize_cli, ["--db", tmp_db, "--session", "s1"])
+
+    assert result.exit_code == 0, result.output
+
+    state = NewsletterAgentState(session_id="s1", db_path=tmp_db).load_latest_from_db()
+    summarized = [h for h in state.headline_data if "short_summary" in h]
+    assert len(summarized) == 1
+    assert summarized[0]["short_summary"] == (
+        "Trump administration weighs framework for US open models"
+    )

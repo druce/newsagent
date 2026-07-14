@@ -93,3 +93,30 @@ def test_row_omits_bluesky_link_without_url():
     html = _render_rated_item(item)
     assert "\U0001f98b" not in html
     assert "/enqueue" not in html
+
+
+def test_strip_source_attribution_lives_in_utilities():
+    # Shared home so both the Bluesky digest and summarize can use it.
+    from lib.utilities import strip_source_attribution as s
+
+    # The exact shape the user flagged on 2026-07-14:
+    assert s(
+        "Trump administration and industry groups discuss framework to "
+        "streamline releases of US open models matching Chinese open-model "
+        "capability, Washington Post reports."
+    ) == (
+        "Trump administration and industry groups discuss framework to "
+        "streamline releases of US open models matching Chinese open-model "
+        "capability"
+    )
+    # Primary-source attribution stays.
+    assert s("AI could displace 15 million jobs, Goldman Sachs says") == (
+        "AI could displace 15 million jobs, Goldman Sachs says"
+    )
+
+
+def test_strip_source_attribution_bluesky_alias_is_same_function():
+    from lib.steps.bluesky import _strip_source_attribution
+    from lib.utilities import strip_source_attribution
+
+    assert _strip_source_attribution is strip_source_attribution

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html as _html
 import os
+import re
 import smtplib
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -30,6 +31,50 @@ def clean_url(url: str) -> str:
         return ""
     parts = urlparse(url)
     return urlunparse((parts.scheme, parts.netloc, parts.path, "", "", ""))
+
+
+# Strip a redundant trailing source-attribution clause — digest renderers
+# already append the source name separately ("&mdash; source" in the rated
+# digest, "- <em>source</em>" in the Bluesky digest), so an inline
+# "..., Bloomberg reports" / "..., FT analysis says" / "..., per industry
+# analysis" reads as duplicate credit. Conservative: only trailing clauses set
+# off from the sentence (a comma, or a "per"/"according to" lead-in), and only
+# with clear journalism verbs — so primary-source "..., Goldman says" and a
+# sentence's own verb ("Nvidia reports record revenue") are left intact.
+_ATTRIB_TAIL_RES = [
+    # ", Bloomberg reports" / ", the Financial Times reported" / ", TechCrunch writes"
+    # (capitalized publication + journalism verb as the final clause; NOT "says",
+    # which is usually a primary source rather than the reporting outlet).
+    re.compile(
+        r",\s*(?:[Tt]he\s+)?[A-Z][A-Za-z0-9.&'’\- ]*?\s"
+        r"(?:reports?|reported|writes?|wrote|notes?|noted|adds?|added)\.?\s*$"
+    ),
+    # ", per industry analysis." / ", according to Reuters"
+    re.compile(r",\s*(?:per|according to)\s+[A-Za-z0-9.&'’\- ]{1,45}?\.?\s*$", re.I),
+    # ", FT analysis says" / ", a new study finds" / ", the report found"
+    re.compile(
+        r",\s*(?:the\s+|an?\s+)?[A-Za-z0-9.&'’\- ]*?\b(?:analysis|report|study|survey|poll)\b\s+"
+        r"(?:says?|said|finds?|found|shows?|showed|suggests?|reveals?|reported|estimates?)\.?\s*$",
+        re.I,
+    ),
+]
+
+
+def strip_source_attribution(text: str) -> str:
+    """Remove a trailing, redundant source-attribution clause from headline text.
+
+    The digest already shows the source next to each headline, so an inline
+    "..., Bloomberg reports" is duplicate credit. Only strips a clause that is
+    clearly a media attribution set off at the very end; leaves the text
+    untouched (and never returns an empty/near-empty string) otherwise.
+    """
+    for rx in _ATTRIB_TAIL_RES:
+        m = rx.search(text)
+        if m and m.start() > 0:
+            stripped = text[: m.start()].rstrip(" ,;—-").strip()
+            if len(stripped) >= 10:
+                return stripped
+    return text
 
 
 def send_email(

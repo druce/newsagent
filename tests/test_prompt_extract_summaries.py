@@ -36,3 +36,18 @@ def test_extract_summaries_output_round_trips():
     })
     assert len(out.summaries) == 1
     assert out.summaries[0].short_summary.startswith("OpenAI")
+
+
+def test_extract_summaries_bans_outlet_and_medium_mentions():
+    """User feedback 2026-07-14: headlines must never mention the medium
+    ('Blog post urges...') or credit the reporting outlet ('..., Washington
+    Post reports') — the source name is rendered separately after the dash."""
+    system = get_prompt("extract_summaries").system_prompt
+
+    # Leading medium framing is called out with concrete banned examples.
+    assert "Blog post urges" in system
+    assert "Article analyzes" in system
+    # Trailing outlet credit is called out too.
+    assert "Washington Post reports" in system
+    # The named-person/institution exception is documented.
+    assert "Exception" in system

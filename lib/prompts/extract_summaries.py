@@ -61,7 +61,25 @@ No markdown, no markdown fences, no extra keys, no comments.
 - Sentence case ONLY: capitalize the first word and proper nouns. No Title Case, no ALL-CAPS.
 - Tone: objective, factual, specific. No hype, adjectives, speculation, or clickbait words ("groundbreaking", "revolutionary", "stunning", etc.).
 - Active voice.
-- Never start with "Secondary source reports..." or "Commentary argues...".
+- NEVER mention the publication, outlet, or medium. The source name is displayed
+  separately right next to the headline, so naming it — or stating the obvious fact
+  that this is an article/blog post/X post — is redundant noise. This ban covers
+  both positions:
+    - Leading medium framing: "Blog post urges...", "Article analyzes...",
+      "Op-ed argues...", "X post claims...", "Report says...", "Commentary argues...",
+      "Video explains...", "Newsletter covers...".
+    - Trailing outlet credit: "..., Washington Post reports", "..., according to
+      Reuters", "..., per industry analysis", "..., FT analysis says",
+      "..., TechCrunch writes".
+  Instead, state the event or thesis directly, attributed to the actor INSIDE the
+  story: not "Blog post urges open-source projects to adopt AI tools" but
+  "Open-source projects should adopt subsidized frontier-lab AI tools for maintenance
+  work before funding runs out".
+  Exception: a named person or institution that is part of the story (researcher,
+  executive, official, prominent analyst) may be cited by name or role when that
+  identity is important context — "MIT economist warns...", "Andrej Karpathy
+  argues...", "Goldman Sachs projects...". Never use the anonymous medium
+  ("a blog post", "an article", "a study" with no named author) as the actor.
 - No emojis or exclamation points.
 - Content priority (in strict order, drop from the bottom if word limit forces omission):
     1. Concrete facts, figures, or statistics.
