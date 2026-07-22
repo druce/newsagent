@@ -235,6 +235,50 @@ def _write_sitename_batches(session_id: str, domains: list[str]) -> list[Path]:
     return paths
 
 
+def _load_sitename_results(
+    results_dir: Path, expected_ids: set[str]
+) -> tuple[list, list[str]]:
+    """Load Haiku result JSONs. Returns (records, problems) — records are
+    SitenameRecord objects; problems are human-readable strings (filter's
+    _load_results pattern)."""
+    from pydantic import ValidationError
+    from lib.prompts.sitename import SitenameOutput
+
+    records: list = []
+    problems: list[str] = []
+    files = sorted(results_dir.glob("batch-*.json")) if results_dir.exists() else []
+    if not files:
+        problems.append(f"no batch-*.json files in {results_dir}")
+        return records, problems
+
+    seen_ids: set[str] = set()
+    for f in files:
+        try:
+            raw = json.loads(f.read_text())
+        except json.JSONDecodeError as exc:
+            problems.append(f"{f.name}: invalid JSON ({exc})")
+            continue
+        try:
+            parsed = SitenameOutput.model_validate(raw)
+        except ValidationError as exc:
+            problems.append(f"{f.name}: schema mismatch ({exc.error_count()} errors)")
+            continue
+        for rec in parsed.results:
+            if rec.id in seen_ids:
+                problems.append(f"{f.name}: duplicate id {rec.id!r}")
+                continue
+            seen_ids.add(rec.id)
+            records.append(rec)
+
+    missing = expected_ids - seen_ids
+    extra = seen_ids - expected_ids
+    if missing:
+        problems.append(f"missing sitenames for ids: {sorted(missing)[:10]}")
+    if extra:
+        problems.append(f"unexpected ids in results: {sorted(extra)[:10]}")
+    return records, problems
+
+
 @click.command()
 @click.option("--db", "db_path", default="newsletter_agent.db")
 @click.option("--session", "session_id", required=True)
@@ -242,10 +286,44 @@ def _write_sitename_batches(session_id: str, domains: list[str]) -> list[Path]:
               help="Cap on number of URLs downloaded this run.")
 @click.option("--parallel", type=int, default=8, show_default=True,
               help="Concurrent fetches per phase.")
-def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> None:
+@click.option("--apply-sitenames", "apply_sitenames", default=None,
+              help="Read sitename result JSONs from this dir, upsert into "
+                   "sites, and refresh headline site_names (no downloading)")
+def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
+        apply_sitenames: str | None) -> None:
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()
     if state is None:
         raise click.ClickException(f"No state found for session {session_id}")
+
+    if apply_sitenames:
+        batches_dir = Path("runs") / session_id / _SITENAME_BATCHES_SUBDIR
+        expected_ids: set[str] = set()
+        if batches_dir.exists():
+            for bf in sorted(batches_dir.glob("batch-*.json")):
+                expected_ids.update(str(i) for i in json.loads(bf.read_text()).get("ids", []))
+        if not expected_ids:
+            click.echo("No sitename batches found; nothing to apply.")
+            return
+        records, problems = _load_sitename_results(Path(apply_sitenames), expected_ids)
+        if problems:
+            click.echo("Apply found problems:", err=True)
+            for p in problems:
+                click.echo(f"  - {p}", err=True)
+            if not records:
+                raise click.ClickException(
+                    "no usable sitename results; redispatch failed batches")
+        n = _upsert_site_names(records, db_path)
+        _assign_site_names(state, db_path)
+        state.save_checkpoint("download")
+        runs_dir = Path("runs") / session_id
+        (runs_dir / "sitename.json").write_text(json.dumps({
+            "session_id": session_id,
+            "completed_at": datetime.now().isoformat(),
+            "unknown": len(expected_ids),
+            "resolved": n,
+        }, indent=2))
+        click.echo(f"Applied {n} site name(s); headline site_names refreshed.")
+        return
 
     state.start_step("download")
     state.save_checkpoint("download")

@@ -500,3 +500,87 @@ def test_download_writes_no_sitename_batches_when_domains_known(tmp_path, tmp_db
     assert not (tmp_path / "runs" / "d1" / "sitename-batches").exists()
     state = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
     assert all(h["site_name"] == "Example News" for h in state.headline_data)
+
+
+def _write_sitename_fixture(tmp_path, session_id="d1"):
+    """A prepared batch (as Task 1 writes it) + a matching Haiku result file."""
+    batches = tmp_path / "runs" / session_id / "sitename-batches"
+    results = tmp_path / "runs" / session_id / "sitename-results"
+    batches.mkdir(parents=True)
+    results.mkdir(parents=True)
+    (batches / "batch-000.json").write_text(json.dumps({
+        "batch_id": 0,
+        "session_id": session_id,
+        "ids": ["0"],
+        "items": [{"id": "0", "domain": "example.com"}],
+        "system_prompt": "s",
+        "user_prompt": "u",
+        "output_schema": {},
+    }))
+    (results / "batch-000.json").write_text(json.dumps({
+        "results": [{"id": "0", "domain": "example.com", "site_name": "Example News"}],
+    }))
+    return results
+
+
+def test_apply_sitenames_upserts_and_reassigns(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = _setup(tmp_db)
+    for h in state.headline_data:
+        h["site_name"] = "example.com"          # stale bare-domain fallback
+    state.complete_step("download")
+    state.save_checkpoint("download")
+    results = _write_sitename_fixture(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(download_cli, [
+        "--db", tmp_db, "--session", "d1", "--apply-sitenames", str(results),
+    ])
+    assert result.exit_code == 0, result.output
+
+    with sqlite3.connect(tmp_db) as conn:
+        row = conn.execute(
+            "SELECT name FROM sites WHERE domain='example.com'").fetchone()
+    assert row == ("Example News",)
+    state = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
+    assert all(h["site_name"] == "Example News" for h in state.headline_data)
+    report = json.loads((tmp_path / "runs" / "d1" / "sitename.json").read_text())
+    assert report["resolved"] == 1
+
+
+def test_apply_sitenames_reports_missing_ids(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = _setup(tmp_db)
+    state.complete_step("download")
+    state.save_checkpoint("download")
+    results = _write_sitename_fixture(tmp_path)
+    # batch expects ids {"0","1"} but the result only covers "0"
+    batches = tmp_path / "runs" / "d1" / "sitename-batches"
+    payload = json.loads((batches / "batch-000.json").read_text())
+    payload["ids"] = ["0", "1"]
+    payload["items"].append({"id": "1", "domain": "other.com"})
+    (batches / "batch-000.json").write_text(json.dumps(payload))
+
+    runner = CliRunner()
+    result = runner.invoke(download_cli, [
+        "--db", tmp_db, "--session", "d1", "--apply-sitenames", str(results),
+    ])
+    assert result.exit_code == 0, result.output   # partial results still apply
+    assert "missing" in result.output
+    with sqlite3.connect(tmp_db) as conn:
+        assert conn.execute(
+            "SELECT name FROM sites WHERE domain='example.com'").fetchone()
+
+
+def test_apply_sitenames_without_batches_is_noop(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = _setup(tmp_db)
+    state.complete_step("download")
+    state.save_checkpoint("download")
+    runner = CliRunner()
+    result = runner.invoke(download_cli, [
+        "--db", tmp_db, "--session", "d1",
+        "--apply-sitenames", str(tmp_path / "runs" / "d1" / "sitename-results"),
+    ])
+    assert result.exit_code == 0, result.output
+    assert "nothing to apply" in result.output.lower()
