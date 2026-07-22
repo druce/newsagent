@@ -514,10 +514,12 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
         for d in sorted(pw_fallback_domains):
             click.echo(f"  - {d}")
 
-    # Resolve h['site_name']. Unknown domains become sitename batch files for
-    # Haiku subagent dispatch by the parent session (no in-process LLM call);
-    # until --apply-sitenames runs, pretty_source falls back to source label /
-    # bare domain.
+    # Resolve h['site_name']. With an explicit --engine (classic cron/CI
+    # mode), unknown domains are resolved in-process via call_prompt.
+    # Otherwise (interactive default) they become sitename batch files for
+    # Haiku subagent dispatch by the parent session — no in-process LLM
+    # call; until --apply-sitenames runs, pretty_source falls back to
+    # source label / bare domain.
     unknown = _unknown_domains(state, db_path)
     if unknown and engine:
         items = [{"id": str(i), "domain": d} for i, d in enumerate(unknown)]
