@@ -584,3 +584,39 @@ def test_apply_sitenames_without_batches_is_noop(tmp_path, tmp_db, monkeypatch):
     ])
     assert result.exit_code == 0, result.output
     assert "nothing to apply" in result.output.lower()
+
+
+def test_download_engine_flag_resolves_sitenames_in_process(tmp_path, tmp_db, monkeypatch):
+    """--engine keeps the classic path for cron: no batch files, direct upsert."""
+    from lib.prompts.sitename import SitenameOutput, SitenameRecord
+
+    monkeypatch.chdir(tmp_path)
+    _setup(tmp_db)
+
+    def fake_http(url):
+        return _body("X"), "<html>RAW</html>", url, None
+
+    fake_out = SitenameOutput(results=[
+        SitenameRecord(id="0", domain="example.com", site_name="Example News"),
+    ])
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http):
+        with patch("lib.steps.download.fetch_urls_html_batch"):
+            with patch("lib.steps.download.call_prompt", return_value=fake_out) as cp:
+                runner = CliRunner()
+                result = runner.invoke(download_cli, [
+                    "--db", tmp_db, "--session", "d1",
+                    "--engine", "google:gemini-3.1-flash-lite",
+                ])
+    assert result.exit_code == 0, result.output
+    cp.assert_called_once()
+    assert cp.call_args.kwargs.get("engine") == "google:gemini-3.1-flash-lite"
+    assert not (tmp_path / "runs" / "d1" / "sitename-batches").exists()
+    with sqlite3.connect(tmp_db) as conn:
+        assert conn.execute(
+            "SELECT name FROM sites WHERE domain='example.com'"
+        ).fetchone() == ("Example News",)
+
+
+def test_sitename_prompt_does_not_default_to_openrouter():
+    from lib.prompts.sitename import SITENAME
+    assert not SITENAME.default_engine.startswith("openrouter:")

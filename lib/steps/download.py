@@ -289,8 +289,12 @@ def _load_sitename_results(
 @click.option("--apply-sitenames", "apply_sitenames", default=None,
               help="Read sitename result JSONs from this dir, upsert into "
                    "sites, and refresh headline site_names (no downloading)")
+@click.option("--engine", default=None,
+              help="Classic mode: resolve unknown site names in-process via "
+                   "this engine (cron/CI only; e.g. google:gemini-3.1-flash-lite). "
+                   "Default: write sitename batches for Haiku subagent dispatch.")
 def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
-        apply_sitenames: str | None) -> None:
+        apply_sitenames: str | None, engine: str | None) -> None:
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()
     if state is None:
         raise click.ClickException(f"No state found for session {session_id}")
@@ -515,7 +519,18 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
     # until --apply-sitenames runs, pretty_source falls back to source label /
     # bare domain.
     unknown = _unknown_domains(state, db_path)
-    if unknown:
+    if unknown and engine:
+        items = [{"id": str(i), "domain": d} for i, d in enumerate(unknown)]
+        try:
+            result = call_prompt("sitename", {"items": items}, engine=engine)
+            assert isinstance(result, SitenameOutput)
+            n = _upsert_site_names(result.results, db_path)
+            click.echo(f"sitename resolved {n} new domain(s) via {engine}.")
+        except Exception as exc:
+            click.echo(
+                f"sitename LLM call failed ({exc}); leaving {len(unknown)} "
+                f"domain(s) as bare-domain fallback.", err=True)
+    elif unknown:
         batch_paths = _write_sitename_batches(session_id, unknown)
         click.echo(
             f"Prepared {len(batch_paths)} sitename batch(es) "
