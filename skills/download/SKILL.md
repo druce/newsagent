@@ -110,7 +110,7 @@ For each printed batch path, dispatch an Agent
 
 Then apply:
 
-    python -m lib.steps.download --session SID \
+    .venv/bin/python -m lib.steps.download --session SID \
       --apply-sitenames runs/<SID>/sitename-results
 
 Apply upserts names into `sites`, refreshes `site_name` on every headline,
@@ -119,6 +119,8 @@ for ids` / `schema mismatch`, re-dispatch only the failing batch(es) and
 re-run apply (partial results still apply; retries are additive).
 
 ## Classic mode (cron / CI only)
+
+Not run by the interactive pipeline driver (so bare `python` is fine here):
 
     python -m lib.steps.download --session SID --engine google:gemini-3.1-flash-lite
 
