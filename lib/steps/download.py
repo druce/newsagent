@@ -33,7 +33,7 @@ from lib.fetch.brightdata import scrape_urls_brightdata
 from lib.fetch.canonical import extract_canonical_url
 from lib.fetch.extract import extract_article_text
 from lib.fetch.playwright_runner import fetch_urls_html_batch
-from lib.llm import call_prompt
+from lib.llm import call_prompt, get_prompt
 from lib.prompts.sitename import SitenameOutput
 from lib.sources import (
     _bare_domain,
@@ -54,6 +54,9 @@ _HTTP_UA = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 _MIN_TEXT_CHARS = 400
+_SITENAME_BATCHES_SUBDIR = "sitename-batches"
+_SITENAME_RESULTS_SUBDIR = "sitename-results"
+_SITENAME_BATCH_SIZE = 25
 
 
 def _name_stem(final_url: str) -> str:
@@ -142,31 +145,37 @@ def _commit_results(
         conn.commit()
 
 
-def _llm_resolve_unknown_domains(unknown: set[str], db_path: str) -> int:
-    """Call the sitename prompt for `unknown` domains, upsert results into
-    the sites table, clear the per-process cache. Returns the number of
-    domains successfully resolved. On LLM error: logs and returns 0 (so the
-    download step doesn't fail on transient API issues).
-    """
-    if not unknown:
-        return 0
-    items = [
-        {"id": str(i), "domain": d}
-        for i, d in enumerate(sorted(unknown))
-    ]
-    try:
-        result = call_prompt("sitename", {"items": items})
-    except Exception as exc:
-        click.echo(
-            f"sitename LLM call failed ({exc}); leaving {len(unknown)} "
-            f"domains as bare-domain fallback.",
-            err=True,
-        )
-        return 0
-    assert isinstance(result, SitenameOutput)
+def _unknown_domains(state: NewsletterAgentState, db_path: str) -> list[str]:
+    """Sorted bare domains referenced by headlines but missing a sites.name.
 
+    Subdomain stripping counts as known: if 'finance.yahoo.com' resolves via
+    'yahoo.com', it is not unknown.
+    """
+    candidate_domains: set[str] = set()
+    for h in state.headline_data:
+        url = h.get("final_url") or h.get("url")
+        d = _bare_domain(url)
+        if d:
+            candidate_domains.add(d)
     with sqlite3.connect(db_path) as conn:
-        for rec in result.results:
+        known = {
+            row[0]
+            for row in conn.execute(
+                "SELECT domain FROM sites WHERE name IS NOT NULL AND name != ''"
+            )
+        }
+    return sorted(
+        d for d in candidate_domains
+        if not any(c in known for c in _candidate_domains(d))
+    )
+
+
+def _upsert_site_names(records, db_path: str) -> int:
+    """Upsert (domain, site_name) records into sites; clear the per-process
+    cache so pretty_source sees the new names. Returns rows upserted."""
+    n = 0
+    with sqlite3.connect(db_path) as conn:
+        for rec in records:
             domain = rec.domain.lower()
             site_name = rec.site_name.strip()
             if not site_name:
@@ -177,59 +186,53 @@ def _llm_resolve_unknown_domains(unknown: set[str], db_path: str) -> int:
                 "WHERE sites.name IS NULL OR sites.name = ''",
                 (domain, site_name),
             )
+            n += 1
         conn.commit()
     reset_db_cache()
-    return len(result.results)
+    return n
 
 
-def _populate_site_names(state: NewsletterAgentState, db_path: str) -> tuple[int, int]:
-    """Set h['site_name'] on every headline. For any headline whose
-    final_url (or fallback gather-time url) domain isn't yet in the sites
-    table, LLM-resolve via the sitename prompt and persist before assignment.
-
-    No aggregator allowlist: the publisher domain wins regardless of
-    gather-time source label. Download failures fall back to the original
-    gather-time url's domain; pretty_source decides between sites.name,
-    the gather-time source label, the bare domain, or "Unknown".
-
-    Returns (n_llm_resolved, n_headlines_with_site_name).
-    """
-    # Collect every bare domain we'll need to resolve.
-    candidate_domains: set[str] = set()
-    for h in state.headline_data:
-        url = h.get("final_url") or h.get("url")
-        d = _bare_domain(url)
-        if d:
-            candidate_domains.add(d)
-
-    # Filter to domains genuinely missing from sites table (subdomain
-    # stripping: 'finance.yahoo.com' -> 'yahoo.com' that DO resolve count
-    # as known).
-    with sqlite3.connect(db_path) as conn:
-        known = {
-            row[0]
-            for row in conn.execute(
-                "SELECT domain FROM sites "
-                "WHERE name IS NOT NULL AND name != ''"
-            )
-        }
-    unknown: set[str] = set()
-    for d in candidate_domains:
-        if any(c in known for c in _candidate_domains(d)):
-            continue
-        unknown.add(d)
-
-    n_resolved = _llm_resolve_unknown_domains(unknown, db_path)
-
-    # Set h['site_name'] for every headline. pretty_source handles the
-    # full fallback chain (DB → fallback_source → bare domain → "Unknown").
-    n_set = 0
+def _assign_site_names(state: NewsletterAgentState, db_path: str) -> int:
+    """Set h['site_name'] on every headline via pretty_source's fallback
+    chain (sites.name → gather-time source label → bare domain → 'Unknown')."""
+    n = 0
     for h in state.headline_data:
         url = h.get("final_url") or h.get("url")
         h["site_name"] = pretty_source(url, h.get("source"), db_path=db_path)
-        n_set += 1
+        n += 1
+    return n
 
-    return n_resolved, n_set
+
+def _write_sitename_batches(session_id: str, domains: list[str]) -> list[Path]:
+    """Write self-contained sitename batch prompt files (filter pattern).
+    ids are stringified positions in the sorted `domains` list."""
+    from lib.prompts.sitename import SitenameInput, SitenameOutput
+
+    cfg = get_prompt("sitename")
+    batches_dir = Path("runs") / session_id / _SITENAME_BATCHES_SUBDIR
+    if batches_dir.exists():
+        for p in batches_dir.glob("batch-*.json"):
+            p.unlink()
+    batches_dir.mkdir(parents=True, exist_ok=True)
+
+    paths: list[Path] = []
+    for batch_idx, start in enumerate(range(0, len(domains), _SITENAME_BATCH_SIZE)):
+        chunk = domains[start:start + _SITENAME_BATCH_SIZE]
+        items = [{"id": str(start + j), "domain": d} for j, d in enumerate(chunk)]
+        validated = SitenameInput.model_validate({"items": items})
+        payload = {
+            "batch_id": batch_idx,
+            "session_id": session_id,
+            "ids": [it["id"] for it in items],
+            "items": items,
+            "system_prompt": cfg.system_prompt,
+            "user_prompt": cfg.user_prompt.format(**validated.model_dump()),
+            "output_schema": SitenameOutput.model_json_schema(),
+        }
+        path = batches_dir / f"batch-{batch_idx:03d}.json"
+        path.write_text(json.dumps(payload, indent=2))
+        paths.append(path.resolve())
+    return paths
 
 
 @click.command()
@@ -429,11 +432,26 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int) -> N
         for d in sorted(pw_fallback_domains):
             click.echo(f"  - {d}")
 
-    # Resolve and store h['site_name'] on every headline. LLM-fill any
-    # domains we don't recognize.
-    n_llm_resolved, _ = _populate_site_names(state, db_path)
-    if n_llm_resolved:
-        click.echo(f"sitename LLM resolved {n_llm_resolved} new domains.")
+    # Resolve h['site_name']. Unknown domains become sitename batch files for
+    # Haiku subagent dispatch by the parent session (no in-process LLM call);
+    # until --apply-sitenames runs, pretty_source falls back to source label /
+    # bare domain.
+    unknown = _unknown_domains(state, db_path)
+    if unknown:
+        batch_paths = _write_sitename_batches(session_id, unknown)
+        click.echo(
+            f"Prepared {len(batch_paths)} sitename batch(es) "
+            f"({len(unknown)} unknown domains)."
+        )
+        for p in batch_paths:
+            click.echo(f"  {p}")
+        click.echo("Dispatch one Haiku subagent per batch. Write each result to:")
+        click.echo(f"  runs/{session_id}/{_SITENAME_RESULTS_SUBDIR}/batch-NNN.json")
+        click.echo(
+            f"Then run: python -m lib.steps.download --session {session_id} "
+            f"--apply-sitenames runs/{session_id}/{_SITENAME_RESULTS_SUBDIR}"
+        )
+    _assign_site_names(state, db_path)
 
     # Always surface which URLs failed to download (after all fallbacks),
     # so the operator sees them on the console without grepping download.json.
