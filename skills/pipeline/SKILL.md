@@ -32,7 +32,7 @@ coverage → rate → cluster → select → draft → rewrite → send
 | start | Python CLI | — | — |
 | gather | Python CLI | — | — |
 | filter | prepare/dispatch/apply | haiku | 25 headlines per batch |
-| download | Python CLI | — | — |
+| download | Python CLI + sitename tail (prepare/dispatch/apply) | haiku (sitename batches; often 0 batches) | 25 domains per batch |
 | dedupe | Python CLI | — | — |
 | summarize | prepare/dispatch/apply | sonnet | 10 articles per batch |
 | crossdedupe | prepare/dispatch/apply | haiku | 25 pairs per batch (often 0 batches — no candidates) |
@@ -95,6 +95,15 @@ For each step in the plan:
    Abort the orchestrator on non-zero exit. For long steps (`download`),
    launch with `run_in_background: true` and wait for the completion
    notification rather than polling.
+
+   When `download` finishes, check its output for `Prepared N sitename
+   batch(es)`. If present, dispatch one Haiku Agent per printed batch path
+   (prompt skeleton in `skills/download/SKILL.md`), wait, then run:
+   ```bash
+   .venv/bin/python -m lib.steps.download --session SID --apply-sitenames runs/SID/sitename-results
+   ```
+   Zero batches printed (all domains already known) is the common case —
+   proceed straight to `dedupe`.
 
 2. **LLM-using fan-out steps** (filter, summarize, crossdedupe, coverage, cluster, draft):
    ```bash

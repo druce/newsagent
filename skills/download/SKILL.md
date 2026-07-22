@@ -71,6 +71,60 @@ For every headline in `state.headline_data`:
    per-URL failure list (failures from the BD fallback are labeled
    `phase=bright_data_fallback`).
 
+## Site names — Haiku batch dispatch
+
+The main run makes NO LLM calls. If any headline's domain is missing from
+`sites.name`, download finishes with:
+
+    Prepared N sitename batch(es) (M unknown domains).
+      runs/<SID>/sitename-batches/batch-000.json
+      ...
+
+Zero unknown domains (the common case on mature databases) prints nothing —
+skip dispatch entirely.
+
+For each printed batch path, dispatch an Agent
+(`subagent_type: "general-purpose"`, `model: "haiku"`,
+`description: "Resolve site names batch NNN"`):
+
+    Read runs/<SID>/sitename-batches/batch-NNN.json. It contains:
+      - system_prompt: site-name analyst guidance
+      - user_prompt: pre-rendered task with the domain list inline
+      - ids: list of ids you MUST resolve
+      - output_schema: required JSON shape (SitenameOutput)
+
+    Follow system_prompt + user_prompt. Return ONLY a JSON object matching
+    output_schema, with exactly one results entry per id (echo each id and
+    domain, no extras, no dupes).
+    Write that JSON object to:
+      runs/<SID>/sitename-results/batch-NNN.json
+    using the Write tool.
+
+    Then validate by running:
+      .venv/bin/python tools/check_batch.py runs/<SID>/sitename-results/batch-NNN.json
+    If it prints "FAIL", fix the issues and re-Write. If it prints "OK",
+    report the path you wrote.
+
+    Use ONLY these tools: Read, Write, and the Bash invocation of
+    `.venv/bin/python tools/check_batch.py`.
+
+Then apply:
+
+    python -m lib.steps.download --session SID \
+      --apply-sitenames runs/<SID>/sitename-results
+
+Apply upserts names into `sites`, refreshes `site_name` on every headline,
+re-checkpoints, and writes `runs/<SID>/sitename.json`. On `missing sitenames
+for ids` / `schema mismatch`, re-dispatch only the failing batch(es) and
+re-run apply (partial results still apply; retries are additive).
+
+## Classic mode (cron / CI only)
+
+    python -m lib.steps.download --session SID --engine google:gemini-3.1-flash-lite
+
+Resolves unknown domains in-process instead of writing batches. Never use
+`--engine subagent` and never an `openrouter:*` engine here.
+
 ## Errors
 
 Per-URL failures are recorded but do not abort the step. Inspect
