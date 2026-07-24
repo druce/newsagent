@@ -4,10 +4,11 @@ Ported from ~/projects/OpenAIAgentsSDK/prompts.py:106 (SITENAME) — the
 legacy used a list-input / list-output schema so a single call can resolve
 many domains at once.
 
-Default engine: openrouter Sonnet 4.6. Trivial task but the user picked
-Sonnet for the quality on edge cases (e.g. acronyms, less-known startups).
-Routing via OpenRouter avoids `claude -p` (not covered under the Max plan)
-and uses a paid OpenRouter API key.
+Interactive pipeline runs never call this in-process — the download step
+renders it into runs/<SID>/sitename-batches/ for parallel Haiku subagent
+dispatch (filter pattern). The default engine below only applies to the
+classic path (download --engine ...) used by cron/CI; it must never be
+openrouter or subagent.
 """
 from __future__ import annotations
 
@@ -75,7 +76,7 @@ SITENAME = PromptConfig(
     user_prompt=_USER,
     input_schema=SitenameInput,
     output_schema=SitenameOutput,
-    default_engine="openrouter:anthropic/claude-sonnet-4.6",
+    default_engine="google:gemini-3.1-flash-lite",
     reasoning_effort=4,
 )
 

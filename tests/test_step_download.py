@@ -5,7 +5,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from lib.db import init_db, Site
-from lib.state import NewsletterAgentState
+from lib.state import NewsletterAgentState, StepStatus
 from lib.steps.download import cli as download_cli
 
 
@@ -450,53 +450,173 @@ def test_site_name_resolves_via_domain_regardless_of_source_label(tmp_path, tmp_
     assert h.get("site_name") == "The New York Times", h
 
 
-def test_unknown_domain_triggers_sitename_llm_for_any_source(tmp_path, tmp_db, monkeypatch):
-    """The LLM-sitename resolution path used to fire only for aggregator
-    sources. It must now fire for any source whose final_url domain isn't
-    in sites."""
-    from lib.prompts.sitename import SitenameOutput, SitenameRecord
-
+def test_download_writes_sitename_batches_instead_of_llm_call(tmp_path, tmp_db, monkeypatch):
+    """Default run must NOT call any LLM; unknown domains become batch files."""
     monkeypatch.chdir(tmp_path)
-    init_db(tmp_db)
-
-    state = NewsletterAgentState(session_id="d1", db_path=tmp_db)
-    state.complete_step("start")
-    state.complete_step("gather")
-    state.headline_data = [
-        # Direct (non-aggregator) source, unknown publisher domain.
-        {"source": "Some Direct Feed", "title": "T", "url": "https://brand-new-site.example/post"},
-    ]
-    state.save_checkpoint("gather")
-    with sqlite3.connect(tmp_db) as conn:
-        conn.execute(
-            "INSERT INTO urls(initial_url, final_url, title, source) VALUES(?, ?, ?, ?)",
-            ("https://brand-new-site.example/post",
-             "https://brand-new-site.example/post",
-             "T", "Some Direct Feed"),
-        )
-        conn.commit()
+    _setup(tmp_db)
 
     def fake_http(url):
-        return _body("x"), "<html><body>" + ("text " * 200) + "</body></html>", \
-            "https://brand-new-site.example/post", None
+        return _body("X"), "<html>RAW</html>", url, None
 
-    fake_result = SitenameOutput(results=[
-        SitenameRecord(id="0", domain="brand-new-site.example", site_name="Brand New Site"),
+    def boom(*args, **kwargs):
+        raise AssertionError("call_prompt must not run in default download mode")
+
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http):
+        with patch("lib.steps.download.fetch_urls_html_batch"):
+            with patch("lib.steps.download.call_prompt", side_effect=boom):
+                runner = CliRunner()
+                result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
+    assert result.exit_code == 0, result.output
+
+    batch_path = tmp_path / "runs" / "d1" / "sitename-batches" / "batch-000.json"
+    assert batch_path.exists()
+    assert str(batch_path) in result.output          # prepare prints every path
+    payload = json.loads(batch_path.read_text())
+    assert payload["ids"] == ["0"]
+    assert payload["items"] == [{"id": "0", "domain": "example.com"}]
+    assert "system_prompt" in payload and "site name" in payload["system_prompt"].lower()
+    assert "example.com" in payload["user_prompt"]
+    assert payload["output_schema"]["title"] == "SitenameOutput"
+    # step still completes; headlines got the fallback name for now
+    state = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
+    assert state.get_step("download").status == StepStatus.COMPLETE
+    assert all(h.get("site_name") for h in state.headline_data)
+
+
+def test_download_writes_no_sitename_batches_when_domains_known(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _setup(tmp_db)
+    with sqlite3.connect(tmp_db) as conn:
+        Site(domain="example.com", name="Example News").upsert(conn)
+
+    def fake_http(url):
+        return _body("X"), "<html>RAW</html>", url, None
+
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http):
+        with patch("lib.steps.download.fetch_urls_html_batch"):
+            runner = CliRunner()
+            result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / "runs" / "d1" / "sitename-batches").exists()
+    state = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
+    assert all(h["site_name"] == "Example News" for h in state.headline_data)
+
+
+def _write_sitename_fixture(tmp_path, session_id="d1"):
+    """A prepared batch (as Task 1 writes it) + a matching Haiku result file."""
+    batches = tmp_path / "runs" / session_id / "sitename-batches"
+    results = tmp_path / "runs" / session_id / "sitename-results"
+    batches.mkdir(parents=True)
+    results.mkdir(parents=True)
+    (batches / "batch-000.json").write_text(json.dumps({
+        "batch_id": 0,
+        "session_id": session_id,
+        "ids": ["0"],
+        "items": [{"id": "0", "domain": "example.com"}],
+        "system_prompt": "s",
+        "user_prompt": "u",
+        "output_schema": {},
+    }))
+    (results / "batch-000.json").write_text(json.dumps({
+        "results": [{"id": "0", "domain": "example.com", "site_name": "Example News"}],
+    }))
+    return results
+
+
+def test_apply_sitenames_upserts_and_reassigns(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = _setup(tmp_db)
+    for h in state.headline_data:
+        h["site_name"] = "example.com"          # stale bare-domain fallback
+    state.complete_step("download")
+    state.save_checkpoint("download")
+    results = _write_sitename_fixture(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(download_cli, [
+        "--db", tmp_db, "--session", "d1", "--apply-sitenames", str(results),
     ])
-
-    with patch("lib.steps.download._http_fetch", side_effect=fake_http), \
-         patch("lib.steps.download.fetch_urls_html_batch"), \
-         patch("lib.steps.download.call_prompt", return_value=fake_result) as call:
-        runner = CliRunner()
-        result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
-        assert result.exit_code == 0, result.output
-        # The LLM was actually consulted.
-        assert call.called
-        domains_sent = {item["domain"] for item in call.call_args.args[1]["items"]}
-        assert "brand-new-site.example" in domains_sent
+    assert result.exit_code == 0, result.output
 
     with sqlite3.connect(tmp_db) as conn:
         row = conn.execute(
-            "SELECT name FROM sites WHERE domain=?", ("brand-new-site.example",),
-        ).fetchone()
-    assert row is not None and row[0] == "Brand New Site"
+            "SELECT name FROM sites WHERE domain='example.com'").fetchone()
+    assert row == ("Example News",)
+    state = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
+    assert all(h["site_name"] == "Example News" for h in state.headline_data)
+    report = json.loads((tmp_path / "runs" / "d1" / "sitename.json").read_text())
+    assert report["resolved"] == 1
+
+
+def test_apply_sitenames_reports_missing_ids(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = _setup(tmp_db)
+    state.complete_step("download")
+    state.save_checkpoint("download")
+    results = _write_sitename_fixture(tmp_path)
+    # batch expects ids {"0","1"} but the result only covers "0"
+    batches = tmp_path / "runs" / "d1" / "sitename-batches"
+    payload = json.loads((batches / "batch-000.json").read_text())
+    payload["ids"] = ["0", "1"]
+    payload["items"].append({"id": "1", "domain": "other.com"})
+    (batches / "batch-000.json").write_text(json.dumps(payload))
+
+    runner = CliRunner()
+    result = runner.invoke(download_cli, [
+        "--db", tmp_db, "--session", "d1", "--apply-sitenames", str(results),
+    ])
+    assert result.exit_code == 0, result.output   # partial results still apply
+    assert "missing" in result.output
+    with sqlite3.connect(tmp_db) as conn:
+        assert conn.execute(
+            "SELECT name FROM sites WHERE domain='example.com'").fetchone()
+
+
+def test_apply_sitenames_without_batches_is_noop(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = _setup(tmp_db)
+    state.complete_step("download")
+    state.save_checkpoint("download")
+    runner = CliRunner()
+    result = runner.invoke(download_cli, [
+        "--db", tmp_db, "--session", "d1",
+        "--apply-sitenames", str(tmp_path / "runs" / "d1" / "sitename-results"),
+    ])
+    assert result.exit_code == 0, result.output
+    assert "nothing to apply" in result.output.lower()
+
+
+def test_download_engine_flag_resolves_sitenames_in_process(tmp_path, tmp_db, monkeypatch):
+    """--engine keeps the classic path for cron: no batch files, direct upsert."""
+    from lib.prompts.sitename import SitenameOutput, SitenameRecord
+
+    monkeypatch.chdir(tmp_path)
+    _setup(tmp_db)
+
+    def fake_http(url):
+        return _body("X"), "<html>RAW</html>", url, None
+
+    fake_out = SitenameOutput(results=[
+        SitenameRecord(id="0", domain="example.com", site_name="Example News"),
+    ])
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http):
+        with patch("lib.steps.download.fetch_urls_html_batch"):
+            with patch("lib.steps.download.call_prompt", return_value=fake_out) as cp:
+                runner = CliRunner()
+                result = runner.invoke(download_cli, [
+                    "--db", tmp_db, "--session", "d1",
+                    "--engine", "google:gemini-3.1-flash-lite",
+                ])
+    assert result.exit_code == 0, result.output
+    cp.assert_called_once()
+    assert cp.call_args.kwargs.get("engine") == "google:gemini-3.1-flash-lite"
+    assert not (tmp_path / "runs" / "d1" / "sitename-batches").exists()
+    with sqlite3.connect(tmp_db) as conn:
+        assert conn.execute(
+            "SELECT name FROM sites WHERE domain='example.com'"
+        ).fetchone() == ("Example News",)
+
+
+def test_sitename_prompt_does_not_default_to_openrouter():
+    from lib.prompts.sitename import SITENAME
+    assert not SITENAME.default_engine.startswith("openrouter:")

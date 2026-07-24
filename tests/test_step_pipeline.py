@@ -13,9 +13,9 @@ from lib.state import NewsletterAgentState, WORKFLOW_STEPS
 
 _ALL_STEP_IDS = [step_id for step_id, *_ in WORKFLOW_STEPS]
 # Steps that accept --engine
-_ENGINE_STEPS = {"filter", "summarize", "crossdedupe", "coverage", "rate", "cluster", "select", "draft", "rewrite"}
+_ENGINE_STEPS = {"filter", "download", "summarize", "crossdedupe", "coverage", "rate", "cluster", "select", "draft", "rewrite"}
 # Steps that do NOT accept --engine
-_NO_ENGINE_STEPS = {"start", "gather", "download", "send"}
+_NO_ENGINE_STEPS = {"start", "gather", "send"}
 
 
 # ---------------------------------------------------------------------------

@@ -62,7 +62,7 @@ _STEP_CLIS: dict = {
 _STEP_IDS: list[str] = [step_id for step_id, *_ in WORKFLOW_STEPS]
 
 # Steps that accept --engine
-_ENGINE_STEPS = frozenset({"filter", "summarize", "crossdedupe", "coverage", "rate", "cluster", "select", "draft", "rewrite"})
+_ENGINE_STEPS = frozenset({"filter", "download", "summarize", "crossdedupe", "coverage", "rate", "cluster", "select", "draft", "rewrite"})
 
 
 # ---------------------------------------------------------------------------
