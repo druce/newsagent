@@ -63,9 +63,19 @@ paste event**, one image at a time:
    `e.clipboardData.items` → the image `File` (Chrome usually hands over `image/png` even
    for a JPEG on the pasteboard — fine, beehiiv re-encodes; keep the `.jpg` filename).
 3. Trigger the paste with the **Chrome extension computer tool `key cmd+v`** — it targets
-   the tab via CDP, so it works even if the OS window isn't frontmost, and needs no
-   clipboard-read permission. (AppleScript `System Events` keystrokes need macOS
-   Accessibility permission and silently no-op without it.)
+   the tab via CDP and needs no clipboard-read permission, **but the tab must be VISIBLE**
+   (`document.visibilityState === 'visible'`): a hidden tab (background tab, minimized or
+   fully occluded window) gets NO key events at all, so the paste silently no-ops (verified
+   2026-07-20 — clicks and JS still work, only key events drop). If hidden, foreground
+   Chrome with `open -a "Google Chrome"` (no Apple-events permission needed, unlike
+   `osascript` Chrome control) and make the session tab active. If that doesn't flip
+   visibility (2026-07-21: the MCP group was a background tab group in a window whose
+   active tab was another site; `tabs_create_mcp` does NOT activate its new tab), use
+   AppleScript **System Events** — allowed even when Apple events to Chrome are denied,
+   and Accessibility is granted on this machine: `set frontmost to true` on the Chrome
+   process, then `keystroke "9" using command down` (Cmd+9 = last tab in the window; new
+   MCP-group tabs sit at the end). System Events can also read/repair window geometry
+   (`AXPosition`/`AXSize`/`AXMinimized`, `AXRaise`).
 4. The listener POSTs the blob to the upload endpoint and stashes `{url}`. Because it
    `preventDefault`s, focus stays in the catcher — no re-click between images. Keep an
    ordered basename list + an index so each paste is named correctly; checkpoint the index
@@ -159,6 +169,18 @@ Divider: `{ "type":"horizontalRule" }`. Root: `{ "type":"doc", "content":[…] }
   private-network protection).
 - **`navigator.clipboard.readText()/read()`** → rejects / permission-gated. Use a native
   **paste event** (computer tool `key cmd+v`) instead.
+- **Pasting into a hidden tab** → `key cmd+v` delivers NO key events to a tab with
+  `document.visibilityState === 'hidden'` (background tab / minimized / occluded window);
+  the catcher stays "waiting for paste" while clicks and JS injection keep working. Check
+  visibility first; `open -a "Google Chrome"` + re-activating the session tab fixes it —
+  and when it doesn't, System Events `keystroke "9" using command down` (Cmd+9 → last tab)
+  does; see the escalation in step 3 above / SKILL.md gotcha 3.
+- **`file_upload` tool as a paste substitute** → rejects host filesystem paths
+  ("the MCP controller must read the file and pass its contents"); cannot deliver the
+  image JSON map.
+- **TipTap autolink on insert** → bare domains in plain text (e.g. "ludic.mataroa.blog")
+  gain a link mark during `setContent`/`insertContentAt`, inflating the `links` count by
+  one per bare domain. Diff hrefs vs the stashed doc and `tr.removeMark` the extras.
 - **`PATCH tiptap_state` / `draft_tiptap_state`** → 200 but ignored. Body only via the live editor.
 - **`data:` (base64) image `src` in the body** → rejected by the editor. Upload to `/assets` first.
 - **Hooking `window.fetch`** to discover endpoints → the SPA captured `fetch` at load. Use
