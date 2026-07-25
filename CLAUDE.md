@@ -7,7 +7,7 @@ A daily AI newsletter agent, built from scratch as a `newsagent:*` Claude Code s
 The legacy implementation at `~/projects/OpenAIAgentsSDK/` is read-only reference — used during porting for prompt text, scraping logic, and Bradley-Terry math. Do not import from it.
 
 **Design spec:** [CLAUDE_REFACTOR.md](CLAUDE_REFACTOR.md) — the original architectural plan (mostly historical now).
-**Per-phase plans:** [docs/superpowers/plans/](docs/superpowers/plans/) — one detailed implementation plan per phase, with full code and tests.
+**Per-phase plans:** `docs/superpowers/plans/` — one detailed implementation plan per phase, with full code and tests. Kept locally only; not tracked in the repo.
 **Top-level overview:** [README.md](README.md) — end-user docs.
 
 ## Hard constraints (locked in via memory)

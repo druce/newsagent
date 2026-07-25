@@ -6,7 +6,7 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 
 **Status:** all build phases complete (`phase-0-complete` … `phase-8-complete`). 266 tests, ~89% coverage.
 
-**Design doc:** [CLAUDE_REFACTOR.md](CLAUDE_REFACTOR.md) · **Phase plans:** [docs/superpowers/plans/](docs/superpowers/plans/) · **Conventions:** [CLAUDE.md](CLAUDE.md)
+**Design doc:** [CLAUDE_REFACTOR.md](CLAUDE_REFACTOR.md) · **Conventions:** [CLAUDE.md](CLAUDE.md)
 
 ---
 
@@ -413,7 +413,6 @@ newsagent/
 ├── skills/                   # SKILL.md per slash command (21 skills)
 ├── agents/                   # persona reference docs
 ├── tests/                    # 266 tests, ~89% coverage
-├── docs/superpowers/plans/   # one phase plan per build phase
 ├── sources.yaml              # source feeds
 ├── umap_reducer.pkl          # 400 MB pretrained UMAP (gitignored)
 └── newsletter_agent.db       # SQLite source of truth
