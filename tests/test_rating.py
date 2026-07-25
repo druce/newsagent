@@ -7,7 +7,7 @@ from typing import List as _List
 
 import pytest
 
-from lib.engines.base import EngineError
+from lib.engines.base import EngineBlockedError, EngineError
 from lib.rating import (
     _call_battle_with_retry,
     bradley_terry_from_battles,
@@ -147,6 +147,47 @@ def test_battle_retry_does_not_retry_on_4xx(monkeypatch):
         _call_battle_with_retry({"items": [1]})
     assert attempts["n"] == 1
     assert sleeps == []
+
+
+def test_battle_retry_returns_none_on_blocked_prompt(monkeypatch):
+    """A content-filtered battle is unwinnable on retry — return None so the
+    caller can drop that one battle instead of failing the whole rate step."""
+    attempts = {"n": 0}
+
+    def fake_call_prompt(name, item):
+        attempts["n"] += 1
+        raise EngineBlockedError("Google prompt blocked (block_reason=OTHER)")
+
+    sleeps = []
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: sleeps.append(s))
+
+    assert _call_battle_with_retry({"items": [1]}) is None
+    assert attempts["n"] == 1  # no retry — the block is deterministic
+    assert sleeps == []
+
+
+def test_bradley_terry_scores_survives_blocked_battles(monkeypatch):
+    """One item whose content trips the provider's prompt filter must not kill
+    the whole run: its battles are skipped, every other item still gets scored."""
+    n = 12
+    items = [{"id": f"id{i}", "title": f"t{i}", "summary": f"s{i}"} for i in range(n)]
+
+    def fake_call_prompt(name, item):
+        if any(x["id"] == "id7" for x in item["items"]):
+            raise EngineBlockedError("Google prompt blocked (block_reason=OTHER)")
+        ordered = sorted(item["items"], key=lambda x: int(x["id"][2:]))
+        return _FakeRanking(ranking=[x["id"] for x in ordered])
+
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: None)
+
+    scores = bradley_terry_scores(items)
+
+    assert set(scores) == {f"id{i}" for i in range(n)}
+    assert all(isinstance(v, float) for v in scores.values())
+    # Unblocked items still got a real ordering out of their battles.
+    assert scores["id0"] > scores["id6"]
 
 
 # ---------------------------------------------------------------------------
