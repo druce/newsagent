@@ -48,12 +48,42 @@ def _ext(name):
     return (name.rsplit('.', 1)[-1] if '.' in name else '').lower()
 
 
+def _get(url):
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    return urllib.request.urlopen(req, timeout=30).read()
+
+
 def _fetch_remote(url):
     """Download a remote image; transcode anything that isn't a web-safe raster
-    (e.g. AVIF) to JPEG. Returns (filename, bytes)."""
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    data = urllib.request.urlopen(req, timeout=30).read()
-    base = os.path.basename(urllib.parse.urlparse(url).path) or 'image'
+    (e.g. AVIF) to JPEG. Returns (filename, bytes).
+
+    Proxy/wrapper URLs (e.g. cardyb.bsky.app?url=<double-encoded FT url>) sometimes
+    400 because the wrapped URL is over-encoded. On failure, fully unquote the URL
+    and retry each embedded https URL innermost-first (with and without its query
+    string) before giving up."""
+    try:
+        data = _get(url); fetched = url
+    except Exception:
+        full = fetched = url
+        for _ in range(4):
+            nxt = urllib.parse.unquote(full)
+            if nxt == full:
+                break
+            full = nxt
+        starts = [m.start() for m in re.finditer(r'https?://', full)]
+        data = None
+        for i in reversed(starts[1:]):  # innermost embedded URL first
+            for cand in (full[i:], full[i:].split('?')[0]):
+                try:
+                    data = _get(cand); fetched = cand
+                    break
+                except Exception:
+                    continue
+            if data is not None:
+                break
+        if data is None:
+            raise
+    base = os.path.basename(urllib.parse.urlparse(fetched).path) or 'image'
     if _ext(base) in _RASTER:
         return base, data
     # unknown / AVIF / etc → decode + re-encode JPEG (matches a real paste's pixels)
@@ -84,14 +114,19 @@ for m in re.finditer(r'<img\b[^>]*?\bsrc=([\'"])(.*?)\1', html, re.I | re.S):
 if LIMIT:
     srcs = srcs[:LIMIT]
 
-out, names, n_local, n_remote = {}, [], 0, 0
+out, names, failed, n_local, n_remote = {}, [], [], 0, 0
 for s in srcs:
-    if s.startswith('file:'):
-        fn, raw = _read_local(s); n_local += 1
-    elif s.startswith('http:') or s.startswith('https:'):
-        fn, raw = _fetch_remote(s); n_remote += 1
-    else:
-        continue  # data: or unknown scheme — skip
+    try:
+        if s.startswith('file:'):
+            fn, raw = _read_local(s); n_local += 1
+        elif s.startswith('http:') or s.startswith('https:'):
+            fn, raw = _fetch_remote(s); n_remote += 1
+        else:
+            continue  # data: or unknown scheme — skip
+    except Exception as e:
+        failed.append(s)
+        print(f'WARN: skipping unfetchable image {s[:120]} ({e})', file=sys.stderr)
+        continue
     out[s] = {'n': fn, 'b': base64.b64encode(raw).decode('ascii')}
     names.append(fn)
 
@@ -100,4 +135,4 @@ open(OUT, 'w').write(payload)
 subprocess.run(['pbcopy'], input=payload.encode('utf-8'), check=True)
 
 print(json.dumps({'count': len(out), 'local': n_local, 'remote': n_remote,
-                  'bytes': len(payload), 'names': names}))
+                  'bytes': len(payload), 'failed': failed, 'names': names}))

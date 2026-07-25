@@ -76,11 +76,40 @@ executing.
   `window.getSelection().toString()` in JS before acting. To repair a damaged paragraph,
   triple-click it (real gesture → PM selection) and dispatch a synthetic
   `ClipboardEvent('paste')` with the corrected `<p>…</p>` fragment.
-- After the body write, run an integrity diff before calling it done: pbcopy the digest,
-  paste it into a temporary `<textarea>` catcher on the /edit page, `DOMParser` it in-page,
-  and check every digest `<a>` headline and `<p>` text (the post text plus its `- source`
-  suffix) appears in `.ProseMirror.textContent` (the digest is flat — no `<h2>` sections).
-  This caught both a deleted character and a stray trailing "x" after the footer link.
+- After the body write, run an integrity diff before calling it done — **without the
+  clipboard**: extract the digest's non-image `<p>` texts locally (python HTMLParser,
+  whitespace-normalized), inject that JSON array through `execute_javascript`, and check each
+  string appears in `editor.getText({blockSeparator:'\n'})` (also normalized). ~7–8 KB of
+  text per call is fine. The digest is flat — no `<h2>` sections; each check string is the
+  post text plus its `- source` suffix. This caught a deleted character and a stray trailing
+  "x" after the footer link on earlier runs. (The old route — pbcopy the digest and paste it
+  into a `<textarea>` catcher on /edit — stopped delivering on 2026-07-19/20; prefer the
+  injected-JSON diff, which also has no tab-visibility requirement.)
+- **Every clipboard paste needs a VISIBLE tab** (`document.visibilityState === 'visible'`).
+  A hidden tab (background tab, minimized/occluded window) receives NO key events from the
+  computer tool — `key cmd+v` silently no-ops while JS injection and clicks keep working, so
+  it masquerades as a page/catcher bug (burned ~10 calls on 2026-07-20 before diagnosis).
+  Check `visibilityState` before each paste; if hidden, escalate: (1) `open -a "Google
+  Chrome"` from Bash (works without the Apple-events permission that `osascript` Chrome
+  control needs); (2) `tabs_create_mcp` + close the new tab; (3) **the reliable fix when
+  1–2 fail** (2026-07-21: MCP group was a background tab group in a window whose active tab
+  was another site — `tabs_create_mcp` does NOT activate its new tab): `osascript` to
+  **System Events** (allowed even when Apple events to Chrome are denied) →
+  `tell application "System Events" to tell process "Google Chrome"` →
+  `set frontmost to true` + `keystroke "9" using command down` (Cmd+9 = last tab; new MCP
+  tabs sit at the end). System Events can also read/fix window geometry
+  (`AXPosition`/`AXSize`/`AXMinimized`, `perform action "AXRaise"`). Diagnostic: if
+  `window.innerWidth` matches a different window's size, the tab is a background tab there.
+  Confirm `document.activeElement` is the catcher immediately before `cmd+v`. Dead end:
+  `file_upload` rejects host filesystem paths, so it cannot replace the paste transport.
+- **Stash the draft id in `localStorage['__bh_draft']` right after creation** and navigate
+  to `/edit` via in-page `location.href` using it. Tab groups can vanish mid-run
+  (2026-07-21); `window.__draft` dies with the tab, localStorage survives, and the UUID
+  never has to pass through a (redactable) tool result.
+- **TipTap auto-links bare domains** in plain text during insert (2026-07-19:
+  "ludic.mataroa.blog" in a link-less post gained a link mark → `links` read L+1). Diff
+  editor hrefs against the stashed doc's hrefs, then `tr.removeMark` the extras — leave the
+  text alone.
 
 ## Requirements
 

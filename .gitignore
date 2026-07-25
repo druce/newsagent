@@ -33,3 +33,8 @@ dist/
 \#*\#
 .\#*
 .superpowers/
+feedly_session.json
+
+# Scratch / captured output
+session.txt
+scratch_og_b64.txt

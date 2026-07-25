@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import choix
 
-from lib.engines.base import EngineError
+from lib.engines.base import EngineBlockedError, EngineError
 from lib.llm import call_prompt
 
 # Items per battle batch sent to the LLM judge
@@ -39,11 +40,19 @@ def _is_5xx_error(exc: BaseException) -> bool:
 
 
 def _call_battle_with_retry(item: Dict[str, Any]) -> Any:
-    """Send one battle prompt; retry on 5xx with a fixed pause between attempts."""
+    """Send one battle prompt; retry on 5xx with a fixed pause between attempts.
+
+    Returns None if the provider's content filter refused the prompt. A blocked
+    prompt is deterministic (retrying is pointless), and a single legitimate but
+    filter-tripping story — a defamation or abuse case, say — must not take down
+    the entire rate step. The caller drops that battle and keeps the rest.
+    """
     last_exc: Optional[BaseException] = None
     for attempt in range(_BATTLE_MAX_RETRIES + 1):
         try:
             return call_prompt("battle_prompt", item)
+        except EngineBlockedError:
+            return None
         except EngineError as exc:
             last_exc = exc
             if attempt < _BATTLE_MAX_RETRIES and _is_5xx_error(exc):
@@ -218,6 +227,16 @@ def bradley_terry_scores(
         inputs = [{"items": b} for b in batches]
         with ThreadPoolExecutor(max_workers=_BATTLE_PARALLELISM) as pool:
             results = list(pool.map(_call_battle_with_retry, inputs))
+
+        # Battles the provider's content filter refused come back as None.
+        blocked = sum(1 for r in results if r is None)
+        if blocked:
+            print(
+                f"  [battle] skipped {blocked}/{len(results)} battle(s) "
+                f"blocked by the provider's content filter",
+                file=sys.stderr,
+            )
+            results = [r for r in results if r is not None]
 
         # Extract pairwise outcomes from each ranking
         for result in results:

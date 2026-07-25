@@ -77,7 +77,8 @@ output_schema: {"groups": [{"label": "<short topic label>", "indexes": [<post in
 Cluster posts on the same company/person/tech/topic into the same group, order
 groups most→least important, and include EVERY input index exactly once.
 Write that JSON to runs/bsky-<handle>/reorder-result.json using the Write tool,
-then report the path. Use ONLY Read and Write.
+then report the path. Use ONLY Read and Write. The target file may exist with a
+stale result from a previous day's run — overwrite it.
 ```
 
 ### Stage 3 — apply-reorder (Python)
@@ -111,7 +112,8 @@ user_prompt (with the ordered headlines inline), and output_schema
 object matching output_schema: {"headlines": ["<one punny 1-7 word rewrite per input
 headline, in the same order>"]}.
 Write that JSON to runs/bsky-<handle>/headlines-result.json using the Write tool,
-then report the path. Use ONLY Read and Write.
+then report the path. Use ONLY Read and Write. The target file may exist with a
+stale result from a previous day's run — overwrite it.
 ```
 
 ### Stage 5 — apply-headlines (Python)

@@ -48,15 +48,49 @@ this work:
   already exist from manual template use — don't confuse it with the one you create; match
   on the post `id` returned from the create call.)
 
-## The two execution gotchas
+## The four execution gotchas
 
 1. `execute_javascript` does **not await** — use the two-call stash pattern: kick off
    async work onto a `window.__x` global + return a sentinel string; read
    `JSON.stringify(window.__x)` in a second call.
 2. No top-level `return` — wrap in an IIFE.
+3. **The tab must be VISIBLE for every clipboard paste** (`document.visibilityState ===
+   'visible'`). The computer tool's `key cmd+v` delivers **no key events at all** to a
+   hidden tab (background tab, minimized/occluded window) — the paste silently does
+   nothing; JS injection and *clicks* still work, which makes it look like a page bug
+   (2026-07-20: two "waiting for paste" failures diagnosed this way). Check
+   `document.visibilityState` BEFORE each paste; verify `document.activeElement` is the
+   catcher right before `cmd+v`. If `"hidden"`, escalate in this order (2026-07-21 run:
+   the first two did NOT flip visibility — the MCP group sat as a background tab group in
+   an existing window whose active tab was another site; `tabs_create_mcp` does NOT
+   activate the tab it creates, and closing a group tab activates an arbitrary neighbor):
+   1. `open -a "Google Chrome"` from Bash (activates Chrome; no Apple-events permission
+      needed, unlike `osascript -e 'tell app "Google Chrome"…'` which is usually denied).
+   2. `tabs_create_mcp` + `tabs_close_mcp` of the new tab (sometimes re-activates the
+      session tab).
+   3. **The reliable fix**: `osascript` to **System Events** (allowed even when Apple
+      events to Chrome are denied; Accessibility is granted): `tell application "System
+      Events" to tell process "Google Chrome"` → `set frontmost to true`, then
+      `keystroke "9" using command down`. Cmd+9 selects the window's LAST tab, and
+      freshly created MCP-group tabs sit at the end — this flipped `visible:false` →
+      `true` when 1–2 didn't. System Events can also inspect/repair windows: read
+      `AXPosition`/`AXSize`/`AXMinimized` of `windows`, resize a stunted window, and
+      `perform action "AXRaise"`. Diagnose with `w`/`h` from `window.innerWidth`: if they
+      match a DIFFERENT window's size, your tab is a background tab of that window.
+   Dead end: the `file_upload` tool can't substitute for the paste — it rejects host
+   filesystem paths.
+4. **Stash the draft id in `localStorage['__bh_draft']` right after creating it.** Tab
+   groups can vanish mid-run (observed 2026-07-21: "No tab group exists" after window
+   juggling) and `window.__draft` dies with the tab; `localStorage` is per-origin and
+   survives, so a fresh tab can pick the flow back up without re-creating the draft. This
+   also lets the `/edit` navigation happen in-page (`location.href = '/posts/' + id +
+   '/edit'`) so the UUID never has to round-trip through a (redactable) tool result.
 
 Extra: results that contain the publication UUID or an auth token may be redacted by the
-harness as "Cookie/query string data". Return **counts / booleans**, not full URLs.
+harness as "Cookie/query string data". Return **counts / booleans**, not full URLs. The
+redaction is trigger-happy: even a benign `'ready; visibility=' + …` string return was
+blocked once (2026-07-21) while a `JSON.stringify({...booleans})` of the same state passed
+— always end injections with a small JSON object of counts/booleans.
 
 ## Why this needs the browser + clipboard (not curl, not REST)
 
@@ -119,6 +153,9 @@ bytes.
    are transcoded to JPEG with Pillow, matching what a real paste would hand the editor),
    writes `{src:{n,b}}` to `/tmp/bh_imgs.json`, and `pbcopy`s it. Prints `{count, local,
    remote, bytes, names}` (never the base64). Pass `DIGEST OUT LIMIT` to override (LIMIT = smoke test).
+   The map is keyed by src, so duplicate `<img src>`s collapse: `count` can be LESS than the
+   digest's total `<img>` tag count N (2026-07-21: 60 unique srcs for 64 tags) — that's normal;
+   `buildDoc` still emits one `imageBlock` per tag and its `imgs` must equal N.
 2. **Inject** `scripts/beehiiv_browser.js` then `scripts/batch_image_uploader.js` (the catcher).
 3. **One paste:** click the blue catcher once (computer tool, native focus), then `key cmd+v`
    **once**. The catcher `JSON.parse`s the pasted text and, per entry, decodes b64→`Blob` and
@@ -126,7 +163,9 @@ bytes.
    ext), stashing `{id, src}` into `window.__assets[<src>]` (concurrency-capped, default 6).
 4. **Verify once:** poll `JSON.stringify(window.__batch)` until `done:true`, then confirm
    `ok === total`, `errs:[]`, and every `src` in `window.__assets` has an `https://` `.src`.
-   (If `error:"bad json…"` the paste didn't deliver — re-focus the catcher and re-paste.)
+   (If `error:"bad json…"` the paste delivered partial/empty text — re-focus the catcher and
+   re-paste. If it still says `note:"waiting for paste"`, NO paste event fired at all — the
+   tab is hidden; see gotcha 3.)
 
 ### 3. Build the doc JSON (real beehiiv nodes) and stash it in localStorage
 - Get the **raw** digest HTML into the page. Simplest zero-token route: pbcopy it
@@ -172,6 +211,10 @@ to ~1/s in a background tab and races itself — don't.
   - `L` = `grep -c '<a href' out/latest-bsky.html` (post links + footer link).
   Success = `imgs === N` **and** `hrs === P` **and** `links === L` **and** `emptyParas === 0`
   **and** `lastText` ends with the "Follow … on Bluesky" footer.
+  - If `links === L + k`: TipTap **auto-links bare domains** in plain text on insert (seen
+    2026-07-19: "ludic.mataroa.blog" in a link-less post gained a link mark). Diff editor
+    hrefs against the stashed doc's hrefs to find the extras, then `tr.removeMark` the link
+    mark from those text ranges — don't touch the text itself.
 - **Confirm it PERSISTED** (this is the whole point — persistence = renders in web + email):
   wait ~5s for "Synced", `navigate` to the same `/edit` URL again, re-inject `build_doc.js`,
   and re-run `editorCounts()`. The counts must be unchanged after reload. (If the body comes

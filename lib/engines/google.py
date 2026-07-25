@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types as genai_types
 from pydantic import BaseModel, ValidationError
 
-from lib.engines.base import EngineError
+from lib.engines.base import EngineBlockedError, EngineError
 
 
 # Mirrors legacy _GEMINI_THINKING_MAP in ~/projects/OpenAIAgentsSDK/llm.py:451.
@@ -73,6 +73,18 @@ def google_engine(model_id: str) -> Callable[..., BaseModel]:
             )
         except Exception as exc:
             raise EngineError(f"Google API error: {exc}") from exc
+
+        # Detect a prompt-level content-filter block explicitly. Gemini returns
+        # zero candidates and an empty .text here, which would otherwise surface
+        # as a baffling "Expecting value: line 1 column 1" JSON error. Callers
+        # batching many independent items can catch EngineBlockedError and skip
+        # just that item — retrying the identical prompt never succeeds.
+        block_reason = getattr(resp.prompt_feedback, "block_reason", None)
+        if block_reason:
+            raise EngineBlockedError(
+                f"Google prompt blocked by content filter "
+                f"(block_reason={block_reason})"
+            )
 
         # Detect truncation explicitly — gives a clearer error than the
         # cryptic JSON "unterminated string" the parser produces.
