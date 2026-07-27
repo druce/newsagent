@@ -52,6 +52,7 @@ from dotenv import load_dotenv
 import lib.prompts  # noqa: F401 — register all prompts including rating prompts
 from lib.config import MAX_ARTICLE_AGE_DAYS, RATING_COEFFS
 from lib.db import Site
+from lib.fetch.extract import HTML_PARSE_LOCK
 from lib.llm import call_prompt
 from lib.rating import bradley_terry_scores
 from lib.state import NewsletterAgentState
@@ -126,7 +127,11 @@ def _date_from_trafilatura(html_path: Optional[str]) -> Optional[datetime]:
         return None
     try:
         html = p.read_text(errors="ignore")
-        meta = trafilatura.extract_metadata(html)
+        # Same shared-parser hazard as extract_article_text — this call site is
+        # sequential today, but hold the lock so it stays safe if it is ever
+        # parallelized. See lib/fetch/extract.py:HTML_PARSE_LOCK.
+        with HTML_PARSE_LOCK:
+            meta = trafilatura.extract_metadata(html)
         if meta is None:
             return None
         raw = meta.date  # ISO YYYY-MM-DD per trafilatura/htmldate

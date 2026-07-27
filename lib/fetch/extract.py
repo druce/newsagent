@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -23,6 +24,19 @@ _NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
     re.DOTALL,
 )
+
+# trafilatura parses every document through ONE module-global lxml parser
+# (trafilatura/utils.py: HTML_PARSER). lxml parsers are not safe to share
+# between threads — concurrent parses corrupt the parser's interned-name
+# dictionary and abort the interpreter inside lxml's _fixHtmlDictNames
+# ("pointer being freed was not allocated", SIGABRT). That killed the
+# download step's 8-way Phase 1 mid-run.
+#
+# Serializing the parse costs ~1.5s per ~110 articles — negligible next to
+# the network I/O those threads exist to overlap — and keeps trafilatura's
+# extraction behaviour byte-for-byte identical. Any code that parses HTML
+# through trafilatura must hold this lock.
+HTML_PARSE_LOCK = threading.Lock()
 
 
 def article_body_from_next_data(html: str) -> Optional[str]:
@@ -58,7 +72,8 @@ def extract_article_text(html: str) -> Optional[str]:
     source yields more text, so server-rendered pages keep their trafilatura
     extract while JS-only pages recover their real body.
     """
-    traf = trafilatura.extract(html, include_comments=False, include_tables=False)
+    with HTML_PARSE_LOCK:
+        traf = trafilatura.extract(html, include_comments=False, include_tables=False)
     next_data = article_body_from_next_data(html)
     if next_data and len(next_data) > len(traf or ""):
         return next_data

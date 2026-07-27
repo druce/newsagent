@@ -73,6 +73,7 @@ def test_extract_returns_article_objects():
 
 # --- article body extraction (trafilatura + __NEXT_DATA__ fallback) ---------
 import json as _json
+import time
 
 from lib.fetch.extract import article_body_from_next_data, extract_article_text
 
@@ -125,3 +126,42 @@ def test_extract_article_text_uses_trafilatura_when_richer():
     html = f"<html><body><article>{paras}</article></body></html>"
     text = extract_article_text(html)
     assert text and "substantial paragraph" in text
+
+
+def test_extract_article_text_serializes_trafilatura_calls(monkeypatch):
+    """Concurrent extraction must never enter trafilatura simultaneously.
+
+    trafilatura parses through a single module-global lxml HTMLParser
+    (trafilatura/utils.py: HTML_PARSER). lxml parsers are not safe to share
+    across threads: concurrent use corrupts the parser's interned-name dict
+    and aborts the process inside _fixHtmlDictNames (SIGABRT), which killed
+    the download step's 8-way Phase 1.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from lib.fetch import extract as extract_mod
+
+    inside = 0
+    overlaps = []
+    guard = threading.Lock()
+
+    def fake_extract(html, **kwargs):
+        nonlocal inside
+        with guard:
+            inside += 1
+            if inside > 1:
+                overlaps.append(inside)
+        time.sleep(0.01)  # widen the race window
+        with guard:
+            inside -= 1
+        return "extracted body text"
+
+    monkeypatch.setattr(extract_mod.trafilatura, "extract", fake_extract)
+
+    html = "<html><body><article><p>hello</p></article></body></html>"
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: extract_article_text(html), range(32)))
+
+    assert all(r == "extracted body text" for r in results)
+    assert not overlaps, f"trafilatura.extract ran concurrently: {overlaps}"
