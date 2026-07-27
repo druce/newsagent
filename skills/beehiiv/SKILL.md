@@ -43,10 +43,18 @@ this work:
   Only the images **referenced in the digest** are uploaded, in document order.
 - **Template name** — `"Daily"`.
 - **Title** — `"AI Reading for <Weekday> <Month> <Day>"` for today (e.g.
-  `"AI Reading for Saturday June 13"`). This matches the publication's existing post history;
-  confirm the date with the user only if ambiguous. (An empty `"AI Reading for …"` draft may
-  already exist from manual template use — don't confuse it with the one you create; match
-  on the post `id` returned from the create call.)
+  `"AI Reading for Saturday June 13"`). This matches the publication's existing post history.
+  **Compute the date string first, in Bash — don't hand-write it:**
+  `date +"AI Reading for %A %B %-d"` (`%-d` = no leading zero). Use that exact string for
+  the title, and confirm the date with the user only if ambiguous. (An empty
+  `"AI Reading for …"` draft may already exist from manual template use — don't confuse it
+  with the one you create; match on the post `id` returned from the create call.)
+- **Email subject line** — the SAME computed string. `email_subject_line` is a **separate
+  field** from the title and is cloned from the template, whose copy is the dateless stub
+  `"AI Reading for"`. Patching only `{title, web_title}` leaves the send with subject
+  "AI Reading for" (what happened on 2026-07-25). `setTitle()` now patches all three
+  (`title`, `web_title`, `email_subject_line`) — verify the readback in step 1.
+  (`email_preview_text` is left empty for the user to fill with the day's punny headline.)
 
 ## The four execution gotchas
 
@@ -123,10 +131,12 @@ blocked once (2026-07-21) while a `JSON.stringify({...booleans})` of the same st
 
 ### 1. Create the draft (from the "Daily" template)
 `createDraftFromTemplate('Daily', '<title>')` (from `scripts/beehiiv_browser.js`) →
-`{ id, draft_url, status:'draft' }`. It finds the template by name
+`{ id, title, subject, draft_url, status:'draft' }`. It finds the template by name
 (`GET /post_templates`), `POST /posts` with `{ post_template_id, title }` to clone it
-(the server uses the template's own title, so it then `PATCH`es `{ title, web_title }`),
-and reads back the new post. Record the post `id`. See
+(the server uses the template's own title, so it then `PATCH`es
+`{ title, web_title, email_subject_line }` — all three, or the email ships with the
+template's dateless "AI Reading for" subject), and reads back the new post.
+**Check the readback: `subject === title`.** Record the post `id`. See
 `references/beehiiv-internal-api.md` for the endpoint map and the auth/status-code
 details. (You may reuse an existing empty draft instead, but matching on the returned
 `id` is safest.)
@@ -224,6 +234,9 @@ to ~1/s in a background tab and races itself — don't.
 ### 5. Verify (do NOT publish)
 - Confirm the persisted MODEL counts (step 4) one more time after the reload:
   `imgs === N`, `hrs === P`, `links === L`, `emptyParas === 0`, footer last.
+- **Re-check the subject line** — `GET /posts/<id>` and confirm `email_subject_line`
+  equals the dated title (not the template's bare `"AI Reading for"`). Report it alongside
+  the `draft_url` so the user can see it before sending.
 - Optionally confirm pixels are loading: read the live DOM's `img` elements (imageBlocks DO
   render to `<img>` in the live DOM) and check the first is `complete && naturalWidth>0`.
 - Screenshot the top of the body (leading image + first headline) to eyeball it.

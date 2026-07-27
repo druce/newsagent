@@ -133,7 +133,11 @@ executing.
 - Images dir: `/Users/drucev/projects/newsagent/download/bsky-images`. Filenames are content
   hashes with **mixed extensions** (`.jpg`/`.png`/`.webp`), referenced as absolute `file://`
   srcs — not relative `download/images/ImageN.jpg`.
-- Template: `Daily`. Title: `AI Reading for <Weekday> <Month> <Day>` for today.
+- Template: `Daily`. Title: `AI Reading for <Weekday> <Month> <Day>` for today — compute it
+  with `date +"AI Reading for %A %B %-d"`, don't hand-write the date. Write that same string
+  to **`email_subject_line`** as well as `title`/`web_title`: the subject is a separate field
+  cloned from the template's dateless `"AI Reading for"` stub, and the 2026-07-25 issue mailed
+  with that bare subject because only the title was patched. `setTitle()` covers all three.
 
 ## Status
 

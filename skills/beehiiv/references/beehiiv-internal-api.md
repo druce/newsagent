@@ -59,13 +59,26 @@ Body: `{ "post_template_id": "<templateId>", "title": "<stub>" }`
 → `{ "id": "<newPostId>" }`
 Notes: server clones the template; new `status` is `"draft"`; the server uses the
 template's own title and ignores the `title` field in the body (set it
-afterwards via PATCH).
+afterwards via PATCH). The clone also inherits the template's
+**`email_subject_line`** — for the "Daily" template that is the dateless stub
+`"AI Reading for"` (confirmed 2026-07-25 by `GET /post_templates/<id>`:
+`web_title` and `email_subject_line` both `"AI Reading for"`, `email_preview_text`
+`null`). A fresh clone therefore reads
+`{ web_title: "AI Reading for", email_subject_line: "AI Reading for" }`.
 
-### Update post (e.g. title)
+### Update post (title + email subject line)
 `PATCH /posts/<id>?publication_id=PUB`
-Body: `{ "title": "...", "web_title": "..." }`
+Body: `{ "title": "...", "web_title": "...", "email_subject_line": "..." }`
 → `{ "timestamp": ... }` (200 ack). `web_title` drives the public/web title; the
 posts-list `title` also reflects it.
+
+**`email_subject_line` is a SEPARATE field — patch it too.** It is the subject the
+email actually sends with, and it does NOT follow `title`/`web_title`. Patching only
+the title leaves the template's stub, so the issue mails as "AI Reading for" with no
+date (that is exactly what shipped on 2026-07-25). `email_subject_line` IS whitelisted
+and persists across a `GET` readback (verified 2026-07-25 on a scratch draft:
+`"AI Reading for"` → patched → readback matched). `email_preview_text` also lives here
+(fresh clones have `""`) — this skill leaves it empty for the user's punny headline.
 
 **Body fields are NOT writable via PATCH.** `tiptap_state` / `draft_tiptap_state`
 return `200` but are silently dropped — only whitelisted fields (`title`,
@@ -74,8 +87,9 @@ collaborative (ydoc) sync; see `references/beehiiv-image-and-body.md`.
 
 ### Get post detail
 `GET /posts/<id>?publication_id=PUB`
-→ full post; useful fields: `id`, `title`, `web_title`, `status`,
-`post_theme_id`, `tiptap_state`, `draft_url`, `created_at`.
+→ full post; useful fields: `id`, `title`, `web_title`, `email_subject_line`,
+`email_preview_text`, `status`, `post_theme_id`, `tiptap_state`, `draft_url`,
+`created_at`.
 
 ### List posts
 `GET /posts?page=1&per_page=10&publication_id=PUB&order=desc&sort=newest_first`
