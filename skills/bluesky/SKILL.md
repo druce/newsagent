@@ -27,7 +27,7 @@ Two execution paths, mirroring the main pipeline's interactive/classic split:
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--user HANDLE` | (required) | Bluesky handle to fetch posts from |
+| `--user HANDLE` | (required; use `druce.ai` unless the user names another) | Bluesky handle to fetch posts from. Never guess or infer a handle from the publication name — when unspecified, it is always `druce.ai`. |
 | `--limit N` | 100 | Max posts to fetch via getAuthorFeed |
 | `--no-dedup` | off | Ignore the cross-run dedup marker and render the full feed |
 | `--fetch` | off | Staged stage 1 (Python): fetch + images → `fetch.json` + `reorder-request.json` |
