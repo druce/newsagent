@@ -21,6 +21,13 @@ Every invocation starts fresh:
 - `text_path` and `html_path` are cleared on every headline in state.
 - Every headline is re-fetched. No skip-already-downloaded shortcut.
 
+`config.yaml` `blocked_domains` is enforced twice: headlines whose initial
+URL is blocked are skipped before any fetch, and fetched pages whose
+post-redirect final URL lands on a blocked domain are discarded (no text
+cached; `urls.final_url` is still updated as an audit trail). Blocked
+headlines are removed from session state; details land in
+`runs/<SID>/download.json` under `"blocked"`.
+
 For every headline in `state.headline_data`:
 
 1. **Partition** URLs by domain (3-way, in precedence order):

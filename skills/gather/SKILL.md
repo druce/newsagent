@@ -21,6 +21,9 @@ For each enabled source in `sources.yaml`:
 - `type: rest` → JSON API (NewsAPI-style)
 
 After all sources fetched:
+- URLs whose domain (or parent domain) appears in `config.yaml`
+  `blocked_domains` are dropped before insertion; per-source counts appear
+  in `runs/<SID>/gather.json` under `"blocked"`.
 - Dedups previously seen urls against `urls.initial_url`
 - Inserts new URLs into `urls` table
 - Appends new headlines to `headline_data`
