@@ -1,5 +1,6 @@
 """Tests for lib/steps/bluesky.py — newsagent:bluesky digest pipeline."""
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -103,6 +104,8 @@ def test_bluesky_step_renders_flat_html_with_posts(tmp_path, monkeypatch):
     out_dir = tmp_path / "out"
     html_files = list(out_dir.glob("bsky-*.html"))
     assert len(html_files) == 1
+    # Digest name carries a wall-clock stamp: bsky-YYYY-MM-DD-HHMMSS.html
+    assert re.fullmatch(r"bsky-\d{4}-\d{2}-\d{2}-\d{6}\.html", html_files[0].name)
     html = html_files[0].read_text()
 
     # Flat format: NO section headers, post text present.

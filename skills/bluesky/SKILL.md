@@ -96,7 +96,7 @@ advances the dedup marker. Each post is an optional image paragraph, then either
 `<p><a href='URL'>post text</a>  - <em>source</em></p>` (source = `og:site_name`,
 falling back to the domain) or — for link-less posts — a bare `<p>post text</p>`,
 separated by `<hr />`, ending with a "Follow … on Bluesky" footer. Writes:
-- `out/bsky-YYYY-MM-DD.html` (+ `out/latest-bsky.html` symlink) — the deliverable
+- `out/bsky-YYYY-MM-DD-HHMMSS.html` (+ `out/latest-bsky.html` symlink) — the deliverable
 - `runs/bsky-<handle>/ordered.json` — ordered groups (record + headlines input)
 - `runs/bsky-<handle>/headlines-request.json` — the rendered `bsky_headlines` prompt
 
@@ -144,7 +144,7 @@ rewrites go to `headlines.txt`, not into the HTML.
 
 | Path | Description |
 |---|---|
-| `out/bsky-YYYY-MM-DD.html` | Flat ordered HTML digest (+ `out/latest-bsky.html` symlink) |
+| `out/bsky-YYYY-MM-DD-HHMMSS.html` | Flat ordered HTML digest (+ `out/latest-bsky.html` symlink). Stamp is wall-clock at write time |
 | `download/bsky-images/` | Cached resized post images |
 | `download/bsky-state/<handle>.txt` | Cross-run dedup marker (newest-post URI from last run) |
 | `runs/bsky-<handle>/` | Staged-mode artifacts: `fetch.json`, `reorder-request.json`, `reorder-result.json`, `ordered.json`, `headlines-request.json`, `headlines-result.json`, `headlines.json`, `headlines.txt` |

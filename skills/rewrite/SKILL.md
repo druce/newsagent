@@ -122,7 +122,7 @@ the current draft source path):
 
 Once the loop and title are done, package + apply in one CLI call. It reads the
 final body, the critique feedback files, and the title file directly, builds the
-`RewriteResult`, sets state, renders `out/<date>.html`, and emails (unless
+`RewriteResult`, sets state, renders `out/<stamp>.html`, and emails (unless
 `--no-email`). `<body>` is the final draft source; `<csv-of-critique-paths>` is
 `critiquePaths` in order; `<csv-of-scores>` is `scores` in order:
 
@@ -161,7 +161,7 @@ In-process critic loop + title call. Do not use `--engine subagent`.
 - `rewrite` step marked COMPLETE.
 - **Auto-send:** at the end of both `--apply-results` and classic mode, rewrite
   invokes `lib.steps.send.deliver_newsletter(...)` which renders
-  `out/<date>.html`, inserts a row in `newsletters`, and emails the result via
+  `out/<stamp>.html`, inserts a row in `newsletters`, and emails the result via
   Gmail (defaults to `GMAIL_USER`). Pass `--no-email` to suppress the send,
   `--to ADDR` to override the recipient. The send step (step 12) is idempotent
   and will not re-email when invoked again for the same session.

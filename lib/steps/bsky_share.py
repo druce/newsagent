@@ -72,27 +72,87 @@ def process_one(
     return True
 
 
+_CORS_ORIGIN = "*"
+
+
 class _EnqueueHandler(BaseHTTPRequestHandler):
     db_path = ""  # overridden per-instance via the handler factory
 
+    def _send(
+        self,
+        status: int,
+        body: str = "",
+        content_type: str = "text/html; charset=utf-8",
+    ) -> None:
+        """Send a response with CORS headers on EVERY path, including errors.
+
+        The newsletter pages are opened as `file://` URLs, so Chrome sends
+        `Origin: null` — only a literal `*` matches that. **Never** add
+        `Access-Control-Allow-Credentials: true`: it invalidates `*` and
+        silently reintroduces the unreadable-response bug this fixes.
+
+        `Allow-Private-Network` answers Chrome's Private Network Access check
+        for an opaque origin reaching 127.0.0.1.
+        """
+        payload = body.encode("utf-8")
+        self.send_response(status)
+        if payload:
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Access-Control-Allow-Origin", _CORS_ORIGIN)
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.end_headers()
+        if payload:
+            self.wfile.write(payload)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802 — http.server API
+        """CORS/PNA preflight.
+
+        Without this, http.server answers `501 Unsupported method` and Chrome
+        blocks the enqueue fetch from the file:// page outright.
+        """
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", _CORS_ORIGIN)
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802 — http.server API
         parsed = urlparse(self.path)
-        if parsed.path != "/enqueue":
-            self.send_response(404)
-            self.end_headers()
+
+        if parsed.path == "/health":
+            # For humans (`curl .../health`). The rendered pages deliberately do
+            # NOT use this — see the `u`-less branch below.
+            self._send(200, '{"status":"ok","service":"bsky_share"}',
+                       "application/json")
             return
+
+        if parsed.path != "/enqueue":
+            self._send(404, "<html><body>Not found</body></html>")
+            return
+
         qs = parse_qs(parsed.query)
         url = (qs.get("u") or [""])[0]
         title = (qs.get("t") or [""])[0]
-        inserted = enqueue(self.db_path, url, title or url) if url else False
 
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
+        if not url:
+            # Health probe used by the rendered pages: 200 + CORS, no write.
+            # Chosen over /health because a pre-upgrade daemon answers this too,
+            # so the page's banner can't report a healthy daemon as down.
+            # Do NOT turn this into a 400 (see test_enqueue_without_u_...).
+            self._send(200, "<html><body style='font-family:sans-serif'>"
+                            "bsky_share ready</body></html>")
+            return
+
+        inserted = enqueue(self.db_path, url, title or url)
+        # Server-side visibility: one line per real click. The probe above stays
+        # silent because it fires on every tab focus.
+        click.echo(f'{"Queued" if inserted else "Dup"}: "{title or url}"')
         msg = "Queued ✓" if inserted else "Already queued"
-        self.wfile.write(
-            f"<html><body style='font-family:sans-serif'>{msg}</body></html>".encode()
+        self._send(
+            200, f"<html><body style='font-family:sans-serif'>{msg}</body></html>"
         )
 
     def log_message(self, format, *args) -> None:  # silence default stderr logging
@@ -142,7 +202,9 @@ def cli(interval: int, port: int | None, db_path: str, once: bool) -> None:
     resolved_port = port or int(os.environ.get("BSKY_QUEUE_PORT", "8765"))
     start_server(db_path, resolved_port)
     click.echo(
-        f"Enqueue server on http://localhost:{resolved_port}/enqueue ; "
+        # 127.0.0.1, not localhost: the rendered links use the literal IP so a
+        # `localhost` -> ::1 resolution can't miss this IPv4-only bind.
+        f"Enqueue server on http://127.0.0.1:{resolved_port}/enqueue ; "
         f"posting next item every {interval}s. Ctrl-C to stop."
     )
     try:

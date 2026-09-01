@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import json
 from pathlib import Path
@@ -10,9 +11,16 @@ from lib.state import NewsletterAgentState
 from lib.steps.send import cli as send_cli
 
 
-def _setup(tmp_db, headline_count=2, final_newsletter=""):
+def _only_newsletter() -> Path:
+    """The single stamped newsletter in out/, asserting there is exactly one."""
+    written = list(Path("out").glob(f"{date.today().isoformat()}-*.html"))
+    assert len(written) == 1, f"expected one stamped newsletter, got {written}"
+    return written[0]
+
+
+def _setup(tmp_db, headline_count=2, final_newsletter="", session_id="s1"):
     init_db(tmp_db)
-    state = NewsletterAgentState(session_id="s1", db_path=tmp_db)
+    state = NewsletterAgentState(session_id=session_id, db_path=tmp_db)
     state.complete_step("start")
     state.complete_step("gather")
     state.headline_data = [
@@ -33,11 +41,34 @@ def test_send_writes_html_to_out_dir_with_date(tmp_path, tmp_db, monkeypatch):
     assert result.exit_code == 0, result.output
 
     today = date.today().isoformat()
-    out_file = Path(f"out/{today}.html")
-    assert out_file.exists()
+    written = [p for p in Path("out").glob(f"{today}-*.html")]
+    assert len(written) == 1, f"expected one stamped newsletter, got {written}"
+    out_file = written[0]
+    assert re.fullmatch(rf"{today}-\d{{6}}\.html", out_file.name)
     body = out_file.read_text()
     assert "<html" in body
     assert "Dummy" in body or "newsletter" in body.lower()
+
+
+def test_send_filename_carries_the_session_stamp(tmp_path, tmp_db, monkeypatch):
+    """A standard session id pins the filename to the session's start time."""
+    monkeypatch.chdir(tmp_path)
+    sid = "2026-07-27-18-00-07"
+    _setup(tmp_db, session_id=sid)
+    runner = CliRunner()
+    result = runner.invoke(send_cli, ["--db", tmp_db, "--session", sid, "--no-email"])
+    assert result.exit_code == 0, result.output
+    assert Path("out/2026-07-27-180007.html").exists()
+
+
+def test_send_rerun_overwrites_rather_than_duplicating(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    sid = "2026-07-27-18-00-07"
+    _setup(tmp_db, session_id=sid)
+    runner = CliRunner()
+    for _ in range(2):
+        runner.invoke(send_cli, ["--db", tmp_db, "--session", sid, "--no-email"])
+    assert len(list(Path("out").glob("2026-*.html"))) == 1
 
 
 def test_send_writes_latest_symlink(tmp_path, tmp_db, monkeypatch):
@@ -71,7 +102,7 @@ def test_send_uses_final_newsletter_when_set(tmp_path, tmp_db, monkeypatch):
     runner = CliRunner()
     runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
 
-    body = Path(f"out/{date.today().isoformat()}.html").read_text()
+    body = _only_newsletter().read_text()
     assert "real content" in body
 
 
@@ -157,9 +188,11 @@ def test_render_item_includes_bluesky_share_link():
         "headline": "Anthropic raises a round",
         "sources": [("NYT", "https://nyt.com/a?x=1")],
     })
-    # butterfly glyph + enqueue link to the local daemon, url-encoded
+    # butterfly glyph + enqueue link to the local daemon, url-encoded.
+    # Literal 127.0.0.1, never `localhost` — that resolves to ::1 as well and
+    # the daemon binds IPv4 only.
     assert "\U0001f98b" in html
-    assert f"http://localhost:{_QUEUE_PORT}/enqueue" in html
+    assert f"http://127.0.0.1:{_QUEUE_PORT}/enqueue" in html
     assert "u=https%3A%2F%2Fnyt.com%2Fa%3Fx%3D1" in html
     assert "t=Anthropic%20raises%20a%20round" in html
 
@@ -170,6 +203,28 @@ def test_render_item_omits_share_link_without_source():
     html = _render_item({"headline": "No source story", "sources": []})
     assert "/enqueue" not in html
     assert "\U0001f98b" not in html
+
+
+def test_render_html_embeds_the_share_client_script():
+    """The newsletter shell ships the shared client once, after the rows."""
+    from lib.steps.send import _render_html, _QUEUE_PORT
+
+    html = _render_html("T", "## Section\n- A story — [NYT](https://nyt.com/a)")
+    assert "__bskyQ" in html
+    assert "bsky-daemon-banner" in html
+    assert ".venv/bin/python -m lib.steps.bsky_share" in html
+    assert f'var PORT = "{_QUEUE_PORT}"' in html      # matches the anchor port
+    assert html.index("__bskyQ") < html.index("</body>")
+
+
+def test_render_html_omits_script_when_no_share_links():
+    """No 🦋 anchors => no client, so a stopped daemon can't pin a banner on a
+    page with nothing to queue."""
+    from lib.steps.send import _render_html
+
+    html = _render_html("T", "## Section\n- A story with no source")
+    assert "__bskyQ" not in html
+    assert "bsky-daemon-banner" not in html
 
 
 # ── cross-day dedup store: recording survivors ──────────────────────
@@ -231,8 +286,7 @@ def test_send_recording_failure_is_swallowed(tmp_path, tmp_db, monkeypatch):
         result = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
     # Send still succeeds; recording error is a warning, not a failure.
     assert result.exit_code == 0, result.output
-    out_file = Path(f"out/{date.today().isoformat()}.html")
-    assert out_file.exists()
+    assert _only_newsletter().exists()
     with sqlite3.connect(tmp_db) as conn:
         n = conn.execute("SELECT COUNT(*) FROM published_articles").fetchone()[0]
     assert n == 0

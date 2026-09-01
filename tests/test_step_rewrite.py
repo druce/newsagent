@@ -242,8 +242,11 @@ def test_rewrite_apply_writes_final_newsletter(tmp_db, monkeypatch, tmp_path):
     assert state.final_newsletter.startswith("# AI Weekly Roundup")
     assert "## OpenAI" in state.final_newsletter
     # Auto-send: rewrite must have written the HTML and inserted a newsletters row
-    out_html = Path("out") / f"{__import__('datetime').date.today().isoformat()}.html"
-    assert out_html.exists(), "rewrite should have written the newsletter HTML"
+    # Session "r_apply" is not a standard session id, so the stamp falls back
+    # to wall-clock now() — match on the shape rather than an exact name.
+    today = __import__("datetime").date.today().isoformat()
+    written = list(Path("out").glob(f"{today}-*.html"))
+    assert len(written) == 1, f"rewrite should have written the newsletter HTML, got {written}"
     import sqlite3 as _sql
     with _sql.connect(tmp_db) as conn:
         rows = conn.execute(

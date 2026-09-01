@@ -43,7 +43,7 @@ from lib.llm import call_prompt, get_prompt
 from lib.prompts.bsky_reorder import BskyPost, BskyReorderInput, BskyReorderOutput
 from lib.prompts.bsky_headlines import BskyHeadlinesInput, BskyHeadlinesOutput
 from lib.sources import pretty_source
-from lib.utilities import strip_source_attribution
+from lib.utilities import run_stamp, strip_source_attribution
 
 # Strip a trailing inline-URL abbreviation Bluesky appends to truncated posts,
 # e.g. "...run all the AI chips newatlas.com/technology/e..." (legacy notebook
@@ -296,12 +296,14 @@ def _render_html(
 
 
 def _write_digest(grouped_posts, og_cache, image_cache, handle) -> tuple[Path, Path]:
-    """Render + write out/bsky-<date>.html and the latest-bsky.html symlink."""
+    """Render + write out/bsky-<stamp>.html and the latest-bsky.html symlink."""
     today = date.today().isoformat()
     html = _render_html(grouped_posts, og_cache, image_cache, today, handle)
     out_dir = Path("out")
     out_dir.mkdir(exist_ok=True)
-    out_path = out_dir / f"bsky-{today}.html"
+    # No session to anchor to, so the stamp is wall-clock at write time: each
+    # digest render lands in its own file.
+    out_path = out_dir / f"bsky-{run_stamp()}.html"
     out_path.write_text(html, encoding="utf-8")
     symlink_path = out_dir / "latest-bsky.html"
     if symlink_path.exists() or symlink_path.is_symlink():

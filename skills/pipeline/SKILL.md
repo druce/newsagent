@@ -283,7 +283,7 @@ For a halted rss/rest source there is no manual-file path — just resume
 - `runs/<SID>/<step>-results/` — Agent result JSONs (per LLM step)
 - `runs/<SID>/<step>.json` — per-step summary
 - `runs/<SID>/summary.md` — top-level human-readable run report
-- `out/YYYY-MM-DD.html` — final newsletter HTML (from send step)
+- `out/YYYY-MM-DD-HHMMSS.html` — final newsletter HTML (from send step)
 - `out/latest.html` — symlink to latest
 
 ## Non-interactive fallback (cron / CI)

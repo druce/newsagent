@@ -16,7 +16,8 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 
 1. **`/newsagent:pipeline`** — Claude skill to run the full 13-step pipeline from scraping
    and gathering, to selecting items and writing proposed newsletter. Writes the newsletter to `out/latest.html` (fully AI-eddited issue) and the rated-bullet digest to `out/latest_short.html`
-   (both also dated: `out/<date>.html`, `out/<date>_short.html`). Details under *How to run*.
+   (both also stamped: `out/<stamp>.html`, `out/<stamp>_short.html`, where `<stamp>` is
+   `YYYY-MM-DD-HHMMSS`). Details under *How to run*.
 
 3. **Post to Bluesky** — open the **local `file://` copy** of `out/latest.html`, start the
    share daemon (`python -m lib.steps.bsky_share`), and click the 🦋 link on each story from
@@ -39,6 +40,11 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
    `claude --chrome` session with a logged-in `app.beehiiv.com` tab. See
    [skills/beehiiv/README.md](skills/beehiiv/README.md). See also [final result after editing](https://skynetandchill.druce.ai/)
 
+   **`/newsagent:finalize`** runs steps 5 and 6 back to back. It pre-flights the
+   Chrome extension and the beehiiv login *before* doing any work, and aborts
+   there if either is missing — no headless fallback. Stops without touching
+   beehiiv when `bluesky` reports no new posts.
+
 ---
 
 ## Per-step reference
@@ -57,9 +63,10 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 | `newsagent:select` | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
 | `newsagent:draft` | Parallel section drafters; each runs a critic-optimizer loop. |
 | `newsagent:rewrite` | Whole-newsletter critic-optimizer + title generation. |
-| `newsagent:send` | Render HTML, write `out/<date>.html` + `out/latest.html`. |
+| `newsagent:send` | Render HTML, write `out/<stamp>.html` + `out/latest.html`. |
 | `newsagent:bluesky` | Standalone Bluesky digest. |
 | `newsagent:beehiiv` | Import the Bluesky digest (`out/latest-bsky.html`) into a beehiiv draft via the Chrome extension. Draft only — never publishes. |
+| `newsagent:finalize` | Run `bluesky` then `beehiiv` end to end. Chrome/beehiiv-login pre-flight first; fails fast instead of falling back to Playwright. |
 | `newsagent:pipeline` | Top-level orchestrator (`--resume`, `--from`, `--only`, `--engine`). |
 | `newsagent:progress`, `sessions`, `show` | State inspection. |
 | `newsagent:recover`, `reset` | Error recovery. |
@@ -82,9 +89,17 @@ python -m venv .venv
 # 3. Get the pretrained UMAP reducer (~400 MB, gitignored)
 cp ~/projects/OpenAIAgentsSDK/umap_reducer.pkl ./
 
-# 4. Run the full pipeline (writes a newsletter to out/<date>.html)
+# 4. Run the full pipeline (writes a newsletter to out/<stamp>.html)
 .venv/bin/python -m lib.steps.pipeline --sources sources.yaml
 ```
+
+## Systemwide config
+
+Systemwide settings live in `config.yaml` (separate from `sources.yaml`,
+which defines feed sources). `blocked_domains` lists content-farm domains
+to drop everywhere — checked against the initial URL at gather time and
+re-checked against the final URL at download time, so aggregator redirects
+(Google News, HN links) can't smuggle a banned domain through.
 
 ## API keys
 
@@ -114,7 +129,7 @@ The default engine for every prompt is `"subagent"` — that uses your Claude Co
 #### A. End-to-end (the orchestrator)
 
 ```bash
-# Fresh full run — creates a new session, runs all 13 steps, writes out/<date>.html
+# Fresh full run — creates a new session, runs all 13 steps, writes out/<stamp>.html
 .venv/bin/python -m lib.steps.pipeline --sources sources.yaml
 
 # All steps with a specific engine forced for LLM prompts
@@ -126,7 +141,8 @@ The default engine for every prompt is `"subagent"` — that uses your Claude Co
 ```
 
 When `run` finishes you get:
-- `out/<YYYY-MM-DD>.html` — final newsletter, plus `out/latest.html` symlink
+- `out/<YYYY-MM-DD-HHMMSS>.html` — final newsletter, plus `out/latest.html` symlink.
+  The time is the session's start time, so two runs on the same day don't collide.
 - `runs/<SID>/summary.md` — human-readable run report (table of step statuses, counts, draft critic transcripts)
 - `runs/<SID>/*.json` — per-step artifacts (`gather.json`, `filter.json`, `cluster.json`, `draft.json`, etc.)
 
@@ -160,7 +176,7 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 .venv/bin/python -m lib.steps.dedupe --session demo-1
 
 # Rate each article (quality, on-topic, importance + Bradley-Terry).
-# Also writes out/<date>_short.html + out/latest_short.html and emails the
+# Also writes out/<stamp>_short.html + out/latest_short.html and emails the
 # digest via Gmail SMTP (uses GMAIL_USER / GMAIL_PASSWORD; pass --no-email
 # to skip sending, --to ADDR to override the recipient).
 .venv/bin/python -m lib.steps.rate --session demo-1
@@ -194,25 +210,41 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 ```bash
 # Requires BSKY_USERNAME + BSKY_SECRET env vars
 .venv/bin/python -m lib.steps.bluesky --user yourhandle.bsky.social --limit 80
-# → writes out/bsky-<date>.html
+# → writes out/bsky-<stamp>.html
 ```
 
 ### Share newsletter items to Bluesky (queue + auto-poster)
 
-Each item row in `out/latest.html` has a 🦋 link. Run the daemon, open the **local
-`file://` copy** of the newsletter, and click 🦋 on any story — its title + URL are queued
-and posted to your Bluesky as a link-preview card (post text = the title, card = the URL).
+Each item row in `out/latest.html` and `out/latest_short.html` has a 🦋 link. Run the
+daemon, open the **local `file://` copy**, and click 🦋 on any story — its title + URL are
+queued and posted to your Bluesky as a link-preview card (post text = the title, card =
+the URL).
 
 ```bash
 # Requires BSKY_USERNAME + BSKY_SECRET; serves the enqueue endpoint + drains the queue
 .venv/bin/python -m lib.steps.bsky_share --interval 60
 # --once  drains a single pending item and exits
 # --port  overrides $BSKY_QUEUE_PORT (default 8765)
+# curl http://127.0.0.1:8765/health   -> {"status":"ok",...}
 ```
 
-Notes: the 🦋 link only works from the local file (not the emailed copy) and only while the
-daemon is running. Each URL is queued at most once, ever (permanent dedup). One item posts
-per `--interval` for gentle rate-limiting; the queue lives in the `bsky_queue` table.
+**You always know whether a click landed.** The pages probe the daemon on load (and again
+whenever the tab regains focus):
+
+| What you see | What it means |
+|---|---|
+| Red banner at the top of the page | Daemon unreachable — clicks are **not** being saved directly. The banner names the start command and disappears on its own once you start the daemon and switch back to the tab. |
+| 🦋 → grey ✓ | Queued. The daemon also prints `Queued: "<title>"` (or `Dup:` if you already queued that URL). |
+| 🦋 → red ✗ | The direct call failed. Hover for the reason. One small popup window opens showing the daemon's own reply — **all** failures reuse that same window, never one per click. Clicking a red ✗ again navigates in that window, which no browser policy can block. |
+
+So a stopped daemon costs you a banner and a popup, not a lost afternoon of curation.
+
+Notes: the 🦋 link only works from the local file — email clients strip the script, leaving
+a plain link that only resolves on the daemon's own machine. Links point at literal
+`127.0.0.1`, not `localhost`, because the latter also resolves to `::1` where the
+IPv4-only daemon isn't listening. Each URL is queued at most once, ever (permanent dedup).
+One item posts per `--interval` for gentle rate-limiting; the queue lives in the
+`bsky_queue` table (`sqlite3 newsletter_agent.db "select status, title from bsky_queue"`).
 
 ---
 

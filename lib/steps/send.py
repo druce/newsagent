@@ -17,7 +17,12 @@ from dotenv import load_dotenv
 from lib.db import PublishedArticle
 from lib.embeddings import embed_texts
 from lib.state import NewsletterAgentState
-from lib.utilities import render_row_action_links, send_gmail
+from lib.utilities import (
+    render_bsky_share_script,
+    render_row_action_links,
+    run_stamp,
+    send_gmail,
+)
 
 
 _OUT_DIR = Path("out")
@@ -192,6 +197,14 @@ def _render_html(title: str, body_md: str, local_path: Optional[str] = None) -> 
             f'font-family:{_FONT}; word-break:break-all;">{_html.escape(href)}</td></tr>'
         )
 
+    # Only ship the 🦋 client when there is at least one anchor to drive —
+    # otherwise a stopped daemon would pin a red banner on a page with nothing
+    # to queue. Emitted in the emailed copy too, where clients strip <script>
+    # and onclick, leaving the anchor's plain href exactly as before.
+    share_script = (
+        render_bsky_share_script(_QUEUE_PORT) if "/enqueue" in content else ""
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -259,7 +272,7 @@ def _render_html(title: str, body_md: str, local_path: Optional[str] = None) -> 
 </table>
 </td></tr>
 </table>
-
+{share_script}
 </body>
 </html>
 """
@@ -332,7 +345,7 @@ def deliver_newsletter(
 ) -> Path:
     """Render + write the newsletter HTML and (optionally) email it.
 
-    Idempotent: re-renders the HTML and updates `out/<date>.html` every
+    Idempotent: re-renders the HTML and updates `out/<stamp>.html` every
     call. The Gmail send is skipped automatically if a `newsletters` row
     already exists for this session (so calling from both `rewrite` and
     `send` does not double-deliver). Pass `force_email=True` to override.
@@ -352,8 +365,7 @@ def deliver_newsletter(
     title = state.newsletter_title or "AI Newsletter"
 
     _OUT_DIR.mkdir(exist_ok=True)
-    today = date.today().isoformat()
-    out_file = _OUT_DIR / f"{today}.html"
+    out_file = _OUT_DIR / f"{run_stamp(session_id)}.html"
     html = _render_html(title, body, local_path=str(out_file.resolve()))
     out_file.write_text(html)
 
@@ -397,7 +409,7 @@ def deliver_newsletter(
             )
         return out_file
 
-    subject = f"{title} — {today}"
+    subject = f"{title} — {date.today().isoformat()}"
     try:
         send_gmail(subject, html, to=to)
         if echo:

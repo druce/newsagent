@@ -1,6 +1,6 @@
 ---
 name: send
-description: Render the session's newsletter as styled HTML, write to out/YYYY-MM-DD.html, update out/latest.html symlink, insert a row in the newsletters table, record survivors to the published_articles cross-day dedup store, and email via Gmail (GMAIL_USER/GMAIL_PASSWORD).
+description: Render the session's newsletter as styled HTML, write to out/YYYY-MM-DD-HHMMSS.html, update out/latest.html symlink, insert a row in the newsletters table, record survivors to the published_articles cross-day dedup store, and email via Gmail (GMAIL_USER/GMAIL_PASSWORD).
 ---
 
 # newsagent:send
@@ -35,7 +35,7 @@ skipped with a stderr warning and the rest of the step still succeeds.
 
 ## Output
 
-- `out/<date>.html` — styled newsletter
+- `out/<stamp>.html` — styled newsletter (`<stamp>` = `YYYY-MM-DD-HHMMSS`, the session start time)
 - `out/latest.html` — symlink (or copy on platforms without symlinks)
 - Row in `newsletters` table with title + html
 - Email to `--to` / `GMAIL_USER` (unless `--no-email`)

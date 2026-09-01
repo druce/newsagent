@@ -95,6 +95,81 @@ def test_row_omits_bluesky_link_without_url():
     assert "/enqueue" not in html
 
 
+def test_row_action_links_use_loopback_ip_not_localhost():
+    """`localhost` resolves to BOTH 127.0.0.1 and ::1, but the daemon binds IPv4
+    only — a client preferring ::1 gets connection-refused."""
+    from lib.utilities import render_row_action_links
+    html = render_row_action_links("H", "https://e.com/x", queue_port=8765)
+    assert "http://127.0.0.1:8765/enqueue" in html
+    assert "localhost" not in html
+
+
+def test_share_anchor_keeps_real_href_and_delegates_to_script():
+    """The anchor keeps a working href + target for the no-JS / email path, and
+    delegates behaviour to the shared script instead of the old inline fetch
+    that flipped the glyph to ✓ unconditionally."""
+    from lib.utilities import render_row_action_links
+    html = render_row_action_links("H", "https://e.com/x", queue_port=8765)
+    assert 'href="http://127.0.0.1:8765/enqueue' in html
+    assert 'target="_blank"' in html
+    assert 'onclick="return __bskyQ(this);"' in html
+    assert "textContent" not in html   # no unconditional ✓
+    assert "no-cors" not in html       # response must be readable now
+
+
+def test_share_script_is_self_contained_and_idempotent():
+    from lib.utilities import render_bsky_share_script
+    js = render_bsky_share_script(8765)
+    assert "<script>" in js and "</script>" in js
+    assert "if (window.__bskyQ)" in js          # tolerates a double include
+    assert 'var PORT = "8765"' in js
+    assert "bsky-daemon-banner" in js
+    assert ".venv/bin/python -m lib.steps.bsky_share" in js
+
+
+def test_share_script_probe_is_the_writeless_enqueue_form():
+    """Guards the backward-compat decision: probing a brand-new /health would
+    404 against an already-running pre-upgrade daemon and show a false alarm."""
+    from lib.utilities import render_bsky_share_script
+    js = render_bsky_share_script(8765)
+    assert '"http://127.0.0.1:" + PORT + "/enqueue"' in js
+    assert "/health" not in js
+
+
+def test_share_script_port_defaults_to_env(monkeypatch):
+    monkeypatch.setenv("BSKY_QUEUE_PORT", "9999")
+    from lib.utilities import render_bsky_share_script
+    assert 'var PORT = "9999"' in render_bsky_share_script()
+
+
+def test_digest_shell_embeds_the_share_client_script(monkeypatch):
+    """Anchor port and script port must agree, or every click looks broken."""
+    monkeypatch.setenv("BSKY_QUEUE_PORT", "9999")
+    from lib.utilities import render_rated_digest
+    item = {
+        "rating": 7.0, "short_summary": "A story", "title": "t",
+        "summary": "- A bullet.", "final_url": "https://example.com/s",
+        "site_name": "Example",
+    }
+    html = render_rated_digest("s1", [item], "2026-08-10 09:00:00")
+    assert "__bskyQ" in html
+    assert "bsky-daemon-banner" in html
+    assert "http://127.0.0.1:9999/enqueue" in html   # anchor port ...
+    assert 'var PORT = "9999"' in html               # ... matches script port
+    assert html.index("__bskyQ") < html.index("</body>")
+
+
+def test_digest_shell_omits_script_when_no_rows_have_urls():
+    """A page with nothing to queue must not pin a daemon-down banner."""
+    from lib.utilities import render_rated_digest
+    item = {
+        "rating": 1.0, "short_summary": "No link", "title": "t",
+        "summary": "- A bullet.", "final_url": "", "site_name": "Example",
+    }
+    html = render_rated_digest("s1", [item], "2026-08-10 09:00:00")
+    assert "__bskyQ" not in html
+
+
 def test_strip_source_attribution_lives_in_utilities():
     # Shared home so both the Bluesky digest and summarize can use it.
     from lib.utilities import strip_source_attribution as s

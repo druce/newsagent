@@ -15,7 +15,7 @@ python -m lib.steps.rate --db newsletter_agent.db --session SID \
 ```
 
 - `--to ADDR`: email recipient for the rated digest. Defaults to `GMAIL_USER`.
-- `--no-email`: write `out/<date>_short.html` and skip sending.
+- `--no-email`: write `out/<stamp>_short.html` and skip sending.
 
 **Run this command in the background** (Bash tool with `run_in_background: true`).
 Rating is long-running — it makes per-axis batched LLM calls plus Swiss-paired
@@ -38,7 +38,7 @@ when the task finishes.
 - Default engine: each prompt's own default (e.g. `openai:gpt-4o-mini` for axis prompts). Override all with `--engine`.
 - Writes `runs/<SID>/rate.json` with rating distribution (min/max/mean).
 - After ratings compute, **always** renders a rated digest and writes:
-  - `out/<date>_short.html` — sorted-by-rating list of headline + short_summary + bullets
+  - `out/<stamp>_short.html` — sorted-by-rating list of headline + short_summary + bullets
   - `out/latest_short.html` — symlink (or copy on fs without symlink support)
 - By default, also emails the digest via Gmail SMTP (`lib.utilities.send_gmail`)
   using `GMAIL_USER` / `GMAIL_PASSWORD` from the environment. Pass `--no-email`

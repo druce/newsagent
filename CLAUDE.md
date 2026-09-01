@@ -31,7 +31,10 @@ Do not import from that path; do not modify it.
 
 `start → gather → filter → download → dedupe → summarize → crossdedupe → coverage → rate → cluster → select → draft → rewrite → send`
 
-Plus the standalone `newsagent:bluesky` and seven recovery/maintenance skills.
+Plus the standalone `newsagent:bluesky`, `newsagent:beehiiv`, and seven
+recovery/maintenance skills. `newsagent:finalize` chains bluesky → beehiiv after
+a Chrome/beehiiv-login pre-flight; it is the only skill that hard-requires the
+Chrome extension end to end and it never falls back to a headless browser.
 
 `dedupe` runs between `download` and `summarize` so duplicate articles aren't summarized twice. It's a full member of `WORKFLOW_STEPS` (see `lib/state.py:25`).
 
@@ -56,19 +59,28 @@ Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific
 ## State and data storage
 
 - `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`, `bsky_queue`, `published_articles`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`. `bsky_queue` backs the share-to-Bluesky daemon (`url` UNIQUE → permanent dedup). `published_articles` records what each newsletter actually published (url, title, short_summary, `title+short_summary` embedding, `published_at`) — written by `send`, read by `crossdedupe` for cross-day story-level suppression.
+- `config.yaml` — systemwide operator settings (loaded by `lib/appconfig.py`).
+  Currently `blocked_domains`: domains (and their subdomains) dropped at
+  gather time (initial URL) and again at download time after redirects
+  resolve (final URL) — the session-state record is removed but the `urls`
+  row is kept for cross-session dedup. Distinct from per-source
+  `include`/`exclude` in `sources.yaml`, which only apply to html sources.
 - `download/` — article text cache (sha256-of-url filename).
 - `download/bsky-images/` — Bluesky image cache.
 - `runs/<SID>/` — per-step JSON artifacts (gather.json, filter.json, cluster.json, draft.json, etc.) + `summary.md` from `newsagent:pipeline`.
-- `out/YYYY-MM-DD.html` — final newsletter (+ `out/latest.html` symlink).
-- `out/YYYY-MM-DD_short.html` — rated-digest bullets written by `rate` (+ `out/latest_short.html` symlink).
-- `out/bsky-YYYY-MM-DD.html` — Bluesky digest (+ `out/latest-bsky.html`).
+- `out/YYYY-MM-DD-HHMMSS.html` — final newsletter (+ `out/latest.html` symlink). The
+  `HHMMSS` is the session's start time (parsed from the session id), so the 07:00 and
+  18:00 runs of a day get separate files and re-running a step overwrites in place.
+- `out/YYYY-MM-DD-HHMMSS_short.html` — rated-digest bullets written by `rate` (+ `out/latest_short.html` symlink).
+- `out/bsky-YYYY-MM-DD-HHMMSS.html` — Bluesky digest (+ `out/latest-bsky.html`). No session to
+  anchor to, so this stamp is wall-clock at write time: each render is a new file.
 
 ## Environment
 
 Copy `dot-env.txt` to `.env` — it lists every key. All are optional except the ones you actually use. Non-obvious ones:
 
-- `BSKY_QUEUE_PORT` — optional, port for the share-to-Bluesky enqueue daemon (default `8765`). `send.py` bakes this port into the 🦋 enqueue links, so render-time and runtime must agree.
-- `GMAIL_USER` / `GMAIL_PASSWORD` — only if you want the post-rate email digest. `rate` writes `out/<date>_short.html` + `out/latest_short.html` unconditionally; the email send is auto-attempted but degrades to a warning when these are missing. Use `--no-email` to skip explicitly.
+- `BSKY_QUEUE_PORT` — optional, port for the share-to-Bluesky enqueue daemon (default `8765`). Baked into the 🦋 enqueue links **and** the shared client script by `lib.utilities.render_row_action_links` / `render_bsky_share_script`, so render-time and runtime must agree — a mismatch now shows the page's red "daemon not reachable" banner. Links use literal `127.0.0.1`, never `localhost` (which also resolves to `::1`, where the IPv4-only daemon isn't listening). The page's health probe is `GET /enqueue` with **no `u`** (200 + CORS, writes nothing) rather than `/health`, so an already-running older daemon can't be misreported as down; don't turn that into a 400.
+- `GMAIL_USER` / `GMAIL_PASSWORD` — only if you want the post-rate email digest. `rate` writes `out/<stamp>_short.html` + `out/latest_short.html` unconditionally; the email send is auto-attempted but degrades to a warning when these are missing. Use `--no-email` to skip explicitly.
 
 **Do NOT set or expect `ANTHROPIC_API_KEY`.** Claude models go through the `subagent` engine via your Claude Code subscription.
 
