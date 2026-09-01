@@ -14,6 +14,19 @@ def _isolate_brightdata_env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_sites_map_cache():
+    """`lib.sources._load_db_map` is lru_cached on the DB path, and the default
+    path ("newsletter_agent.db") is RELATIVE. A test running from the repo root
+    warms the cache with the real production sites table; a later test that
+    chdirs to tmp_path then gets a cache hit on the same key and sees
+    production names instead of its own empty DB. Clear it around every test."""
+    from lib.sources import _load_db_map
+    _load_db_map.cache_clear()
+    yield
+    _load_db_map.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def _ensure_prompts_registered():
     """Re-register all prompts before each test if the registry was cleared.
 
