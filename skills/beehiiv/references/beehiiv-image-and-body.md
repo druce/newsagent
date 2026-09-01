@@ -66,16 +66,16 @@ paste event**, one image at a time:
    the tab via CDP and needs no clipboard-read permission, **but the tab must be VISIBLE**
    (`document.visibilityState === 'visible'`): a hidden tab (background tab, minimized or
    fully occluded window) gets NO key events at all, so the paste silently no-ops (verified
-   2026-07-20 — clicks and JS still work, only key events drop). If hidden, foreground
-   Chrome with `open -a "Google Chrome"` (no Apple-events permission needed, unlike
-   `osascript` Chrome control) and make the session tab active. If that doesn't flip
-   visibility (2026-07-21: the MCP group was a background tab group in a window whose
-   active tab was another site; `tabs_create_mcp` does NOT activate its new tab), use
-   AppleScript **System Events** — allowed even when Apple events to Chrome are denied,
-   and Accessibility is granted on this machine: `set frontmost to true` on the Chrome
-   process, then `keystroke "9" using command down` (Cmd+9 = last tab in the window; new
-   MCP-group tabs sit at the end). System Events can also read/repair window geometry
-   (`AXPosition`/`AXSize`/`AXMinimized`, `AXRaise`).
+   2026-07-20 — clicks and JS still work, only key events drop). **No Claude Chrome tool can
+   raise a window or activate a tab**, so this is the one step that escalates outside the
+   tools (see SKILL.md gotcha 3 for the canonical list): `open -a "Google Chrome"` from Bash,
+   then `tabs_create_mcp` + close, then AppleScript **System Events** (`set frontmost to
+   true` on the Chrome process, then `keystroke "9" using command down` — Cmd+9 = last tab,
+   where new MCP-group tabs sit). Re-check `visibilityState` after each and stop at the first
+   that flips it; **which one works depends on the host app's TCC grants** (table in
+   `CLAUDE.md`), so never hardcode a single route. System Events can also read/repair window
+   geometry (`AXPosition`/`AXSize`/`AXMinimized`, `AXRaise`). Never `tell application "Google
+   Chrome"` — that is scripting Chrome, which belongs to the Claude Chrome tools.
 4. The listener POSTs the blob to the upload endpoint and stashes `{url}`. Because it
    `preventDefault`s, focus stays in the catcher — no re-click between images. Keep an
    ordered basename list + an index so each paste is named correctly; checkpoint the index
@@ -172,9 +172,14 @@ Divider: `{ "type":"horizontalRule" }`. Root: `{ "type":"doc", "content":[…] }
 - **Pasting into a hidden tab** → `key cmd+v` delivers NO key events to a tab with
   `document.visibilityState === 'hidden'` (background tab / minimized / occluded window);
   the catcher stays "waiting for paste" while clicks and JS injection keep working. Check
-  visibility first; `open -a "Google Chrome"` + re-activating the session tab fixes it —
-  and when it doesn't, System Events `keystroke "9" using command down` (Cmd+9 → last tab)
-  does; see the escalation in step 3 above / SKILL.md gotcha 3.
+  visibility first, then walk the escalation in step 3 above / SKILL.md gotcha 3 — no Claude
+  Chrome tool can activate a tab, and which escalation step works varies by host app.
+- **Assuming one escalation route always works** → the Apple-events grants differ per host
+  app (kitty: System Events allowed, Chrome denied; Claude desktop app: the reverse). Walk
+  the list and re-check `visibilityState`; see the TCC table in `CLAUDE.md`.
+- **`osascript` to drive the page** (`tell application "Google Chrome" to …`, executing JS
+  through AppleScript) → not the transport. Chrome content is driven ONLY by the Claude
+  Chrome tools; if they're unavailable, stop and report rather than routing around them.
 - **`file_upload` tool as a paste substitute** → rejects host filesystem paths
   ("the MCP controller must read the file and pass its contents"); cannot deliver the
   image JSON map.

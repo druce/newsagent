@@ -29,7 +29,7 @@ this work:
 ## Inputs (these live at fixed locations — do NOT search for them)
 
 - **Digest file** — `/Users/drucev/projects/newsagent/out/latest-bsky.html` (a symlink to
-  the dated `out/bsky-YYYY-MM-DD.html`, written by the `newsagent:bluesky` step). Its body is
+  the stamped `out/bsky-YYYY-MM-DD-HHMMSS.html`, written by the `newsagent:bluesky` step). Its body is
   a **flat list of posts** (legacy skynet.html format — **no `<h1>`/`<h2>` headers, no
   sections**). Each post is, in order: usually an
   `<p><img alt='image' src='file:///…/download/bsky-images/<hash>.<ext>'></p>` thumbnail, then
@@ -56,6 +56,22 @@ this work:
   (`title`, `web_title`, `email_subject_line`) — verify the readback in step 1.
   (`email_preview_text` is left empty for the user to fill with the day's punny headline.)
 
+## Chrome is driven ONLY by the Claude Chrome tools
+
+Every action against the page — navigation, clicks, typing, key events, JS injection, tab
+create/close — goes through `mcp__claude-in-chrome__*`. **If those tools are not available,
+STOP and report the error.** Do not substitute Playwright, any other headless browser, shell
+`curl`, or `osascript` Chrome control: none of them carry the logged-in beehiiv session,
+`curl` gets a Cloudflare 403, and the image/body transports need a native paste event into a
+visible tab. `newsagent:finalize` pre-flights exactly this before doing any work; when
+invoking this skill directly, confirm the tools are loaded first.
+
+**`osascript` may move windows; it must never drive a page.** Its one sanctioned use is
+making the tab *visible* (gotcha 3) — no Claude Chrome tool can raise a window or activate a
+tab, and `key cmd+v` silently no-ops in a hidden tab. Never `tell application "Google Chrome"
+to …`: that is scripting Chrome, and its Apple-events grant varies by host app (see the TCC
+table in `CLAUDE.md`).
+
 ## The four execution gotchas
 
 1. `execute_javascript` does **not await** — use the two-call stash pattern: kick off
@@ -68,23 +84,24 @@ this work:
    nothing; JS injection and *clicks* still work, which makes it look like a page bug
    (2026-07-20: two "waiting for paste" failures diagnosed this way). Check
    `document.visibilityState` BEFORE each paste; verify `document.activeElement` is the
-   catcher right before `cmd+v`. If `"hidden"`, escalate in this order (2026-07-21 run:
-   the first two did NOT flip visibility — the MCP group sat as a background tab group in
-   an existing window whose active tab was another site; `tabs_create_mcp` does NOT
-   activate the tab it creates, and closing a group tab activates an arbitrary neighbor):
-   1. `open -a "Google Chrome"` from Bash (activates Chrome; no Apple-events permission
-      needed, unlike `osascript -e 'tell app "Google Chrome"…'` which is usually denied).
+   catcher right before `cmd+v`. **No Claude Chrome tool can fix a hidden tab** —
+   `tabs_create_mcp` does not activate the tab it creates (and closing a group tab activates
+   an arbitrary neighbor), `resize_window` resizes without raising, and `select_browser` /
+   `switch_browser` choose a *browser*, not a tab. So this one step escalates outside the
+   tools. Try in order, re-checking `visibilityState` after EACH and stopping at the first
+   that flips it:
+   1. `open -a "Google Chrome"` from Bash — activates Chrome, needs no Apple-events grant.
    2. `tabs_create_mcp` + `tabs_close_mcp` of the new tab (sometimes re-activates the
       session tab).
-   3. **The reliable fix**: `osascript` to **System Events** (allowed even when Apple
-      events to Chrome are denied; Accessibility is granted): `tell application "System
-      Events" to tell process "Google Chrome"` → `set frontmost to true`, then
-      `keystroke "9" using command down`. Cmd+9 selects the window's LAST tab, and
-      freshly created MCP-group tabs sit at the end — this flipped `visible:false` →
-      `true` when 1–2 didn't. System Events can also inspect/repair windows: read
-      `AXPosition`/`AXSize`/`AXMinimized` of `windows`, resize a stunted window, and
-      `perform action "AXRaise"`. Diagnose with `w`/`h` from `window.innerWidth`: if they
-      match a DIFFERENT window's size, your tab is a background tab of that window.
+   3. `osascript` → **System Events**: `tell application "System Events" to tell process
+      "Google Chrome"` → `set frontmost to true`, then `keystroke "9" using command down`.
+      Cmd+9 selects the window's LAST tab and freshly created MCP-group tabs sit at the end.
+      This is the step that worked on 2026-07-21 and 2026-08-08 when 1–2 did not. System
+      Events can also inspect/repair windows: read `AXPosition`/`AXSize`/`AXMinimized` of
+      `windows`, resize a stunted window, and `perform action "AXRaise"`.
+   **Which step works depends on the host app's macOS TCC grants — do not hardcode one.**
+   Walk the list; see the grant table in `CLAUDE.md`. Diagnose a background tab with `w`/`h`
+   from `window.innerWidth`: if they match a DIFFERENT window's size, your tab lives there.
    Dead end: the `file_upload` tool can't substitute for the paste — it rejects host
    filesystem paths.
 4. **Stash the draft id in `localStorage['__bh_draft']` right after creating it.** Tab

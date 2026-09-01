@@ -47,6 +47,12 @@ executing.
 
 ## Execution rules
 
+- **Drive Chrome ONLY through the Claude Chrome tools** (`mcp__claude-in-chrome__*`) —
+  navigation, clicks, typing, key events, JS injection, tab create/close. **If the tools
+  aren't available, STOP and report the error**; never fall back to Playwright, another
+  headless browser, `curl`, or `osascript` Chrome control. `osascript` may **move windows,
+  never drive a page** — its one sanctioned use is flipping a hidden tab visible (below).
+  Never `tell application "Google Chrome" to …`.
 - `execute_javascript` does **not await** → two-call stash pattern (`window.__x` +
   sentinel string; read `JSON.stringify(window.__x)` next call). No top-level `return` —
   use an IIFE.
@@ -89,19 +95,39 @@ executing.
   A hidden tab (background tab, minimized/occluded window) receives NO key events from the
   computer tool — `key cmd+v` silently no-ops while JS injection and clicks keep working, so
   it masquerades as a page/catcher bug (burned ~10 calls on 2026-07-20 before diagnosis).
-  Check `visibilityState` before each paste; if hidden, escalate: (1) `open -a "Google
-  Chrome"` from Bash (works without the Apple-events permission that `osascript` Chrome
-  control needs); (2) `tabs_create_mcp` + close the new tab; (3) **the reliable fix when
-  1–2 fail** (2026-07-21: MCP group was a background tab group in a window whose active tab
-  was another site — `tabs_create_mcp` does NOT activate its new tab): `osascript` to
-  **System Events** (allowed even when Apple events to Chrome are denied) →
+  Check `visibilityState` before each paste. **No Claude Chrome tool can raise a window or
+  activate a tab** (`tabs_create_mcp` does NOT activate its new tab; `resize_window` resizes
+  without raising; `select_browser`/`switch_browser` pick a browser, not a tab), so if hidden
+  you must escalate outside the tools — re-checking `visibilityState` after each step:
+  (1) `open -a "Google Chrome"` from Bash — no Apple-events grant needed; (2) `tabs_create_mcp`
+  + close the new tab; (3) `osascript` to **System Events** →
   `tell application "System Events" to tell process "Google Chrome"` →
   `set frontmost to true` + `keystroke "9" using command down` (Cmd+9 = last tab; new MCP
-  tabs sit at the end). System Events can also read/fix window geometry
-  (`AXPosition`/`AXSize`/`AXMinimized`, `perform action "AXRaise"`). Diagnostic: if
-  `window.innerWidth` matches a different window's size, the tab is a background tab there.
-  Confirm `document.activeElement` is the catcher immediately before `cmd+v`. Dead end:
-  `file_upload` rejects host filesystem paths, so it cannot replace the paste transport.
+  tabs sit at the end) — the step that worked on 2026-07-21 and 2026-08-08 when 1–2 didn't.
+  System Events can also read/fix window geometry (`AXPosition`/`AXSize`/`AXMinimized`,
+  `perform action "AXRaise"`). Diagnostic: if `window.innerWidth` matches a different window's
+  size, the tab is a background tab there. Confirm `document.activeElement` is the catcher
+  immediately before `cmd+v`. Dead end: `file_upload` rejects host filesystem paths, so it
+  cannot replace the paste transport.
+- **The visibility escalation is HOST-APP dependent — never hardcode one route.** macOS TCC
+  keys Accessibility and Apple Events to the responsible GUI app (the terminal, or the Claude
+  desktop app, that `claude` runs under — identify it with `ps -o pid=,ppid=,comm=` up the
+  chain), not to `claude` itself. Measured 2026-08-08 (`auth_value` 2 = allowed, 0 = denied,
+  no row = never decided):
+
+  | Grant | `net.kovidgoyal.kitty` | `com.anthropic.claudefordesktop` |
+  |---|---|---|
+  | Accessibility | 2 | 2 |
+  | Apple Events → System Events | **2** | **(no row)** |
+  | Apple Events → Google Chrome | **0** | **2** |
+
+  So step 3 works under kitty but under the desktop app raises a TCC prompt or fails
+  `-1743 Not authorized to send Apple events to System Events`; `tell application "Google
+  Chrome"` is the exact inverse. This is why the escalation is a walked list, not a fixed
+  step. Re-read current grants with:
+  `sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "select client,auth_value from access where service='kTCCServiceAccessibility';"`
+  and
+  `sqlite3 ~/"Library/Application Support/com.apple.TCC/TCC.db" "select client,indirect_object_identifier,auth_value from access where service='kTCCServiceAppleEvents';"`
 - **Stash the draft id in `localStorage['__bh_draft']` right after creation** and navigate
   to `/edit` via in-page `location.href` using it. Tab groups can vanish mid-run
   (2026-07-21); `window.__draft` dies with the tab, localStorage survives, and the UUID
@@ -125,7 +151,7 @@ executing.
 ## Inputs are fixed (don't search)
 
 - Digest: `/Users/drucev/projects/newsagent/out/latest-bsky.html` (symlink to the dated
-  `out/bsky-YYYY-MM-DD.html` from the `newsagent:bluesky` step; regenerated daily — image &
+  `out/bsky-YYYY-MM-DD-HHMMSS.html` from the `newsagent:bluesky` step; regenerated daily — image &
   post count vary, read it fresh each run). Body shape: a **flat list of posts** (no `<h2>`
   sections) — each post is an optional `<p><img></p>` thumbnail, then either
   `<p><a href>post text</a>  - <em>source</em></p>` or a bare `<p>post text</p>`, then `<hr />`,
