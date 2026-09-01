@@ -29,6 +29,7 @@ import click
 import httpx
 import lib.prompts  # noqa: F401 — register SITENAME
 
+from lib.appconfig import load_app_config, url_is_blocked
 from lib.fetch.brightdata import scrape_urls_brightdata
 from lib.fetch.canonical import extract_canonical_url
 from lib.fetch.extract import extract_article_text
@@ -349,6 +350,21 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
         click.echo("Nothing to download.")
         return
 
+    app_cfg = load_app_config()
+    blocked_records: list[dict] = []   # {"url", "final_url", "where"}
+    blocked_initial_urls: set[str] = set()
+    if app_cfg.blocked_domains:
+        kept: list[dict] = []
+        for h in pending:
+            if url_is_blocked(h["url"], app_cfg.blocked_domains):
+                blocked_initial_urls.add(h["url"])
+                blocked_records.append(
+                    {"url": h["url"], "final_url": h["url"], "where": "pre-fetch"}
+                )
+            else:
+                kept.append(h)
+        pending = kept
+
     pinned_playwright = _load_pinned_domains(db_path)
     bd_enabled_domains = _load_bright_data_domains(db_path)
 
@@ -385,7 +401,13 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
         canonical = extract_canonical_url(html, post_redirect_url)
         return canonical or post_redirect_url
 
-    def _persist(url: str, text: str, html: str, final_url: str) -> tuple[Path, Path]:
+    def _persist(url: str, text: str, html: str, final_url: str) -> Optional[tuple[Path, Path]]:
+        if url_is_blocked(final_url, app_cfg.blocked_domains):
+            blocked_initial_urls.add(url)
+            blocked_records.append(
+                {"url": url, "final_url": final_url, "where": "post-redirect"}
+            )
+            return None
         stem = _name_stem(final_url)
         txt_path = _TXT_DIR / f"{stem}.txt"
         html_path = _HTML_DIR / f"{stem}.html"
@@ -498,6 +520,22 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
 
     _commit_results(db_path, successes)
 
+    # Record where redirects into blocked domains actually went — the urls
+    # row is kept (it's the cross-session dedup registry; deleting it would
+    # re-ingest the same aggregator link every session), but final_url shows
+    # what the blocklist caught.
+    post_redirect_blocked = [
+        (b["final_url"], b["url"]) for b in blocked_records
+        if b["where"] == "post-redirect"
+    ]
+    if post_redirect_blocked:
+        with sqlite3.connect(db_path) as conn:
+            conn.executemany(
+                "UPDATE urls SET final_url=? WHERE initial_url=?",
+                post_redirect_blocked,
+            )
+            conn.commit()
+
     # Surface httpx→Playwright fallback domains so the operator can pin them
     # in sites.scrape_method='playwright' if it's a persistent pattern.
     pw_fallback_domains: set[str] = set()
@@ -555,6 +593,16 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
         for f in failures:
             click.echo(f"  - [{f['phase']}] {f['url']}: {f['error']}", err=True)
 
+    if blocked_initial_urls:
+        state.headline_data = [
+            h for h in state.headline_data if h["url"] not in blocked_initial_urls
+        ]
+        click.echo(
+            f"Blocked {len(blocked_records)} URL(s) via config.yaml blocked_domains "
+            f"({sum(1 for b in blocked_records if b['where'] == 'post-redirect')} "
+            f"caught after redirect)."
+        )
+
     state.complete_step(
         "download",
         message=f"downloaded {len(successes)}/{len(pending)} articles",
@@ -572,6 +620,7 @@ def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
             d for d, m in domain_method.items() if m == "playwright"
         ),
         "failures": failures,
+        "blocked": blocked_records,
     }, indent=2))
 
     click.echo(

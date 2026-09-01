@@ -620,3 +620,66 @@ def test_download_engine_flag_resolves_sitenames_in_process(tmp_path, tmp_db, mo
 def test_sitename_prompt_does_not_default_to_openrouter():
     from lib.prompts.sitename import SITENAME
     assert not SITENAME.default_engine.startswith("openrouter:")
+
+
+def test_download_blocks_domains_pre_and_post_redirect(tmp_path, tmp_db, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = _setup(tmp_db)
+    # Third headline: aggregator link that redirects to a blocked domain.
+    state.headline_data.append(
+        {"source": "S", "title": "T3", "url": "https://news.google.com/read/xyz"}
+    )
+    # Fourth headline: blocked before any fetch (initial URL).
+    state.headline_data.append(
+        {"source": "S", "title": "T4", "url": "https://www.fool.com/investing/hot-stock"}
+    )
+    state.save_checkpoint("gather")
+    with sqlite3.connect(tmp_db) as conn:
+        for h in state.headline_data[2:]:
+            conn.execute(
+                "INSERT INTO urls (initial_url, final_url, title, source) "
+                "VALUES (?, ?, ?, ?)",
+                (h["url"], h["url"], h["title"], h["source"]),
+            )
+        conn.commit()
+    (tmp_path / "config.yaml").write_text("blocked_domains:\n  - fool.com\n")
+
+    def fake_http(url):
+        if url.endswith("/a"):
+            return _body("A"), "<html>RAW-A</html>", "https://example.com/a", None
+        if url.endswith("/b"):
+            return _body("B"), "<html>RAW-B</html>", "https://example.com/b", None
+        # news.google.com redirect resolves to the blocked domain
+        return _body("C"), "<html>RAW-C</html>", "https://www.fool.com/investing/hot-stock-2", None
+
+    with patch("lib.steps.download._http_fetch", side_effect=fake_http) as mock_http:
+        with patch("lib.steps.download.fetch_urls_html_batch") as pw:
+            runner = CliRunner()
+            result = runner.invoke(download_cli, ["--db", tmp_db, "--session", "d1"])
+    assert result.exit_code == 0, result.output
+    pw.assert_not_called()
+
+    # fool.com initial URL never fetched
+    fetched = {c.args[0] for c in mock_http.call_args_list}
+    assert "https://www.fool.com/investing/hot-stock" not in fetched
+
+    # Both blocked headlines removed from state; the two good ones survive.
+    state = NewsletterAgentState(session_id="d1", db_path=tmp_db).load_latest_from_db()
+    urls = {h["url"] for h in state.headline_data}
+    assert urls == {"https://example.com/a", "https://example.com/b"}
+
+    # No text file written for the post-redirect block.
+    txt_dir = tmp_path / "download" / "txt"
+    assert not any("fool.com" in p.name for p in txt_dir.iterdir())
+
+    # urls.final_url updated for the post-redirect block (audit trail).
+    with sqlite3.connect(tmp_db) as conn:
+        rows = dict(conn.execute("SELECT initial_url, final_url FROM urls").fetchall())
+    assert rows["https://news.google.com/read/xyz"] == (
+        "https://www.fool.com/investing/hot-stock-2"
+    )
+
+    # Report records both, tagged by where they were caught.
+    report = json.loads((tmp_path / "runs" / "d1" / "download.json").read_text())
+    wheres = {b["where"] for b in report["blocked"]}
+    assert wheres == {"pre-fetch", "post-redirect"}
