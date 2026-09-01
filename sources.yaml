@@ -186,6 +186,15 @@ The Guardian:
   - https://www.theguardian.com/
   rss: https://www.theguardian.com/uk/technology/rss
 
+TLDR AI:
+  type: html
+  url: https://tldr.tech/api/latest/ai
+  filename: TLDR_AI
+  exclude:
+  - ^https://tldr.tech
+  - ^https://x.com/
+  - ^https://jobs\.
+  
 NewsAPI:
   type: rest
   url: https://newsapi.org/v2/everything
