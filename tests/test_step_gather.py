@@ -369,3 +369,31 @@ def test_gather_resume_with_cached_pages_completes(tmp_path, tmp_db, monkeypatch
     assert "https://news.example.com/story-one" in rows
     state = NewsletterAgentState(session_id="g1", db_path=tmp_db).load_latest_from_db()
     assert state.get_current_step() != "gather"
+
+
+def test_gather_drops_blocked_domains(tmp_path, tmp_db):
+    yaml_path = tmp_path / "sources.yaml"
+    yaml_path.write_text(
+        "sources:\n  Feed1:\n    type: rss\n    url: https://feed.example.com/rss\n    enabled: true\n"
+    )
+    _make_session(tmp_db, str(yaml_path))
+
+    rss_result = FetchResult(source="Feed1", ok=True, articles=[
+        Article(source="Feed1", title="Keep me headline", url="https://good.example.com/a"),
+        Article(source="Feed1", title="Farm headline", url="https://www.fool.com/investing/x"),
+    ])
+    from lib.appconfig import AppConfig
+    blocked_cfg = AppConfig(blocked_domains=frozenset({"fool.com"}))
+    with patch("lib.steps.gather.fetch_rss", return_value=rss_result), \
+         patch("lib.steps.gather.load_app_config", return_value=blocked_cfg):
+        runner = CliRunner()
+        result = runner.invoke(gather_cli, ["--db", tmp_db, "--session", "g1"])
+    assert result.exit_code == 0, result.output
+
+    with sqlite3.connect(tmp_db) as conn:
+        rows = {r[0] for r in conn.execute("SELECT initial_url FROM urls").fetchall()}
+    assert rows == {"https://good.example.com/a"}
+
+    state = NewsletterAgentState(session_id="g1", db_path=tmp_db).load_latest_from_db()
+    assert len(state.headline_data) == 1
+    assert "blocked" in result.output.lower()

@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 import click
 
+from lib.appconfig import load_app_config, url_is_blocked
 from lib.db import Site
 from lib.fetch.rss import fetch_rss
 from lib.fetch.html import fetch_html
@@ -125,6 +126,9 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
         if not (isinstance(cfg, dict) and cfg.get("enabled") is False)
     }
 
+    app_cfg = load_app_config()
+    blocked_by_source: dict[str, int] = {}
+
     report_sources: list[dict] = []
     all_articles: list[dict] = []
 
@@ -168,6 +172,9 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
                 d = a.model_dump()
                 d["url"] = clean_url(d.get("url", ""))
                 if not d["url"]:
+                    continue
+                if url_is_blocked(d["url"], app_cfg.blocked_domains):
+                    blocked_by_source[name] = blocked_by_source.get(name, 0) + 1
                     continue
                 all_articles.append(d)
 
@@ -242,6 +249,7 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
         "sources": report_sources,
         "new_headlines": new_count,
         "empty_sources": empty_sources,
+        "blocked": blocked_by_source,
     }, indent=2))
 
     if pw_fallback_sources:
@@ -253,6 +261,12 @@ def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
         for name, domain in pw_fallback_sources:
             click.echo(f"  - {name} ({domain})")
 
+    if blocked_by_source:
+        total_blocked = sum(blocked_by_source.values())
+        click.echo(
+            f"Dropped {total_blocked} URL(s) from blocked domains "
+            f"(config.yaml blocked_domains)."
+        )
     click.echo(f"Gathered {new_count} new headlines from {len(enabled_sources)} sources.")
     click.echo(f"  {'STATUS':<5} {'SOURCE':<24} {'FETCH':>5} {'NEW':>5}  METHOD")
     for s in report_sources:
