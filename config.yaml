@@ -1,0 +1,16 @@
+# Systemwide newsagent settings. Source definitions live in sources.yaml;
+# this file is for pipeline-wide operator config. Loaded by lib/appconfig.py.
+
+# Articles from these domains (including all subdomains) are dropped at
+# gather time (initial URL) and again at download time once redirects have
+# resolved (final URL) — aggregator links like news.google.com/read/... only
+# reveal their real domain after the redirect.
+blocked_domains:
+  - finbold.com            # legacy DOMAIN_SKIPLIST
+  - philarchive.org        # legacy DOMAIN_SKIPLIST
+  - fool.com               # stock-pump content farm (723 AI hits/90d)
+  - biztoc.com             # headline-scraping aggregator (446/90d)
+  - 247wallst.com          # financial content farm (253/90d)
+  - naturalnews.com        # misinformation site (83/90d)
+  - finainews.com          # spam farm (99/90d)
+  - investorshub.advfn.com # stock-forum spam (106/90d)
