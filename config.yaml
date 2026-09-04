@@ -14,3 +14,5 @@ blocked_domains:
   - naturalnews.com        # misinformation site (83/90d)
   - finainews.com          # spam farm (99/90d)
   - investorshub.advfn.com # stock-forum spam (106/90d)
+  - marketbeat.com         # stock-promo content farm via Yahoo Finance feed (213 entries, 14 published, Aug 2026)
+  - trefis.com             # stock-valuation content farm via Yahoo Finance feed (32 entries, 3 published, Aug 2026)
