@@ -16,3 +16,4 @@ blocked_domains:
   - investorshub.advfn.com # stock-forum spam (106/90d)
   - marketbeat.com         # stock-promo content farm via Yahoo Finance feed (213 entries, 14 published, Aug 2026)
   - trefis.com             # stock-valuation content farm via Yahoo Finance feed (32 entries, 3 published, Aug 2026)
+  - stacksocial.com        # deal listings via the StackSocial RSS feed in Feedly (16 entries, 0 published, Aug 2026)
