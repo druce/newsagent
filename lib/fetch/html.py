@@ -72,12 +72,16 @@ def _try_playwright(
     scroll = int(source_cfg.get("scroll", 0) or 0)
     scroll_div = source_cfg.get("scroll_div", "") or ""
     initial_sleep = float(source_cfg.get("initial_sleep", 0) or 0)
+    scroll_wait = float(source_cfg.get("scroll_wait", 8.0) or 8.0)
+    scroll_time_budget = float(source_cfg.get("scroll_time_budget", 180.0) or 180.0)
     try:
         html = fetch_url_html(
             url,
             scroll=scroll,
             scroll_div=scroll_div,
             initial_sleep=initial_sleep,
+            scroll_wait=scroll_wait,
+            scroll_time_budget=scroll_time_budget,
         )
     except Exception as exc:
         return FetchResult(source=source_name, ok=False,

@@ -40,9 +40,10 @@ Feedly AI:
   - ^https://feedly.com
   - ^https://s1.feedly.com
   - ^https://blog.feedly.com
-  scroll: 4   # page down times for infinite scroll
-  initial_sleep: 20
+  scroll: 10          # max pages via scroll-to-bottom; loop stops early at end-of-feed
+  initial_sleep: 20   # SPA auth + first render
   scroll_div: "#feedlyFrame"
+  scroll_wait: 10     # seconds to wait for new entries after each scroll pass
 
 # Google News:  # started blocking more effectively
 # # could try to search news for 'artificial intelligence' with the google API https://proxiesapi.com/articles/fetching-news-articles-with-the-google-news-api-and-python

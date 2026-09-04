@@ -79,3 +79,24 @@ def test_fetch_html_reports_failure_if_both_methods_fail():
     assert result.ok is False
     assert method == "playwright"  # last attempted
     assert raw is None  # both methods failed, nothing to save
+
+
+def test_try_playwright_threads_scroll_options():
+    cfg = dict(_CFG_GOOD, scroll=10, scroll_div="#f", initial_sleep=20,
+               scroll_wait=10, scroll_time_budget=200)
+    with patch("lib.fetch.html.fetch_url_html", return_value=_HTML_GOOD) as mock_pw:
+        fetch_html("Example", cfg, scrape_method="playwright")
+    kw = mock_pw.call_args.kwargs
+    assert kw["scroll"] == 10
+    assert kw["scroll_div"] == "#f"
+    assert kw["initial_sleep"] == 20.0
+    assert kw["scroll_wait"] == 10.0
+    assert kw["scroll_time_budget"] == 200.0
+
+
+def test_try_playwright_default_scroll_wait():
+    with patch("lib.fetch.html.fetch_url_html", return_value=_HTML_GOOD) as mock_pw:
+        fetch_html("Example", _CFG_GOOD, scrape_method="playwright")
+    kw = mock_pw.call_args.kwargs
+    assert kw["scroll_wait"] == 8.0
+    assert kw["scroll_time_budget"] == 180.0

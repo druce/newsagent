@@ -3,9 +3,15 @@
 Uses a stealth-configured Firefox persistent context (see lib/fetch/browser.py)
 so SSO flows, DataDome-protected sites, and other automation-detecting pages
 treat us like a returning human user. Supports SPA-friendly options
-(`scroll`, `scroll_div`, `initial_sleep`, `block_resources`) for sites like
-Feedly that infinite-scroll. Failure modes (timeout, no network, etc.)
-propagate as Exceptions; callers decide how to handle.
+(`scroll`, `scroll_div`, `initial_sleep`, `scroll_wait`, `scroll_time_budget`,
+`block_resources`) for sites like Feedly that infinite-scroll. Scrolling is a
+convergence loop (`_scroll_until_settled`): after each scroll-to-bottom it
+polls the in-page link count until it grows, nudges + retries when stalled,
+and stops at `scroll` pages, end-of-feed, or the time budget — a fixed count
+of blind scrolls raced the lazy loader and intermittently captured only the
+first page (Feedly 2026-09-01 / 09-04: 40 of ~250 entries). Failure modes
+(timeout, no network, etc.) propagate as Exceptions; callers decide how to
+handle.
 """
 from __future__ import annotations
 
@@ -13,6 +19,7 @@ import asyncio
 import random
 import sys
 import time
+from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -113,17 +120,123 @@ async def _enable_fast_mode(page, blocked_types=_BLOCKED_TYPES_DEFAULT) -> None:
     await page.route("**/*", _handler)
 
 
-async def _scroll_to_bottom(page, scroll_div: str = "") -> None:
+# Indirections so tests can substitute a deterministic clock / instant sleep /
+# fixed jitter without monkeypatching asyncio or time globally (asyncio's own
+# event loop uses time.monotonic).
+_now = time.monotonic
+_sleep = asyncio.sleep
+_uniform = random.uniform
+
+# The selector is passed as an evaluate() ARGUMENT, never interpolated into
+# the JS text (the old `%r` template broke on quotes/backslashes).
+_JS_SCROLL = """([sel, nudge]) => {
+  const el = sel ? document.querySelector(sel) : null;
+  const t = el || document.scrollingElement || document.body;
+  if (nudge) { t.scrollTop = Math.max(0, t.scrollTop - 400); }
+  t.scrollTop = t.scrollHeight;
+  if (!el) window.scrollTo(0, document.body.scrollHeight);
+  return !!el;
+}"""
+_JS_METRIC = """(sel) => {
+  const root = (sel && document.querySelector(sel)) || document;
+  return root.querySelectorAll('a[href]').length;
+}"""
+_SCROLL_DIV_WAIT_MS = 10_000
+_POLL_INTERVAL_S = 0.5
+
+
+@dataclass
+class ScrollStats:
+    pages: int      # initial page + scroll passes that produced growth
+    links: int      # final in-container <a href> count
+    stopped: str    # "max_pages" | "end_of_feed" | "time_budget" | "no_scroll"
+
+
+async def _scroll_to_bottom(page, scroll_div: str = "", *, nudge: bool = False) -> bool:
+    """Scroll the container (or window) to the bottom. `nudge` first backs up
+    ~400px so a container already sitting at the bottom re-fires its scroll
+    event (re-assigning an unchanged scrollTop fires nothing). Returns whether
+    `scroll_div` matched an element."""
+    return bool(await page.evaluate(_JS_SCROLL, [scroll_div, nudge]))
+
+
+async def _count_links(page, scroll_div: str = "") -> int:
+    try:
+        return int(await page.evaluate(_JS_METRIC, scroll_div))
+    except Exception:
+        return -1
+
+
+async def _wait_for_growth(page, scroll_div: str, baseline: int,
+                           scroll_wait: float, deadline: float) -> int:
+    """Poll the link count until it exceeds `baseline`, `scroll_wait` seconds
+    elapse, or `deadline` passes. Returns the last count seen (>= baseline)."""
+    t_end = min(_now() + scroll_wait, deadline)
+    last = baseline
+    while True:
+        n = await _count_links(page, scroll_div)
+        if n > baseline:
+            return n
+        if n >= 0:
+            last = max(last, n)
+        if _now() >= t_end:
+            return last
+        await _sleep(_POLL_INTERVAL_S)
+
+
+async def _scroll_until_settled(
+    page,
+    *,
+    scroll_div: str,
+    max_pages: int,
+    scroll_wait: float,
+    initial_sleep: float,
+    time_budget: float,
+    max_retries: int = 2,
+) -> ScrollStats:
+    """Convergence loop for infinite-scroll pages. `max_pages` is the `scroll`
+    config key: the cap on pages collected (initial page counts as 1)."""
+    if max_pages <= 0 and initial_sleep <= 0:
+        return ScrollStats(pages=1, links=0, stopped="no_scroll")
+    t0 = _now()
+    deadline = t0 + time_budget
+    # Blind minimum settle, as before (Feedly's SPA needs ~20s to auth+render)…
+    await _sleep(initial_sleep + _uniform(0.5, 1.5))
+    # …then a bounded wait for the container so a slow frame doesn't silently
+    # degrade into scrolling the window.
     if scroll_div:
-        await page.evaluate(
-            """
-            const el = document.querySelector(%r);
-            if (el) { el.scrollTop = el.scrollHeight; }
-            else    { window.scrollTo(0, document.body.scrollHeight); }
-            """ % scroll_div
-        )
-    else:
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+        try:
+            await page.wait_for_selector(scroll_div, timeout=_SCROLL_DIV_WAIT_MS)
+        except Exception:
+            _plog(f"scroll: {scroll_div!r} not found after {_SCROLL_DIV_WAIT_MS // 1000}s; window fallback")
+    before = await _wait_for_growth(page, scroll_div, 0, scroll_wait, deadline)
+    pages = 1
+    stopped = "max_pages"
+    while pages < max_pages:
+        if _now() >= deadline:
+            stopped = "time_budget"
+            break
+        after = before
+        grew = False
+        for attempt in range(max_retries + 1):
+            await _scroll_to_bottom(page, scroll_div, nudge=attempt > 0)
+            after = await _wait_for_growth(page, scroll_div, before, scroll_wait, deadline)
+            if after > before:
+                grew = True
+                break
+            _plog(f"scroll {pages}/{max_pages}: no growth ({before} links), "
+                  f"nudge retry {attempt + 1}/{max_retries}")
+            if _now() >= deadline:
+                break
+        if not grew:
+            stopped = "time_budget" if _now() >= deadline else "end_of_feed"
+            break
+        pages += 1
+        _plog(f"scroll {pages}/{max_pages}: {before} -> {after} links (+{after - before})")
+        before = after
+        await _sleep(_uniform(0.3, 0.8))
+    _plog(f"scroll done: {pages} pages, {before} links, {stopped}, {_now() - t0:.1f}s")
+    return ScrollStats(pages=pages, links=before, stopped=stopped)
 
 
 async def fetch_url_html_async(
@@ -134,16 +247,21 @@ async def fetch_url_html_async(
     scroll_div: str = "",
     initial_sleep: float = 0.0,
     block_resources: bool = True,
+    scroll_wait: float = 8.0,
+    scroll_time_budget: float = 180.0,
 ) -> str:
     """Open firefox headless with stealth + persistent profile, return HTML.
 
     Args:
         url: page to load.
         timeout_ms: navigation timeout.
-        scroll: number of scrollTo-bottom passes (for infinite-scroll SPAs).
+        scroll: max pages to collect via scroll-to-bottom (infinite-scroll SPAs);
+            the loop stops early at end-of-feed.
         scroll_div: CSS selector of a scroll container; empty = window scroll.
         initial_sleep: seconds to wait after DCL before scrolling (jittered).
         block_resources: drop images/media/fonts to speed loads + reduce noise.
+        scroll_wait: seconds to wait for new links after each scroll pass.
+        scroll_time_budget: hard ceiling on total scrolling time.
     """
     from playwright.async_api import async_playwright
 
@@ -156,11 +274,11 @@ async def fetch_url_html_async(
             await page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
             await _await_aggregator_redirect(page)
             await _await_hydration(page)
-            if initial_sleep > 0 or scroll > 0:
-                await asyncio.sleep(initial_sleep + random.uniform(0.5, 1.5))
-            for _ in range(scroll):
-                await _scroll_to_bottom(page, scroll_div=scroll_div)
-                await asyncio.sleep(random.uniform(1.0, 2.5))
+            await _scroll_until_settled(
+                page, scroll_div=scroll_div, max_pages=scroll,
+                scroll_wait=scroll_wait, initial_sleep=initial_sleep,
+                time_budget=scroll_time_budget,
+            )
             html = await page.content()
         finally:
             await ctx.close()
@@ -175,12 +293,15 @@ def fetch_url_html(
     scroll_div: str = "",
     initial_sleep: float = 0.0,
     block_resources: bool = True,
+    scroll_wait: float = 8.0,
+    scroll_time_budget: float = 180.0,
 ) -> str:
     """Sync facade for fetch_url_html_async."""
     return asyncio.run(fetch_url_html_async(
         url, timeout_ms=timeout_ms,
         scroll=scroll, scroll_div=scroll_div,
         initial_sleep=initial_sleep, block_resources=block_resources,
+        scroll_wait=scroll_wait, scroll_time_budget=scroll_time_budget,
     ))
 
 
