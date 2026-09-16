@@ -82,3 +82,15 @@ def test_list_recent_sessions(tmp_db):
     recents = NewsletterAgentState.list_recent_sessions(tmp_db, limit=10)
     assert set(recents) == {"a", "b"}
     assert recents[0] in {"a", "b"}  # newest first (ordering by updated_at)
+
+
+def test_get_status_counts_sections_by_distinct_category():
+    state = NewsletterAgentState(session_id="s", db_path=":memory:")
+    state.newsletter_section_data = [
+        {"cat": "AI", "link": "https://e.com/1", "id": 0},
+        {"cat": "AI", "link": "https://e.com/2", "id": 1},
+        {"cat": "Robots", "link": "https://e.com/3", "id": 2},
+    ]
+    status = state.get_status()
+    assert status["processing"]["newsletter_sections"] == 2
+    assert status["processing"]["selected_articles"] == 3

@@ -391,8 +391,14 @@ def deliver_newsletter(
     if not previously_sent:
         try:
             n = _record_published_articles(state, session_id, db_path)
-            if echo and n:
-                click.echo(f"Recorded {n} article(s) to the cross-day dedup store.")
+            if n:
+                if echo:
+                    click.echo(f"Recorded {n} article(s) to the cross-day dedup store.")
+            elif state.final_newsletter:
+                click.echo(
+                    "Warning: recorded 0 article(s) to the cross-day dedup store — "
+                    "newsletter_section_data carries no per-article ids/links, so "
+                    "crossdedupe will not see this issue.", err=True)
         except Exception as exc:  # pragma: no cover - defensive
             click.echo(f"Warning: could not record published articles: {exc}", err=True)
 

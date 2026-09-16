@@ -9,7 +9,8 @@ Three modes (mirror of lib/steps/filter.py):
      stories plus ALL THREE pre-rendered prompts (write/critique/improve) so
      a single Sonnet Agent can run the entire critic loop in its own context.
   3. --apply-results DIR: read result JSONs from DIR (one per section),
-     write final_section_markdown back to state.newsletter_section_data.
+     write final_section_markdown to state.section_drafts (the per-article
+     selection in state.newsletter_section_data is left intact for send).
 
 In interactive mode the Agent runs the loop internally:
   write → critique → if accept or score>=8.0 stop, else improve → next iter,
@@ -315,7 +316,7 @@ def cli(
                 "final_length": len(r.final_section_markdown),
             })
 
-        state.newsletter_section_data = new_sections
+        state.section_drafts = new_sections
         state.complete_step("draft", message=f"{len(new_sections)} sections drafted")
         state.save_checkpoint("draft")
 
@@ -350,7 +351,7 @@ def cli(
         {"cat": cat, "section_markdown": results_classic[cat].final_draft}
         for cat in cats
     ]
-    state.newsletter_section_data = new_sections
+    state.section_drafts = new_sections
     state.complete_step("draft", message=f"{len(new_sections)} sections drafted")
     state.save_checkpoint("draft")
 

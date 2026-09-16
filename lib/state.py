@@ -184,7 +184,14 @@ class NewsletterAgentState(WorkflowState):
     headline_data: List[Dict[str, Any]] = Field(default_factory=list)
     cluster_names: List[str] = Field(default_factory=list)
     clusters: Dict[str, List[str]] = Field(default_factory=dict)
+    # Per-article selection written by `select`: {cat, headline, link, site_name,
+    # rating, summary, id}. Read by draft (grouped by cat), diff, and send
+    # (recorded into published_articles for cross-day dedup). Never overwritten
+    # by later steps.
     newsletter_section_data: List[Dict[str, Any]] = Field(default_factory=list)
+    # Drafted markdown per section written by `draft`: {cat, section_markdown}.
+    # Read by rewrite. Kept separate so the selection above survives to send.
+    section_drafts: List[Dict[str, Any]] = Field(default_factory=list)
     newsletter_title: str = ""
     final_newsletter: str = ""
 
@@ -257,6 +264,10 @@ class NewsletterAgentState(WorkflowState):
 
     # ---- status ----
 
+    def section_count(self) -> int:
+        """Distinct section categories in the per-article selection."""
+        return len({s.get("cat", "") for s in self.newsletter_section_data})
+
     def get_status(self) -> Dict[str, Any]:
         return {
             "session_id": self.session_id,
@@ -278,7 +289,8 @@ class NewsletterAgentState(WorkflowState):
             },
             "processing": {
                 "topic_clusters": len(self.clusters),
-                "newsletter_sections": len(self.newsletter_section_data),
+                "newsletter_sections": self.section_count(),
+                "selected_articles": len(self.newsletter_section_data),
                 "final_newsletter_length": len(self.final_newsletter),
             },
         }

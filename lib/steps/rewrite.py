@@ -33,9 +33,13 @@ _BATCHES_SUBDIR = "rewrite-batches"
 
 
 def _initial_draft(state: NewsletterAgentState) -> str:
-    return "\n\n".join(
-        s.get("section_markdown", "") for s in state.newsletter_section_data
-    )
+    """Concatenate the drafted sections. Sessions drafted before
+    `section_drafts` existed carry {cat, section_markdown} dicts in
+    newsletter_section_data instead; fall back to those."""
+    sections = state.section_drafts or [
+        s for s in state.newsletter_section_data if "section_markdown" in s
+    ]
+    return "\n\n".join(s.get("section_markdown", "") for s in sections)
 
 
 def _prepare_batch(session_id: str, draft: str, max_edits: int) -> Path:

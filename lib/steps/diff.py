@@ -27,12 +27,9 @@ _STATUS_ICONS = {
 
 
 def _extract_urls(state: NewsletterAgentState) -> set[str]:
-    """Extract selected article URLs from newsletter_section_data.
-
-    The section_data can take two shapes:
-    - post-select: [{"link": url, "headline": ..., "cat": ...}, ...]
-    - post-draft:  [{"cat": ..., "section_markdown": ...}, ...]
-    """
+    """Extract selected article URLs from newsletter_section_data
+    ([{"link": url, "headline": ..., "cat": ..., "id": ...}, ...], written by
+    select and left intact by every later step)."""
     urls: set[str] = set()
     for item in state.newsletter_section_data:
         if isinstance(item, dict) and "link" in item:
@@ -85,7 +82,8 @@ def cli(session_id_1: str, session_id_2: str, db_path: str) -> None:
     click.echo("|---|---|---|")
     click.echo(f"| Title | {s1.newsletter_title or '(none)'} | {s2.newsletter_title or '(none)'} |")
     click.echo(f"| Headline count | {len(s1.headline_data)} | {len(s2.headline_data)} |")
-    click.echo(f"| Section count | {len(s1.newsletter_section_data)} | {len(s2.newsletter_section_data)} |")
+    click.echo(f"| Section count | {s1.section_count()} | {s2.section_count()} |")
+    click.echo(f"| Selected articles | {len(s1.newsletter_section_data)} | {len(s2.newsletter_section_data)} |")
     click.echo(f"| Newsletter length | {len(s1.final_newsletter)} chars | {len(s2.final_newsletter)} chars |")
     click.echo(f"| URL overlap (Jaccard) | {overlap_pct} | — |")
     click.echo(f"| URLs in common | {len(urls1 & urls2)} of {len(urls1 | urls2)} total | — |")

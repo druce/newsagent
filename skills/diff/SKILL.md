@@ -25,7 +25,8 @@ Two markdown tables printed to stdout:
 **Summary table** — one row per metric:
 - Newsletter title (from each session)
 - Headline count (after gather/filter)
-- Section count (items in `newsletter_section_data`)
+- Section count (distinct `cat` values in `newsletter_section_data`) and
+  selected-article count (items in it)
 - Final newsletter length in characters
 - URL overlap: Jaccard similarity of the selected article URL sets, as `%`
 - Shared URL count out of union total
@@ -49,7 +50,8 @@ Two markdown tables printed to stdout:
 ## Notes
 
 - The URL overlap metric compares the `link` field of items in
-  `newsletter_section_data`. Items that only have `section_markdown` (post-draft
-  shape) are silently skipped — overlap will show `0%` for fully-drafted sessions
-  that did not populate `link`.
+  `newsletter_section_data`, which `select` writes and no later step modifies.
+  Sessions drafted before 2026-09-16 had that list overwritten by `draft` with
+  `{cat, section_markdown}` dicts; those show `0%` overlap and a section count
+  equal to their section-draft count.
 - Does not modify the database.

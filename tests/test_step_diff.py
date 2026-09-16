@@ -61,3 +61,20 @@ def test_diff_both_empty(tmp_db):
     # Should mention both sessions without crashing
     assert "empty-A" in result.output
     assert "empty-B" in result.output
+
+
+def test_diff_section_count_is_distinct_categories(tmp_db):
+    """Section count = distinct cats; the per-article list has 3 entries here."""
+    _make_session(tmp_db, "sid-C", [
+        {"cat": "AI", "link": "https://e.com/1", "headline": "a"},
+        {"cat": "AI", "link": "https://e.com/2", "headline": "b"},
+        {"cat": "Robots", "link": "https://e.com/3", "headline": "c"},
+    ])
+    _make_session(tmp_db, "sid-D", [
+        {"cat": "AI", "link": "https://e.com/1", "headline": "a"},
+    ])
+    from lib.steps.diff import cli as diff_cli
+    result = CliRunner().invoke(diff_cli, ["sid-C", "sid-D", "--db", tmp_db])
+    assert result.exit_code == 0, result.output
+    assert "| Section count | 2 | 1 |" in result.output
+    assert "| Selected articles | 3 | 1 |" in result.output

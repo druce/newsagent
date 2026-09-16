@@ -180,7 +180,11 @@ def test_interactive_pipeline_chains(tmp_db, monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
 
     state = NewsletterAgentState(session_id="e2e", db_path=tmp_db).load_latest_from_db()
-    assert all("section_markdown" in s for s in state.newsletter_section_data)
+    assert all("section_markdown" in s for s in state.section_drafts)
+    # select's per-article list survives draft (send records it into the
+    # cross-day dedup store; draft used to overwrite it and break crossdedupe)
+    assert len(state.newsletter_section_data) == 6
+    assert all("link" in s and "id" in s for s in state.newsletter_section_data)
 
     # --- rewrite: prepare + apply ---
     r = runner.invoke(rewrite_cli, ["--db", tmp_db, "--session", "e2e", "--prepare-batches"])

@@ -38,7 +38,7 @@ def _seed_state(tmp_db: str, session_id: str = "s1") -> NewsletterAgentState:
               "rate", "cluster", "select", "draft"]:
         state.complete_step(s)
 
-    state.newsletter_section_data = [
+    state.section_drafts = [
         {
             "cat": "Artificial Intelligence",
             "section_markdown": "## Artificial Intelligence\n- AI story 1 — [Source](https://ai.com/1)\n",
@@ -50,6 +50,23 @@ def _seed_state(tmp_db: str, session_id: str = "s1") -> NewsletterAgentState:
     ]
     state.save_checkpoint("draft")
     return state
+
+
+def test_initial_draft_reads_section_drafts_and_falls_back_to_legacy_shape(tmp_db):
+    """New sessions carry drafts in `section_drafts`; sessions drafted before
+    that field existed still have {cat, section_markdown} dicts in
+    newsletter_section_data, and rewrite must keep working on them."""
+    from lib.steps.rewrite import _initial_draft
+
+    state = _seed_state(tmp_db, session_id="s_new")
+    md = _initial_draft(state)
+    assert "## Artificial Intelligence" in md and "## Robotics" in md
+
+    legacy = NewsletterAgentState(session_id="s_old", db_path=tmp_db)
+    legacy.newsletter_section_data = [
+        {"cat": "Old", "section_markdown": "## Old\n- legacy story\n"},
+    ]
+    assert "## Old" in _initial_draft(legacy)
 
 
 def _make_fake_call_prompt(engine_log=None):

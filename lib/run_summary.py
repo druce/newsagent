@@ -99,9 +99,7 @@ def generate_summary(
     if state is not None:
         headline_count = len(state.headline_data) if state.headline_data else 0
         cluster_count = len(state.cluster_names) if state.cluster_names else 0
-        section_count = len(set(
-            s.get("cat", "") for s in state.newsletter_section_data
-        )) if state.newsletter_section_data else 0
+        section_count = state.section_count()
         newsletter_len = len(state.final_newsletter) if state.final_newsletter else 0
         newsletter_title = state.newsletter_title or ""
 

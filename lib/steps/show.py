@@ -28,7 +28,8 @@ def cli(session_id: str, db_path: str, step: str | None) -> None:
         click.echo(f"  - {s['step_name']:<14} {s['updated_at']}")
     click.echo("")
     click.echo(f"Headlines: {len(loaded.headline_data)}")
-    click.echo(f"Sections:  {len(loaded.newsletter_section_data)}")
+    click.echo(f"Sections:  {loaded.section_count()}")
+    click.echo(f"Selected articles: {len(loaded.newsletter_section_data)}")
     click.echo(f"Newsletter title: {loaded.newsletter_title or '(none)'}")
     click.echo(f"Newsletter length: {len(loaded.final_newsletter)} chars")
 

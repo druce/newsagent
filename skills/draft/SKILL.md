@@ -106,8 +106,10 @@ python -m lib.steps.draft --session SID \
 ```
 
 Validates each result file against `DraftSectionResult`, writes
-`{cat, section_markdown}` entries into `state.newsletter_section_data`,
-writes `runs/<SID>/draft.json` with the per-section transcripts.
+`{cat, section_markdown}` entries into `state.section_drafts` (the per-article
+selection in `state.newsletter_section_data` is left untouched — `send` records
+it into the cross-day dedup store), and writes `runs/<SID>/draft.json` with the
+per-section transcripts.
 
 ### Step 4: retry on failure
 
@@ -127,6 +129,9 @@ In-process `ThreadPoolExecutor` runs the critic loop via
 
 ## Output contract
 
-- `state.newsletter_section_data` replaced with `[{cat, section_markdown}, ...]`.
+- `state.section_drafts` set to `[{cat, section_markdown}, ...]`.
+- `state.newsletter_section_data` (select's per-article list) is NOT modified.
+  Draft used to overwrite it, which left `send` with nothing to record and made
+  `crossdedupe` a silent no-op for every session (fixed 2026-09-16).
 - `runs/<SID>/draft.json` written with per-section transcript metadata.
 - `draft` step marked COMPLETE.

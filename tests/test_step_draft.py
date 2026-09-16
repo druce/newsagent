@@ -139,14 +139,17 @@ def test_draft_produces_one_section_per_cluster(tmp_db, monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
 
     state = NewsletterAgentState(session_id="s1", db_path=tmp_db).load_latest_from_db()
-    cats = [s["cat"] for s in state.newsletter_section_data]
+    cats = [s["cat"] for s in state.section_drafts]
     assert len(cats) == 2, f"Expected 2 sections, got {len(cats)}: {cats}"
     assert "Artificial Intelligence" in cats
     assert "Robotics" in cats
     # Each entry must have section_markdown
-    for s in state.newsletter_section_data:
+    for s in state.section_drafts:
         assert "section_markdown" in s
         assert len(s["section_markdown"]) > 0
+    # The per-article selection is NOT overwritten (send records it later).
+    assert len(state.newsletter_section_data) == 4
+    assert all("link" in s and "id" in s for s in state.newsletter_section_data)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +184,7 @@ def test_draft_max_edits_zero_skips_critic(tmp_db, monkeypatch, tmp_path):
     )
     # But we still get 2 sections
     state = NewsletterAgentState(session_id="s2", db_path=tmp_db).load_latest_from_db()
-    assert len(state.newsletter_section_data) == 2
+    assert len(state.section_drafts) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +330,10 @@ def test_draft_apply_reads_results_and_writes_sections(tmp_db, monkeypatch, tmp_
 
     state = NewsletterAgentState(session_id="d_apply", db_path=tmp_db).load_latest_from_db()
     assert state is not None
-    section_cats = {s["cat"] for s in state.newsletter_section_data}
+    section_cats = {s["cat"] for s in state.section_drafts}
     assert section_cats == set(cats)
-    for s in state.newsletter_section_data:
+    for s in state.section_drafts:
         assert s["section_markdown"].startswith("## ")
+    # --apply-results must leave the per-article selection intact too.
+    assert len(state.newsletter_section_data) == 4
+    assert all("link" in s and "id" in s for s in state.newsletter_section_data)

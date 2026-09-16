@@ -290,3 +290,54 @@ def test_send_recording_failure_is_swallowed(tmp_path, tmp_db, monkeypatch):
     with sqlite3.connect(tmp_db) as conn:
         n = conn.execute("SELECT COUNT(*) FROM published_articles").fetchone()[0]
     assert n == 0
+
+
+def test_send_records_articles_after_a_real_draft(tmp_path, tmp_db, monkeypatch):
+    """Regression: draft used to overwrite newsletter_section_data with
+    {cat, section_markdown} dicts, so send's recorder found no ids/links and
+    silently wrote 0 rows — crossdedupe was a no-op for every session."""
+    from lib.steps.draft import cli as draft_cli
+
+    monkeypatch.chdir(tmp_path)
+    state = _setup_with_sections(tmp_db)
+    for step in ("gather", "filter", "download", "summarize", "rate", "cluster", "select"):
+        state.complete_step(step)
+    state.save_checkpoint("select")
+
+    runner = CliRunner()
+    r = runner.invoke(draft_cli, ["--db", tmp_db, "--session", "s1", "--prepare-batches"])
+    assert r.exit_code == 0, r.output
+    results_dir = Path("runs/s1/draft-results")
+    results_dir.mkdir(parents=True)
+    (results_dir / "batch-000.json").write_text(json.dumps({
+        "cat": "AI", "final_section_markdown": "## AI\n- fake headline",
+        "iterations": 1, "scores": [9.0], "feedbacks": ["ok"], "accepted": True,
+    }))
+    r = runner.invoke(draft_cli, ["--db", tmp_db, "--session", "s1",
+                                  "--apply-results", str(results_dir)])
+    assert r.exit_code == 0, r.output
+
+    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.5] for _ in t]):
+        r = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
+    assert r.exit_code == 0, r.output
+    assert "Recorded 2 article(s)" in r.output
+
+    with sqlite3.connect(tmp_db) as conn:
+        urls = [row[0] for row in conn.execute(
+            "SELECT url FROM published_articles ORDER BY url")]
+    assert urls == ["https://e.com/0", "https://e.com/1"]
+
+
+def test_send_warns_when_nothing_is_recorded(tmp_path, tmp_db, monkeypatch):
+    """A non-empty newsletter that records zero articles is a bug in the
+    upstream state, not a quiet success — say so on stderr."""
+    monkeypatch.chdir(tmp_path)
+    state = _setup_with_sections(tmp_db)
+    state.newsletter_section_data = [{"cat": "AI", "section_markdown": "## AI\n- x"}]
+    state.save_checkpoint("start")
+
+    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.5] for _ in t]):
+        runner = CliRunner()
+        result = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
+    assert result.exit_code == 0, result.output
+    assert "Warning" in result.output and "0 article" in result.output
