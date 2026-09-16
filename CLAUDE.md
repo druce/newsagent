@@ -31,8 +31,9 @@ Do not import from that path; do not modify it.
 
 `start → gather → filter → download → dedupe → summarize → crossdedupe → coverage → rate → cluster → select → draft → rewrite → send`
 
-Plus the standalone `newsagent:bluesky`, `newsagent:beehiiv`, and seven
-recovery/maintenance skills. `newsagent:finalize` chains bluesky → beehiiv after
+Plus the standalone `newsagent:bluesky`, `newsagent:beehiiv`, and the
+recovery/maintenance skills (including `newsagent:backfill-published`, which
+rebuilds the `published_articles` store from past `select` checkpoints). `newsagent:finalize` chains bluesky → beehiiv after
 a Chrome/beehiiv-login pre-flight; it is the only skill that hard-requires the
 Chrome extension end to end and it never falls back to a headless browser.
 

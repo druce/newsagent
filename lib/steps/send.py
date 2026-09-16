@@ -279,19 +279,22 @@ def _render_html(title: str, body_md: str, local_path: Optional[str] = None) -> 
 
 
 def _record_published_articles(
-    state: NewsletterAgentState, session_id: str, db_path: str
+    state: NewsletterAgentState, session_id: str, db_path: str,
+    published_at: Optional[str] = None,
 ) -> int:
     """Store each published article (title + short_summary embedding) in the
     `published_articles` table so future runs can suppress cross-day repeats.
 
     Canonical representation = OpenAI text-embedding-3-large of
     `title + short_summary` — matches what `crossdedupe` embeds for candidates.
+    `published_at` defaults to now; `backfill_published` passes the original
+    newsletter timestamp so crossdedupe's lookback window sees the right day.
     Returns the number of rows written.
     """
     items = state.newsletter_section_data or []
     if not items:
         return 0
-    now = datetime.now().isoformat()
+    now = published_at or datetime.now().isoformat()
     texts: list[str] = []
     metas: list[tuple[str, str, str]] = []  # (url, title, short_summary)
     for it in items:
