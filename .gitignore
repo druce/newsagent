@@ -41,3 +41,7 @@ scratch_og_b64.txt
 
 # Design/implementation plans — kept locally, not in the repo
 docs/superpowers/
+
+# Eval extraction intermediates (large, regenerable from runs/ + DB until truncation)
+/evals/archive/
+/evals/work/
