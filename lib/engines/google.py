@@ -12,11 +12,24 @@ from pydantic import BaseModel, ValidationError
 from lib.engines.base import EngineBlockedError, EngineError
 
 
-# Mirrors legacy _GEMINI_THINKING_MAP in ~/projects/OpenAIAgentsSDK/llm.py:451.
-# Keys are reasoning_effort levels; values are thinking_budget tokens.
-_THINKING_MAP = {0: 0, 1: 512, 2: 1024, 3: 1536,
-                 4: 2048, 5: 3072, 6: 4096, 7: 6144,
-                 8: 8192, 9: 12288, 10: 16384}
+# Thinking control. Google deprecated thinking_budget: Gemini 3.x only remaps
+# it onto thinking_level as a fallback, and upcoming models reject it with
+# 400 INVALID_ARGUMENT. reasoning_effort 0-10 maps onto the same buckets as
+# the openai/openrouter engines. (The legacy token budgets were
+# 0/512/1024/1536/2048/3072/4096/6144/8192/12288/16384 for effort 0-10.)
+# Custom sampling params (temperature/top_p/top_k) are likewise deprecated
+# and must never be sent.
+def _thinking_level(effort: int) -> str:
+    """Map 0-10 reasoning_effort to a Gemini thinking_level."""
+    effort = max(0, min(10, effort))
+    if effort == 0:
+        return "minimal"
+    if effort <= 3:
+        return "low"
+    if effort <= 6:
+        return "medium"
+    return "high"
+
 
 # Models that should NOT receive thinking_config at all. Empty by default —
 # every current Gemini model handles thinking_config fine when paired with a
@@ -30,11 +43,6 @@ _NO_REASONING_MODELS: set[str] = set()
 # the SDK falls back to a much smaller default (~8K) and structured-output
 # responses can get truncated mid-string when the model is verbose.
 _MAX_OUTPUT_TOKENS = 65536
-
-
-def _thinking_budget(effort: int) -> int:
-    """Map 0-10 reasoning_effort to Gemini thinking_budget (0 = off)."""
-    return _THINKING_MAP.get(max(0, min(10, effort)), 0)
 
 
 def google_engine(model_id: str) -> Callable[..., BaseModel]:
@@ -53,14 +61,9 @@ def google_engine(model_id: str) -> Callable[..., BaseModel]:
             "response_schema": schema,
         }
 
-        # Only attach thinking_config for reasoning-capable models with a
-        # positive budget. Sending ThinkingConfig to a non-reasoning model
-        # (e.g. gemini-3.1-flash-lite) can cause it to leak reasoning text
-        # into schema string fields and truncate mid-output.
-        thinking_tokens = _thinking_budget(reasoning_effort)
-        if thinking_tokens > 0 and model_id not in _NO_REASONING_MODELS:
+        if model_id not in _NO_REASONING_MODELS:
             config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
-                thinking_budget=thinking_tokens
+                thinking_level=_thinking_level(reasoning_effort)
             )
 
         config = genai_types.GenerateContentConfig(**config_kwargs)

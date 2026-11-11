@@ -63,3 +63,35 @@ def test_google_engine_raises_blocked_when_prompt_filtered(monkeypatch):
 
 def test_engine_blocked_error_is_an_engine_error():
     assert issubclass(EngineBlockedError, EngineError)
+
+
+# ---------------------------------------------------------------------------
+# Thinking control: Google deprecated thinking_budget (upcoming models return
+# 400 INVALID_ARGUMENT) in favour of thinking_level. reasoning_effort 0-10 maps
+# onto the same buckets as the openai/openrouter engines.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("effort, level", [
+    (0, "minimal"), (1, "low"), (2, "low"), (3, "low"),
+    (4, "medium"), (5, "medium"), (6, "medium"),
+    (7, "high"), (8, "high"), (10, "high"),
+])
+def test_thinking_level_mapping(effort, level):
+    from lib.engines.google import _thinking_level
+    assert _thinking_level(effort) == level
+
+
+def test_google_engine_sends_thinking_level_not_budget(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-test")
+    fake_client = MagicMock()
+    fake_client.models.generate_content.return_value = _fake_resp('{"answer": "yes"}')
+    with patch("lib.engines.google.genai.Client", return_value=fake_client):
+        google_engine("gemini-3.5-flash-lite")(system="s", user="u", schema=_Out, reasoning_effort=2)
+    config = fake_client.models.generate_content.call_args.kwargs["config"]
+    tc = config.thinking_config
+    assert tc is not None
+    assert tc.thinking_budget is None
+    assert str(getattr(tc.thinking_level, "value", tc.thinking_level)).lower() == "low"
+    # no custom sampling parameters (deprecated; future models reject them)
+    assert config.temperature is None and config.top_p is None and config.top_k is None
