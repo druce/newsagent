@@ -19,6 +19,17 @@ class EngineBlockedError(EngineError):
     """
 
 
+class EngineTransientError(EngineError):
+    """Raised when the provider failed for a reason that is likely to clear on
+    retry: a transport-level drop (connection reset, server disconnected before
+    responding, SSL EOF, timeout) or an HTTP 5xx.
+
+    Distinct from EngineBlockedError (deterministic refusal) and from a plain
+    EngineError (bad request, unparseable/invalid response). Batch callers can
+    retry these by type instead of pattern-matching the message text.
+    """
+
+
 class Engine(Protocol):
     """A callable that takes system+user prompts and returns a parsed Pydantic model."""
 

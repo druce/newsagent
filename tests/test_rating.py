@@ -7,11 +7,12 @@ from typing import List as _List
 
 import pytest
 
-from lib.engines.base import EngineBlockedError, EngineError
+from lib.engines.base import EngineBlockedError, EngineError, EngineTransientError
 from lib.rating import (
     _BATTLE_BATCH_SIZE,
-    _call_battle_with_retry,
+    _BATTLE_TRANSIENT_RETRY_PAUSE_SECONDS,
     _ranking_mismatch,
+    _call_battle_with_retry,
     bradley_terry_from_battles,
     bradley_terry_scores,
     swiss_pairing,
@@ -117,6 +118,53 @@ def test_battle_retry_retries_on_5xx_then_succeeds(monkeypatch):
     assert _call_battle_with_retry({"items": [1]}) == "ok"
     assert attempts["n"] == 3
     assert sleeps == [60, 60]
+
+
+def test_battle_retry_retries_on_server_disconnect(monkeypatch):
+    """Gemini intermittently drops the TCP connection before answering (~2 of 33
+    calls on 2026-09-15). The google engine wraps that httpx RemoteProtocolError
+    as EngineTransientError (no HTTP status in the message) — it must be retried,
+    or one blip kills the whole rate step."""
+    attempts = {"n": 0}
+
+    def fake_call_prompt(name, item):
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise EngineTransientError(
+                "Google API error: Server disconnected without sending a response."
+            )
+        return "ok"
+
+    sleeps = []
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: sleeps.append(s))
+
+    assert _call_battle_with_retry({"items": [1]}) == "ok"
+    assert attempts["n"] == 2
+    assert sleeps == [_BATTLE_TRANSIENT_RETRY_PAUSE_SECONDS]
+
+
+def test_battle_retry_retries_on_engine_transient_error_by_type(monkeypatch):
+    """The engine layer classifies transport drops / SDK 5xx as
+    EngineTransientError. Retry must key on the type, not the message text —
+    the SSL-EOF variant on 2026-09-15 slipped past a message regex. Transport
+    blips clear in seconds, so the pause is short (not the 60s 5xx backoff)."""
+    attempts = {"n": 0}
+
+    def fake_call_prompt(name, item):
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise EngineTransientError("Google API error: some new wording we never saw")
+        return "ok"
+
+    sleeps = []
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: sleeps.append(s))
+
+    assert _call_battle_with_retry({"items": [1]}) == "ok"
+    assert attempts["n"] == 2
+    assert sleeps == [_BATTLE_TRANSIENT_RETRY_PAUSE_SECONDS]
+    assert _BATTLE_TRANSIENT_RETRY_PAUSE_SECONDS < 60
 
 
 def test_battle_retry_gives_up_after_max_retries(monkeypatch):

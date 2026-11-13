@@ -1,9 +1,11 @@
 # tests/test_engine_google.py
 from unittest.mock import patch, MagicMock
+import httpx
 import pytest
+from google.genai import errors as genai_errors
 from pydantic import BaseModel
 from lib.engines.google import google_engine
-from lib.engines.base import EngineBlockedError, EngineError
+from lib.engines.base import EngineBlockedError, EngineError, EngineTransientError
 
 
 class _Out(BaseModel):
@@ -63,6 +65,64 @@ def test_google_engine_raises_blocked_when_prompt_filtered(monkeypatch):
 
 def test_engine_blocked_error_is_an_engine_error():
     assert issubclass(EngineBlockedError, EngineError)
+
+
+# ---------------------------------------------------------------------------
+# Transient (retryable) failures. Gemini intermittently drops the connection
+# before answering — seen 2026-09-15 as httpx RemoteProtocolError ("Server
+# disconnected without sending a response") and httpx ConnectError ("SSL:
+# UNEXPECTED_EOF_WHILE_READING"). These, and SDK-level 5xx, must surface as a
+# distinct EngineTransientError so batch callers can retry by type rather than
+# by grepping the message.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.RemoteProtocolError("Server disconnected without sending a response."),
+        httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred"),
+        httpx.ReadTimeout("timed out"),
+    ],
+)
+def test_google_engine_raises_transient_on_httpx_transport_error(monkeypatch, exc):
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-test")
+    fake_client = MagicMock()
+    fake_client.models.generate_content.side_effect = exc
+    with patch("lib.engines.google.genai.Client", return_value=fake_client):
+        engine = google_engine("gemini-2.5-flash")
+        with pytest.raises(EngineTransientError):
+            engine(system="s", user="u", schema=_Out)
+
+
+def test_google_engine_raises_transient_on_sdk_5xx(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-test")
+    fake_client = MagicMock()
+    fake_client.models.generate_content.side_effect = genai_errors.ServerError(
+        503, {"error": {"message": "UNAVAILABLE", "status": "UNAVAILABLE"}}
+    )
+    with patch("lib.engines.google.genai.Client", return_value=fake_client):
+        engine = google_engine("gemini-2.5-flash")
+        with pytest.raises(EngineTransientError, match="503"):
+            engine(system="s", user="u", schema=_Out)
+
+
+def test_google_engine_non_transport_error_is_plain_engine_error(monkeypatch):
+    """A 4xx or an arbitrary SDK exception is not retryable."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-test")
+    fake_client = MagicMock()
+    fake_client.models.generate_content.side_effect = genai_errors.ClientError(
+        400, {"error": {"message": "INVALID_ARGUMENT", "status": "INVALID_ARGUMENT"}}
+    )
+    with patch("lib.engines.google.genai.Client", return_value=fake_client):
+        engine = google_engine("gemini-2.5-flash")
+        with pytest.raises(EngineError) as ei:
+            engine(system="s", user="u", schema=_Out)
+    assert not isinstance(ei.value, EngineTransientError)
+
+
+def test_engine_transient_error_is_an_engine_error():
+    assert issubclass(EngineTransientError, EngineError)
 
 
 # ---------------------------------------------------------------------------

@@ -5,11 +5,13 @@ import json
 import os
 from typing import Callable, Type
 
+import httpx
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from pydantic import BaseModel, ValidationError
 
-from lib.engines.base import EngineBlockedError, EngineError
+from lib.engines.base import EngineBlockedError, EngineError, EngineTransientError
 
 
 # Thinking control. Google deprecated thinking_budget: Gemini 3.x only remaps
@@ -75,6 +77,14 @@ def google_engine(model_id: str) -> Callable[..., BaseModel]:
                 config=config,
             )
         except Exception as exc:
+            # Transport-level drops (Gemini intermittently closes the socket
+            # before answering — RemoteProtocolError, ConnectError with an SSL
+            # EOF, timeouts) and SDK-level 5xx are retryable; everything else
+            # (4xx, bad schema, etc.) is not.
+            if isinstance(exc, httpx.TransportError) or isinstance(
+                exc, genai_errors.ServerError
+            ):
+                raise EngineTransientError(f"Google API error: {exc}") from exc
             raise EngineError(f"Google API error: {exc}") from exc
 
         # Detect a prompt-level content-filter block explicitly. Gemini returns

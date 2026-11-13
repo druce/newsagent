@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import choix
 
-from lib.engines.base import EngineBlockedError, EngineError
+from lib.engines.base import EngineBlockedError, EngineError, EngineTransientError
 from lib.llm import call_prompt
 
 # Items per battle batch sent to the LLM judge. 10 per the 2026-11-12 batch-size
@@ -37,16 +37,35 @@ _BATTLE_CORRUPT_RETRIES = 1
 _CORRUPT = object()  # sentinel: battle dropped for a corrupt ranking
 
 # Battle retry policy. Gemini occasionally returns transient 5xx during peak
-# load; one failed call would otherwise kill the entire rate step (battles run
-# in parallel via ThreadPoolExecutor.map which propagates the first exception).
+# load, and sometimes drops the TCP connection before answering at all (seen
+# on ~2 of 33 calls on 2026-09-15 as "Server disconnected without sending a
+# response" and "SSL: UNEXPECTED_EOF_WHILE_READING"; non-deterministic — the
+# same batch succeeds on retry). One failed call would otherwise kill the
+# entire rate step (battles run in parallel via ThreadPoolExecutor.map which
+# propagates the first exception).
+#
+# The engine layer classifies these as EngineTransientError; we retry by type.
+# The 5xx message regex is kept as a fallback for engines that don't classify.
+# A 5xx is usually load-shedding and deserves a real backoff; a transport drop
+# clears in seconds, so it gets a short pause instead.
 _BATTLE_MAX_RETRIES = 2
 _BATTLE_RETRY_PAUSE_SECONDS = 60
+_BATTLE_TRANSIENT_RETRY_PAUSE_SECONDS = 5
 _BATTLE_PARALLELISM = 8
 _5XX_RE = re.compile(r"\b5\d{2}\b")
 
 
 def _is_5xx_error(exc: BaseException) -> bool:
     return isinstance(exc, EngineError) and bool(_5XX_RE.search(str(exc)))
+
+
+def _retry_pause_seconds(exc: BaseException) -> Optional[float]:
+    """Seconds to wait before retrying `exc`, or None if it is not retryable."""
+    if _is_5xx_error(exc):
+        return _BATTLE_RETRY_PAUSE_SECONDS
+    if isinstance(exc, EngineTransientError):
+        return _BATTLE_TRANSIENT_RETRY_PAUSE_SECONDS
+    return None
 
 
 def _call_battle_with_retry(item: Dict[str, Any]) -> Any:
@@ -65,8 +84,9 @@ def _call_battle_with_retry(item: Dict[str, Any]) -> Any:
             return None
         except EngineError as exc:
             last_exc = exc
-            if attempt < _BATTLE_MAX_RETRIES and _is_5xx_error(exc):
-                time.sleep(_BATTLE_RETRY_PAUSE_SECONDS)
+            pause = _retry_pause_seconds(exc)
+            if attempt < _BATTLE_MAX_RETRIES and pause is not None:
+                time.sleep(pause)
                 continue
             raise
     assert last_exc is not None

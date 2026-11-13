@@ -2,7 +2,8 @@
 
 Shells out to `claude -p <prompt> --output-format json`. Uses the user's
 Claude Code subscription; no API key required. Structured output is enforced
-by embedding the JSON schema in the prompt and parsing the result.
+by the CLI's `--json-schema` flag and re-validated here with Pydantic;
+`reasoning_effort` maps onto the CLI's `--effort` level.
 """
 from __future__ import annotations
 
@@ -18,18 +19,23 @@ from lib.engines.base import EngineError
 _TIMEOUT_SEC = 300
 
 
-def _build_prompt(system: str, user: str, schema: Type[BaseModel],
-                  reasoning_effort: int = 4) -> str:
-    schema_json = json.dumps(schema.model_json_schema(), indent=2)
-    return (
-        f"{system}\n\n"
-        f"Reasoning effort: {reasoning_effort}/10 "
-        f"(0=trivial, 4=moderate, 8=heavy)\n\n"
-        f"User input:\n{user}\n\n"
-        f"You MUST respond with valid JSON matching this exact schema. "
-        f"No prose, no markdown fences — just the JSON object.\n\n"
-        f"JSON Schema:\n{schema_json}"
-    )
+def _effort_level(effort: int) -> str:
+    """Map 0-10 reasoning_effort onto a `claude --effort` level.
+
+    Buckets match the other engines (<=3 low, <=6 medium, else high), with
+    9-10 reaching up to xhigh.
+    """
+    if effort <= 3:
+        return "low"
+    if effort <= 6:
+        return "medium"
+    if effort <= 8:
+        return "high"
+    return "xhigh"
+
+
+def _build_prompt(system: str, user: str) -> str:
+    return f"{system}\n\nUser input:\n{user}"
 
 
 def subagent_engine() -> Callable[..., BaseModel]:
@@ -37,8 +43,12 @@ def subagent_engine() -> Callable[..., BaseModel]:
 
     def _call(system: str, user: str, schema: Type[BaseModel],
               reasoning_effort: int = 4) -> BaseModel:
-        prompt = _build_prompt(system, user, schema, reasoning_effort)
-        cmd = ["claude", "-p", prompt, "--output-format", "json"]
+        cmd = [
+            "claude", "-p", _build_prompt(system, user),
+            "--output-format", "json",
+            "--json-schema", json.dumps(schema.model_json_schema()),
+            "--effort", _effort_level(reasoning_effort),
+        ]
 
         try:
             completed = subprocess.run(
@@ -59,8 +69,11 @@ def subagent_engine() -> Callable[..., BaseModel]:
 
         try:
             wrapper = json.loads(completed.stdout)
-            assistant_text = wrapper.get("result", "")
-            parsed = json.loads(assistant_text)
+            # --json-schema puts the parsed object in `structured_output`;
+            # fall back to parsing the final text in `result`.
+            parsed = wrapper.get("structured_output")
+            if parsed is None:
+                parsed = json.loads(wrapper.get("result", ""))
         except (json.JSONDecodeError, AttributeError) as exc:
             raise EngineError(f"Failed to parse claude CLI response: {exc}") from exc
 
