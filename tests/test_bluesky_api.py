@@ -65,3 +65,63 @@ def test_bsky_get_author_feed_http_error_raises():
         from lib.bluesky.api import bsky_get_author_feed
         with pytest.raises(Exception):
             bsky_get_author_feed(session, "testuser.bsky.social")
+
+
+def _page(uris, cursor=None):
+    d = {"feed": [{"post": {"uri": u, "record": {"text": u}}} for u in uris]}
+    if cursor:
+        d["cursor"] = cursor
+    return d
+
+
+def test_bsky_get_author_feed_paginates_until_stop_uri():
+    """With stop_uri, follow cursors until the marker post is seen (inclusive)."""
+    session = {"accessJwt": "t"}
+    pages = [
+        httpx.Response(200, json=_page(["a1", "a2"], cursor="c1")),
+        httpx.Response(200, json=_page(["b1", "MARK", "b3"], cursor="c2")),
+    ]
+    with respx.mock:
+        route = respx.get("https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed").mock(
+            side_effect=pages
+        )
+        from lib.bluesky.api import bsky_get_author_feed
+        items = bsky_get_author_feed(session, "u", limit=2, stop_uri="MARK")
+
+    assert [i["post"]["uri"] for i in items] == ["a1", "a2", "b1", "MARK"]
+    assert route.call_count == 2
+    assert route.calls[1].request.url.params["cursor"] == "c1"
+
+
+def test_bsky_get_author_feed_stops_at_max_pages_or_no_cursor():
+    session = {"accessJwt": "t"}
+    with respx.mock:
+        route = respx.get("https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed").mock(
+            side_effect=[
+                httpx.Response(200, json=_page(["a"], cursor="c1")),
+                httpx.Response(200, json=_page(["b"], cursor="c2")),
+                httpx.Response(200, json=_page(["c"], cursor="c3")),
+            ]
+        )
+        from lib.bluesky.api import bsky_get_author_feed
+        items = bsky_get_author_feed(session, "u", limit=1, stop_uri="X", max_pages=2)
+    assert [i["post"]["uri"] for i in items] == ["a", "b"]
+    assert route.call_count == 2
+
+    with respx.mock:
+        route = respx.get("https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed").mock(
+            return_value=httpx.Response(200, json=_page(["a"]))
+        )
+        items = bsky_get_author_feed(session, "u", limit=1, stop_uri="X")
+    assert route.call_count == 1
+
+
+def test_bsky_get_author_feed_without_stop_uri_is_single_page():
+    session = {"accessJwt": "t"}
+    with respx.mock:
+        route = respx.get("https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed").mock(
+            return_value=httpx.Response(200, json=_page(["a"], cursor="c1"))
+        )
+        from lib.bluesky.api import bsky_get_author_feed
+        bsky_get_author_feed(session, "u", limit=1)
+    assert route.call_count == 1

@@ -26,16 +26,38 @@ def bsky_get_author_feed(
     actor: str,
     filter: str = "posts_and_author_threads",
     limit: int = 80,
+    stop_uri: str | None = None,
+    max_pages: int = 5,
 ) -> list[dict]:
-    """GET getAuthorFeed; returns list of feed items (each {post, reply?, reason?})."""
+    """GET getAuthorFeed; returns list of feed items (each {post, reply?, reason?}).
+
+    ``limit`` is the per-page size (the API caps it at 100). Without ``stop_uri``
+    one page is fetched. With ``stop_uri`` (the cross-run dedup marker), cursors
+    are followed until that post is seen — it is included as the last item so
+    the caller's dedup cut still finds it — or the feed ends, or ``max_pages``
+    pages have been read. This keeps a busy day (> limit new posts) from pushing
+    the marker out of the window and silently dropping the oldest new posts.
+    """
     url = f"{_BASE}/app.bsky.feed.getAuthorFeed"
     headers = {"Authorization": f"Bearer {session['accessJwt']}"}
-    params = {"actor": actor, "filter": filter, "limit": limit}
+    items: list[dict] = []
+    cursor: str | None = None
     with httpx.Client(timeout=_TIMEOUT) as client:
-        resp = client.get(url, headers=headers, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("feed", [])
+        for _ in range(max_pages if stop_uri else 1):
+            params = {"actor": actor, "filter": filter, "limit": limit}
+            if cursor:
+                params["cursor"] = cursor
+            resp = client.get(url, headers=headers, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            for item in data.get("feed", []):
+                items.append(item)
+                if stop_uri and (item.get("post") or {}).get("uri") == stop_uri:
+                    return items
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+    return items
 
 
 def bsky_upload_blob(session: dict, image_path: str | Path, mime_type: str) -> dict:

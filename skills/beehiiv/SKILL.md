@@ -148,12 +148,14 @@ blocked once (2026-07-21) while a `JSON.stringify({...booleans})` of the same st
 
 ### 1. Create the draft (from the "Daily" template)
 `createDraftFromTemplate('Daily', '<title>')` (from `scripts/beehiiv_browser.js`) →
-`{ id, title, subject, draft_url, status:'draft' }`. It finds the template by name
+`{ id, title, subject, thumb, draft_url, status:'draft' }`. It finds the template by name
 (`GET /post_templates`), `POST /posts` with `{ post_template_id, title }` to clone it
 (the server uses the template's own title, so it then `PATCH`es
 `{ title, web_title, email_subject_line }` — all three, or the email ships with the
-template's dateless "AI Reading for" subject), and reads back the new post.
-**Check the readback: `subject === title`.** Record the post `id`. See
+template's dateless "AI Reading for" subject), pins the web settings in `WEB_SETTINGS`
+(`display_thumbnail_on_web: false` — Web settings → "Show thumbnail on top" OFF, always),
+stashes the id in `localStorage['__bh_draft']`, and reads back the new post.
+**Check the readback: `subject === title` and `thumb === false`.** Record the post `id`. See
 `references/beehiiv-internal-api.md` for the endpoint map and the auth/status-code
 details. (You may reuse an existing empty draft instead, but matching on the returned
 `id` is safest.)
@@ -217,7 +219,10 @@ per chunk; the tool round-trip is the settle time). An in-page `setTimeout` loop
 to ~1/s in a background tab and races itself — don't.
 
 - `navigate` to `https://app.beehiiv.com/posts/<id>/edit`. This wipes `window.*` but NOT
-  `localStorage`. Wait for `.ProseMirror` (with `.editor`) to exist.
+  `localStorage`. Wait for `.ProseMirror` with a `.editor` property to exist. (The
+  `.editor` CSS class is gone as of 2026-09-06, and the page now has TWO `.ProseMirror`
+  instances — the post editor first, beehiiv's "New chat" box second. `querySelector`
+  picks the first, which is the right one; don't gate on the class.)
 - Re-inject `scripts/build_doc.js` (functions were wiped by the navigation; the doc is in
   `localStorage['__bh_doc']`).
 - **Insert in chunks.** Call `window.bh.applyChunk(12)` and read its `{inserted,total,done}`.

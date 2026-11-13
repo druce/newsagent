@@ -130,7 +130,7 @@ On success, report in this order:
   image counts.
 - **Draft** — the beehiiv `draft_url`, the title, and the `email_subject_line`
   readback (they must match; a bare `"AI Reading for"` means the subject patch
-  didn't take).
+  didn't take), and `display_thumbnail_on_web` (must be `false`).
 - **Verification** — the persisted `editorCounts()` (`imgs`/`hrs`/`links` against
   the digest's `grep -c` targets) from beehiiv's post-reload check.
 - **Left as a draft** — state plainly that nothing was published.

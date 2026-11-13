@@ -111,15 +111,25 @@ def _do_fetch(
     Returns (feed_items, og_cache, image_cache, newest_uri). The dedup marker is
     NOT advanced here — callers advance it once a deliverable is produced.
     """
+    marker_path = _marker_path(handle)
+    marker = (
+        marker_path.read_text(encoding="utf-8").strip()
+        if not no_dedup and marker_path.exists() else None
+    )
+
     click.echo(f"Fetching posts for @{handle}...")
-    feed_items = bsky_get_author_feed(session, handle, limit=limit)
+    feed_items = bsky_get_author_feed(session, handle, limit=limit, stop_uri=marker or None)
     click.echo(f"Fetched {len(feed_items)} posts.")
+    if marker and not any(_post_uri(i) == marker for i in feed_items):
+        click.echo(
+            f"WARNING: dedup marker not found in {len(feed_items)} fetched posts — "
+            "older new posts may be missing (or the marker post was deleted).",
+            err=True,
+        )
 
     newest_uri = _post_uri(feed_items[0]) if feed_items else None
 
-    marker_path = _marker_path(handle)
-    if not no_dedup and marker_path.exists():
-        marker = marker_path.read_text(encoding="utf-8").strip()
+    if marker:
         kept: list[dict] = []
         for item in feed_items:
             if _post_uri(item) == marker:

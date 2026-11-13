@@ -1,6 +1,6 @@
 ---
 name: bluesky
-description: Standalone Bluesky digest pipeline. Fetches recent posts from a Bluesky account, enriches with OG metadata and resized images, reorders by importance via LLM, and renders a flat HTML digest (post text linked to the article, source name appended) matching the legacy skynet.html format. Also generates punny headline rewrites as a separate artifact. Independent from the main 13-step newsletter pipeline.
+description: Standalone Bluesky digest pipeline. Fetches recent posts from a Bluesky account, enriches with OG metadata and resized images, reorders by importance via LLM, and renders a flat HTML digest (post text linked to the article, source name appended) matching the legacy skynet.html format. Also generates punny headline rewrites as a separate artifact. Independent from the main 14-step newsletter pipeline.
 ---
 
 # newsagent:bluesky
@@ -66,7 +66,7 @@ the wakeup prompt makes the whole digest re-run as a phantom second invocation.
 
 ### Stage 2 — dispatch the reorder Agent
 
-Dispatch ONE Agent (`subagent_type: "general-purpose"`, `model: "sonnet"`,
+Dispatch ONE Agent (`subagent_type: "general-purpose"`, `model: "opus"`,
 `description: "Reorder bsky posts"`):
 
 ```
@@ -102,7 +102,7 @@ separated by `<hr />`, ending with a "Follow … on Bluesky" footer. Writes:
 
 ### Stage 4 — dispatch the headlines Agent
 
-Dispatch ONE Agent (`subagent_type: "general-purpose"`, `model: "sonnet"`,
+Dispatch ONE Agent (`subagent_type: "general-purpose"`, `model: "opus"`,
 `description: "Punny bsky headline rewrites"`):
 
 ```

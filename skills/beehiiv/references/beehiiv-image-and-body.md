@@ -97,7 +97,9 @@ into the live editor. `scripts/build_doc.js` does the whole thing.
    `<hr>` → `horizontalRule`. Stashes the doc in `window.__bh_doc` and
    `localStorage['__bh_doc']` (survives the nav to `/edit`; `window.*` does not). Returns
    `{nodes, imgs, hrs, links, missing}` — `missing:[]` means every `<img src>` matched an asset.
-2. `navigate` to `/posts/<id>/edit`, wait for `.ProseMirror` (with `.editor`), re-inject
+2. `navigate` to `/posts/<id>/edit`, wait for `.ProseMirror` with an `.editor` property (the
+   `.editor` CSS class disappeared 2026-09-06; the first of the two `.ProseMirror` nodes is the
+   post editor, the second is the "New chat" box), re-inject
    `build_doc.js`.
 3. **Insert in CHUNKS — do NOT `setContent` the whole doc.** A single `setContent` of ~50
    `imageBlock` node-views throws **React error #185** ("max update depth exceeded") — the

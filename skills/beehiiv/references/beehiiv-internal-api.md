@@ -80,6 +80,13 @@ and persists across a `GET` readback (verified 2026-07-25 on a scratch draft:
 `"AI Reading for"` → patched → readback matched). `email_preview_text` also lives here
 (fresh clones have `""`) — this skill leaves it empty for the user's punny headline.
 
+**`display_thumbnail_on_web`** is the Web settings → "Show thumbnail on top" toggle. Also
+whitelisted and persists (verified 2026-11-02 on a scratch draft: false → PATCH true →
+readback true → PATCH false → readback false). The skill always PATCHes it to `false`
+right after creation (`WEB_SETTINGS` in `beehiiv_browser.js`). Sibling web/email display
+flags on the post: `display_title_on_web`, `display_subtitle_on_web`,
+`display_title_in_email`, `display_subtitle_in_email`, `display_byline_in_email`.
+
 **Body fields are NOT writable via PATCH.** `tiptap_state` / `draft_tiptap_state`
 return `200` but are silently dropped — only whitelisted fields (`title`,
 `web_title`, …) persist. The body is authored only through the editor's

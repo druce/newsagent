@@ -57,17 +57,25 @@ async function setTitle(id, title) {
   return bhPatch('/posts/' + id, { title, web_title: title, email_subject_line: title });
 }
 
+/* Web settings pinned on every draft, independent of what the template carries.
+ * `display_thumbnail_on_web` = the "Show thumbnail on top" toggle in Web settings
+ * (PATCH-able, persists — verified 2026-11-02 on a scratch draft). */
+const WEB_SETTINGS = { display_thumbnail_on_web: false };
+
 /* Create a draft from the named template, then set the title (the server uses the
- * template's own title and ignores the create-body title). Returns
- * { id, template, title, subject, status, draft_url } — `subject` must equal `title`;
- * if it still reads "AI Reading for", the subject patch didn't take. */
+ * template's own title and ignores the create-body title) and pin WEB_SETTINGS. Returns
+ * { id, template, title, subject, thumb, status, draft_url } — `subject` must equal `title`
+ * (if it still reads "AI Reading for", the subject patch didn't take) and `thumb` must be false. */
 async function createDraftFromTemplate(templateName, title) {
   const tmpl = await findTemplate(templateName);
   const created = await bhPost('/posts', { post_template_id: tmpl.id, title });
+  try { localStorage.setItem('__bh_draft', created.id); } catch (e) {}
   if (title) await setTitle(created.id, title);
+  await bhPatch('/posts/' + created.id, WEB_SETTINGS);
   const d = await bhGet('/posts/' + created.id);
   return { id: created.id, template: tmpl.name, title: d.web_title || d.title,
-           subject: d.email_subject_line, status: d.status, draft_url: d.draft_url };
+           subject: d.email_subject_line, thumb: d.display_thumbnail_on_web,
+           status: d.status, draft_url: d.draft_url };
 }
 
 window.bh = { getAuth, bhGet, bhPost, bhPatch, bhDelete, findTemplate, setTitle, createDraftFromTemplate };
