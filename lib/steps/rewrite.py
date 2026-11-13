@@ -5,7 +5,7 @@ Three modes (mirror of lib/steps/filter.py):
      Use --engine to override (DO NOT use subagent).
   2. --prepare-batches: write one batch JSON containing the initial draft and
      all three pre-rendered prompts (critique/improve/title) so a single
-     Sonnet Agent can run the critic loop and generate the title in its own
+     Opus Agent can run the critic loop and generate the title in its own
      context.
   3. --apply-results DIR: read the single result JSON, set state.final_newsletter
      and state.newsletter_title.

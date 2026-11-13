@@ -8,7 +8,7 @@ description: For each downloaded headline, produce both a bullet-point article s
 Step 6 of /newsagent:pipeline (after `dedupe`, before `rate`). Two execution paths:
 
 1. **Interactive** — use when running through Claude Code: parent Claude
-   dispatches **all batches at once** as Sonnet subagents, one per batch of
+   dispatches **all batches at once** as Opus subagents, one per batch of
    10 articles (typically 15–25 batches per run). This is the preferred path
    because it avoids `claude -p` (which is not covered under the Max plan).
 2. **Classic** — use when running via cron / CI / any non-Claude-Code context:
@@ -21,7 +21,7 @@ Both paths use the same prompt — its single source of truth is
 `lib/prompts/extract_summaries.py` (`EXTRACT_SUMMARIES = PromptConfig(...)`).
 To change the summary rubric, edit that file; both paths pick it up automatically.
 
-## Interactive mode — Sonnet subagent dispatch
+## Interactive mode — Opus subagent dispatch
 
 ### Step 1: prepare batches
 
@@ -39,7 +39,7 @@ to `lib/prompts/`.
 Each batch holds up to 10 articles. Each item carries `id`, `title`, and up
 to 8,000 chars of trafilatura-extracted article body.
 
-### Step 2: dispatch all batches as parallel Sonnet subagents in a single wave
+### Step 2: dispatch all batches as parallel Opus subagents in a single wave
 
 For each `runs/<SID>/summarize-batches/batch-NNN.json`, dispatch one Agent
 tool call — **all in a single message, all at once**. With typical batch
@@ -53,7 +53,7 @@ API-side risk are both well within bounds.
 Per-Agent-call config:
 
 - `subagent_type: "general-purpose"`
-- `model: "sonnet"`
+- `model: "opus"`
 - `description: "Summarize article batch NNN"`
 - `prompt:` instructions of the shape:
 
@@ -112,7 +112,7 @@ If apply reports `missing summaries for ids: [...]` or
 `{batch_NN}: schema mismatch`:
 
 1. Identify the failing batch(es) from the error output.
-2. Re-dispatch only those Sonnet subagents (overwrite the bad result file).
+2. Re-dispatch only those Opus subagents (overwrite the bad result file).
 3. Re-run `--apply-results`.
 
 Apply exits non-zero only if **no** summaries were usable; partial results

@@ -6,7 +6,7 @@ Three modes (mirror of lib/steps/filter.py):
   2. --prepare-batches: split downloaded articles into batch prompt files
      under runs/<SID>/summarize-batches/batch-NNN.json. Each batch file is
      self-contained (system_prompt + user_prompt + items + output_schema)
-     so a Sonnet subagent can run it with no further context.
+     so an Opus subagent can run it with no further context.
   3. --apply-results DIR: read result JSONs (one per batch) from DIR,
      write summaries back to headline_data, complete the step.
 
@@ -230,7 +230,7 @@ def cli(
         click.echo(f"Prepared {len(paths)} batches ({len(items)} articles, batch size {batch_size}).")
         for p in paths:
             click.echo(f"  {p}")
-        click.echo(f"\nDispatch one Sonnet subagent per batch. Write each result to:")
+        click.echo(f"\nDispatch one Opus subagent per batch. Write each result to:")
         click.echo(f"  runs/{session_id}/{_RESULTS_SUBDIR}/batch-NNN.json")
         click.echo(f"Then run: python -m lib.steps.summarize --session {session_id} "
                    f"--apply-results runs/{session_id}/{_RESULTS_SUBDIR}")

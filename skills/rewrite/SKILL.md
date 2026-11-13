@@ -9,7 +9,7 @@ Step 11 of /newsagent:pipeline. Two execution paths.
 
 ## Interactive mode — orchestrator-driven critic loop
 
-**Parent Claude drives the loop**, dispatching a SEPARATE Sonnet Agent for each
+**Parent Claude drives the loop**, dispatching a SEPARATE Opus Agent for each
 critique / improve / title pass. Each dispatch is a fresh context, so the
 critic genuinely re-reads the draft cold and its score is independent of the
 improver — real call separation, not one subagent simulating the loop and
@@ -63,7 +63,7 @@ dispatch TITLE Agent (writes rewrite-work/title.txt) → read title
 # then Step 3: finalize (a plain CLI call, no Agent)
 ```
 
-The three worker Agents use `subagent_type: "general-purpose"`, `model: "sonnet"`,
+The three worker Agents use `subagent_type: "general-purpose"`, `model: "opus"`,
 Read + Write only, and must reason in their own context — **no bash/subprocess/
 LLM-call tool** for the reasoning. Prompt skeletons (fill in `<SID>`, `<i>`, and
 the current draft source path):

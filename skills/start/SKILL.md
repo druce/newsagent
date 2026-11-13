@@ -1,6 +1,6 @@
 ---
 name: start
-description: Create a new newsletter session — initialize SQLite DB if needed, load and validate sources.yaml, and register the 13-step workflow. First step of /newsagent:pipeline. Idempotent for a given --session SID.
+description: Create a new newsletter session — initialize SQLite DB if needed, load and validate sources.yaml, and register the 14-step workflow. First step of /newsagent:pipeline. Idempotent for a given --session SID.
 ---
 
 # newsagent:start

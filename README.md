@@ -14,7 +14,7 @@ Gathers headlines from ~17 sources, filters by AI-relevance via LLM, downloads +
 
 The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 
-1. **`/newsagent:pipeline`** — Claude skill to run the full 13-step pipeline from scraping
+1. **`/newsagent:pipeline`** — Claude skill to run the full 14-step pipeline from scraping
    and gathering, to selecting items and writing proposed newsletter. Writes the newsletter to `out/latest.html` (fully AI-eddited issue) and the rated-bullet digest to `out/latest_short.html`
    (both also stamped: `out/<stamp>.html`, `out/<stamp>_short.html`, where `<stamp>` is
    `YYYY-MM-DD-HHMMSS`). Details under *How to run*.
@@ -57,7 +57,7 @@ The end-to-end daily loop, from raw sources to a ready-to-send beehiiv draft:
 | `newsagent:download` | Playwright fetch + trafilatura extract. |
 | `newsagent:dedupe` | Cosine-similarity dedup on OpenAI embeddings (runs before `summarize` so duplicates aren't summarized). |
 | `newsagent:summarize` | Per-article bullet summary. |
-| `newsagent:crossdedupe` | Drop stories already published in the last N days (default 4), even from a different outlet/URL — cosine shortlist on `title+short_summary` embeddings + a Haiku same-story judge. |
+| `newsagent:crossdedupe` | Drop stories already published in the last N days (default 4), even from a different outlet/URL — cosine shortlist on `title+short_summary` embeddings + an Opus same-story judge. |
 | `newsagent:rate` | Multi-axis confidence + Swiss-paired Bradley-Terry → composite rating. |
 | `newsagent:cluster` | UMAP reduce → Optuna-tuned HDBSCAN → LLM cluster naming. |
 | `newsagent:select` | LLM noise assignment → LLM cluster merge → MMR top-K per cluster. |
@@ -129,7 +129,7 @@ The default engine for every prompt is `"subagent"` — that uses your Claude Co
 #### A. End-to-end (the orchestrator)
 
 ```bash
-# Fresh full run — creates a new session, runs all 13 steps, writes out/<stamp>.html
+# Fresh full run — creates a new session, runs all 14 steps, writes out/<stamp>.html
 .venv/bin/python -m lib.steps.pipeline --sources sources.yaml
 
 # All steps with a specific engine forced for LLM prompts
@@ -259,15 +259,15 @@ One item posts per `--interval` for gentle rate-limiting; the queue lives in the
 Output:
 ```
 Session:  2026-05-18-091533
-Progress: 53.8% (7/13 steps)
+Progress: 64.3% (9/14 steps)
 Next:     cluster
 Headlines: 412
 Clusters:  0
 Sections:  0
 
 WORKFLOW
-Progress: 58.3% (7/12 complete)
-Next Step: Step 8: Cluster Topics
+Progress: 64.3% (9/14 complete)
+Next Step: Step 10: Cluster Topics
 ...
 ```
 
@@ -281,9 +281,9 @@ Output:
 ```
 SESSION                      UPDATED                    STEP           PROGRESS
 --------------------------------------------------------------------------------
-2026-05-18-091533            2026-05-18T09:32:14.221      cluster        55%
+2026-05-18-091533            2026-05-18T09:32:14.221      cluster        64%
 2026-05-17-180012            2026-05-17T19:14:02.110      done           100%
-2026-05-17-100503            2026-05-17T10:08:43.882      gather         18%
+2026-05-17-100503            2026-05-17T10:08:43.882      gather         7%
 ```
 
 ### Deep dive on one session
@@ -389,7 +389,7 @@ Engine identifier formats:
 - **OpenRouter:** `extra_body.reasoning.effort` (low/medium/high or disabled at 0)
 - **OpenAI:** `reasoning_effort` API param (minimal/low/medium/high), silently dropped on non-reasoning models
 - **Google:** `thinking_config.thinking_budget` (0 / 2048 / 8192 / 24576 tokens)
-- **Subagent:** embedded as `"Reasoning effort: N/10"` in the prompt
+- **Subagent:** `claude --effort` level (0–3 low, 4–6 medium, 7–8 high, 9–10 xhigh)
 
 ### Per-prompt override examples
 

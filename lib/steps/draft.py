@@ -7,7 +7,7 @@ Three modes (mirror of lib/steps/filter.py):
   2. --prepare-batches: write one batch JSON per section under
      runs/<SID>/draft-batches/batch-NNN.json. Each batch contains the section
      stories plus ALL THREE pre-rendered prompts (write/critique/improve) so
-     a single Sonnet Agent can run the entire critic loop in its own context.
+     a single Opus Agent can run the entire critic loop in its own context.
   3. --apply-results DIR: read result JSONs from DIR (one per section),
      write final_section_markdown to state.section_drafts (the per-article
      selection in state.newsletter_section_data is left intact for send).
@@ -281,7 +281,7 @@ def cli(
         click.echo(f"Prepared {len(paths)} section batches (max_edits={max_edits}):")
         for p in paths:
             click.echo(f"  {p}")
-        click.echo(f"\nDispatch one Sonnet subagent per batch. Each runs the full")
+        click.echo(f"\nDispatch one Opus subagent per batch. Each runs the full")
         click.echo(f"write→critique→improve loop in its own context. Write each result to:")
         click.echo(f"  runs/{session_id}/{_RESULTS_SUBDIR}/batch-NNN.json")
         click.echo(f"Then run: python -m lib.steps.draft --session {session_id} "

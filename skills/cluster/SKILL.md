@@ -8,7 +8,7 @@ description: Group summarized headlines into topical clusters using UMAP dimensi
 Step 8 of /newsagent:pipeline. Two execution paths:
 
 1. **Interactive** — preferred when running through Claude Code: parent Claude
-   dispatches a single Haiku subagent that names every cluster in one call.
+   dispatches a single Opus subagent that names every cluster in one call.
    Avoids `claude -p` (not covered under the Max plan).
 2. **Classic** — for cron / CI: a single LLM engine names clusters one-by-one
    in-process via `call_prompt`. Requires `--engine` set to a non-`subagent`
@@ -17,7 +17,7 @@ Step 8 of /newsagent:pipeline. Two execution paths:
 Both paths share `lib/prompts/name_topic_batch.py` (interactive) and
 `lib/prompts/name_topic.py` (classic).
 
-## Interactive mode — Haiku subagent dispatch
+## Interactive mode — Opus subagent dispatch
 
 ### Step 1: prepare batches
 
@@ -33,12 +33,12 @@ non-noise cluster (id, central entities, sample headlines) plus a pre-rendered
 If clustering produces no non-noise clusters, the step completes immediately
 with `no non-noise clusters` — no batch file is written.
 
-### Step 2: dispatch one Haiku subagent
+### Step 2: dispatch one Opus subagent
 
 Dispatch a single Agent call with:
 
 - `subagent_type: "general-purpose"`
-- `model: "haiku"`
+- `model: "opus"`
 - `description: "Name all clusters for session SID"`
 - `prompt:` instructions of the shape:
 
@@ -71,7 +71,7 @@ complete, writes `runs/<SID>/cluster.json`.
 ### Step 4: retry on failure
 
 If apply reports `missing names for cluster_ids: [...]` or
-`schema mismatch`: re-dispatch the Haiku Agent (overwrite the result file),
+`schema mismatch`: re-dispatch the Opus Agent (overwrite the result file),
 re-run `--apply-results`. Apply exits non-zero only if zero names were usable.
 
 ## Classic mode (non-interactive)

@@ -5,7 +5,7 @@ Three modes (mirror of lib/steps/filter.py):
      Use --engine to override.
   2. --prepare-batches: run UMAP+HDBSCAN, then write one
      runs/<SID>/cluster-batches/batch-000.json containing all clusters for
-     a single Haiku Agent to name in one call.
+     a single Opus Agent to name in one call.
   3. --apply-results DIR: read result JSON from DIR, write cluster_name back
      to state, complete the step.
 """
@@ -280,7 +280,7 @@ def cli(
         clusters_for_batch = _build_batch_clusters(cluster_to_headlines)
         path = _write_batch(session_id, clusters_for_batch)
         click.echo(f"Prepared 1 batch ({len(clusters_for_batch)} clusters): {path}")
-        click.echo(f"\nDispatch one Haiku subagent. Write result to:")
+        click.echo(f"\nDispatch one Opus subagent. Write result to:")
         click.echo(f"  runs/{session_id}/{_RESULTS_SUBDIR}/batch-000.json")
         click.echo(f"Then run: python -m lib.steps.cluster --session {session_id} "
                    f"--apply-results runs/{session_id}/{_RESULTS_SUBDIR}")

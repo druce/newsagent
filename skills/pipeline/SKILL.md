@@ -34,19 +34,19 @@ coverage → rate → cluster → select → draft → rewrite → send
 | filter | prepare/dispatch/apply | haiku | 25 headlines per batch |
 | download | Python CLI + sitename tail (prepare/dispatch/apply) | haiku (sitename batches; often 0 batches) | 25 domains per batch |
 | dedupe | Python CLI | — | — |
-| summarize | prepare/dispatch/apply | sonnet | 10 articles per batch |
-| crossdedupe | prepare/dispatch/apply | haiku | 25 pairs per batch (often 0 batches — no candidates) |
-| coverage | prepare/dispatch/apply | haiku | 25 pairs per batch (often 0 batches — no candidates) |
+| summarize | prepare/dispatch/apply | opus | 10 articles per batch |
+| crossdedupe | prepare/dispatch/apply | opus | 25 pairs per batch (often 0 batches — no candidates) |
+| coverage | prepare/dispatch/apply | opus | 25 pairs per batch (often 0 batches — no candidates) |
 | rate | Python CLI (in-process: rate_* prompts default `openai:gpt-4o-mini`, battles `google:gemini-3.5-flash-lite`, 10 per call) | — | — |
-| cluster | prepare/dispatch/apply | haiku | 1 batch (all clusters) |
-| select | **3 sequential rounds** then apply | sonnet (repechage, consolidate); haiku (reassign) | 50 noise per repechage batch; 1 consolidate batch; 25 headlines per reassign batch |
-| draft | prepare/dispatch/apply | sonnet | 1 batch per section |
-| rewrite | prepare/**critic loop**/finalize | sonnet | separate critique → improve → title dispatches; mechanical `--finalize` (no assemble Agent) |
+| cluster | prepare/dispatch/apply | opus | 1 batch (all clusters) |
+| select | **3 sequential rounds** then apply | opus (repechage, consolidate); haiku (reassign) | 50 noise per repechage batch; 1 consolidate batch; 25 headlines per reassign batch |
+| draft | prepare/dispatch/apply | opus | 1 batch per section |
+| rewrite | prepare/**critic loop**/finalize | opus | separate critique → improve → title dispatches; mechanical `--finalize` (no assemble Agent) |
 | send | Python CLI | — | — |
 
 The Model column is the **default** for each step (it matches the per-step
 SKILL.md and the model named in the `--prepare-*` stdout). The caller may
-override the model per dispatch (e.g. opus for summarize or draft)
+override the model per dispatch (e.g. sonnet for summarize or draft)
 when explicitly asked to; absent an instruction, use the default.
 
 ## Command discipline (stay prompt-free)
@@ -146,9 +146,9 @@ For each step in the plan:
    `skills/select/SKILL.md`):
    ```bash
    .venv/bin/python -m lib.steps.select --session SID --prepare-repechage
-   # dispatch one Sonnet Agent per select-repechage-batches/batch-NNN.json
+   # dispatch one Opus Agent per select-repechage-batches/batch-NNN.json
    .venv/bin/python -m lib.steps.select --session SID --prepare-consolidate
-   # dispatch ONE Sonnet Agent for select-consolidate-batches/batch-000.json
+   # dispatch ONE Opus Agent for select-consolidate-batches/batch-000.json
    .venv/bin/python -m lib.steps.select --session SID --prepare-reassign
    # dispatch one Haiku Agent per select-reassign-batches/batch-NNN.json
    .venv/bin/python -m lib.steps.select --session SID --apply-results runs/SID
@@ -255,7 +255,7 @@ If a step fails mid-run, the orchestrator aborts. To recover:
 
 ```bash
 .venv/bin/python -m lib.steps.progress --session SID
-.venv/bin/python -m lib.steps.reset --session SID --errors
+.venv/bin/python -m lib.steps.reset SID --errors --yes
 # Then re-invoke /newsagent:pipeline --resume SID
 ```
 

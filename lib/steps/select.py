@@ -665,7 +665,7 @@ def cli(
         for p in paths:
             click.echo(f"  {p}")
         click.echo(
-            f"\nDispatch one Sonnet subagent per batch. Each must write its result to:"
+            f"\nDispatch one Opus subagent per batch. Each must write its result to:"
             f"\n  runs/{session_id}/{_REPECHAGE_RESULTS_SUBDIR}/batch-NNN.json"
             f"\nThen run: python -m lib.steps.select --session {session_id} --prepare-consolidate"
         )
@@ -679,7 +679,7 @@ def cli(
             return
         click.echo(f"Phase B: prepared consolidate batch: {path}")
         click.echo(
-            f"\nDispatch ONE Sonnet subagent. Write the result to:"
+            f"\nDispatch ONE Opus subagent. Write the result to:"
             f"\n  runs/{session_id}/{_CONSOLIDATE_RESULTS_SUBDIR}/batch-000.json"
             f"\nThen run: python -m lib.steps.select --session {session_id} --prepare-reassign"
         )

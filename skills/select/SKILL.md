@@ -13,8 +13,8 @@ flow with a three-round consolidation pipeline that produces a flat
 
 | Phase | What | Batch shape | Subagent |
 |---|---|---|---|
-| A | Repechage: mine HDBSCAN noise for new themes | 50 noise items / batch | Sonnet |
-| B | Consolidate: unify HDBSCAN + repechage names | 1 batch (all clusters) | Sonnet |
+| A | Repechage: mine HDBSCAN noise for new themes | 50 noise items / batch | Opus |
+| B | Consolidate: unify HDBSCAN + repechage names | 1 batch (all clusters) | Opus |
 | C | Reassign: every headline → final name or "Other" | 25 headlines / batch | Haiku |
 | D | Global MMR top-K (default 100, λ=0.7) | in-process math | — |
 | E | Build sections from MMR survivors | in-process | — |
@@ -36,7 +36,7 @@ holds ≤50 noise headlines (`id`, `title`, `short_summary`) plus the
 self-contained `system_prompt`, `user_prompt`, and `output_schema` for
 `extract_noise_clusters`.
 
-Dispatch one Sonnet subagent per batch (all in parallel in ONE parent
+Dispatch one Opus subagent per batch (all in parallel in ONE parent
 message). Each subagent must:
 
 ```
@@ -61,7 +61,7 @@ state from the cluster step), and writes a single
 `runs/<SID>/select-consolidate-batches/batch-000.json` for
 `consolidate_cluster_names`.
 
-Dispatch **one** Sonnet subagent. Same skeleton as round 1 but writes to
+Dispatch **one** Opus subagent. Same skeleton as round 1 but writes to
 `runs/<SID>/select-consolidate-results/batch-000.json`. The validator
 handles the `{final_names, mapping}` shape automatically.
 

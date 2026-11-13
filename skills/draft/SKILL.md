@@ -7,7 +7,7 @@ description: Draft markdown newsletter sections in parallel with a critic-optimi
 
 Step 10 of /newsagent:pipeline. Two execution paths.
 
-## Interactive mode — Sonnet subagent dispatch
+## Interactive mode — Opus subagent dispatch
 
 The Agent runs the **entire critic-optimizer loop** inside its own context:
 write → critique → if accept or score>=8.0 stop, else improve → next iteration,
@@ -27,12 +27,12 @@ Writes one self-contained batch per section under
 - Three pre-rendered prompts: `write_*`, `critique_*`, `improve_*`
 - `output_schema` (`DraftSectionResult`)
 
-### Step 2: dispatch one Sonnet subagent per batch (all in ONE message)
+### Step 2: dispatch one Opus subagent per batch (all in ONE message)
 
 Per-Agent config:
 
 - `subagent_type: "general-purpose"`
-- `model: "sonnet"`
+- `model: "opus"`
 - `description: "Draft section <cat>"`
 - `prompt:` instructions of the shape:
 
