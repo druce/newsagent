@@ -9,7 +9,9 @@ import pytest
 
 from lib.engines.base import EngineBlockedError, EngineError
 from lib.rating import (
+    _BATTLE_BATCH_SIZE,
     _call_battle_with_retry,
+    _ranking_mismatch,
     bradley_terry_from_battles,
     bradley_terry_scores,
     swiss_pairing,
@@ -182,7 +184,7 @@ def test_bradley_terry_scores_survives_blocked_battles(monkeypatch):
     monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
     monkeypatch.setattr("lib.rating.time.sleep", lambda s: None)
 
-    scores = bradley_terry_scores(items)
+    scores = bradley_terry_scores(items, items_per_battle=6)
 
     assert set(scores) == {f"id{i}" for i in range(n)}
     assert all(isinstance(v, float) for v in scores.values())
@@ -217,7 +219,7 @@ def test_bradley_terry_scores_stops_early_when_converged(monkeypatch):
     def _cb(rnd, _max_rnd, _n_b, _avg):
         rounds_seen.append(rnd)
 
-    scores = bradley_terry_scores(items, progress_callback=_cb)
+    scores = bradley_terry_scores(items, items_per_battle=6, progress_callback=_cb)
 
     # max_rounds for n=20 with items_per_battle=6 is ceil(19/5) = 4, so min_rounds = max(3, 4//3) = 3.
     # Convergence can only fire after >min_rounds samples (i.e. round 4+). For
@@ -251,7 +253,7 @@ def test_bradley_terry_scores_break_short_circuits_below_max(monkeypatch):
     def _cb(rnd, max_rnd, _n_b, _avg):
         rounds_seen.append((rnd, max_rnd))
 
-    bradley_terry_scores(items, progress_callback=_cb)
+    bradley_terry_scores(items, items_per_battle=6, progress_callback=_cb)
 
     actual_max = rounds_seen[-1][0]
     budget = rounds_seen[-1][1]
@@ -261,3 +263,80 @@ def test_bradley_terry_scores_break_short_circuits_below_max(monkeypatch):
     assert actual_max < budget, (
         f"Expected early stop before max_rounds={budget}, got {actual_max}"
     )
+
+
+# ---------------------------------------------------------------------------
+# corrupt battle returns — ranking must be exactly the ids that were sent
+# ---------------------------------------------------------------------------
+
+
+def test_default_battle_batch_size_is_10():
+    assert _BATTLE_BATCH_SIZE == 10
+
+
+@pytest.mark.parametrize("ranking,expect", [
+    (["b", "a", "c"], None),
+    (["b", "a"], "missing"),
+    (["b", "a", "c", "z"], "extra"),
+    (["b", "a", "a", "c"], "duplicate"),
+    (["b", "a", "z"], "missing"),  # swapped one id for a foreign one
+])
+def test_ranking_mismatch(ranking, expect):
+    got = _ranking_mismatch(ranking, ["a", "b", "c"])
+    if expect is None:
+        assert got is None
+    else:
+        assert expect in got
+
+
+def _items(n):
+    return [{"id": f"id{i:02d}", "title": f"t{i}", "summary": f"s{i}"} for i in range(n)]
+
+
+def test_corrupt_ranking_is_retried_and_good_retry_is_used(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_call_prompt(name, item):
+        calls["n"] += 1
+        ids = sorted(x["id"] for x in item["items"])
+        if calls["n"] == 1:
+            return _FakeRanking(ranking=ids[:-1] + [ids[0]])  # drops one, duplicates one
+        return _FakeRanking(ranking=ids)
+
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: None)
+    scores = bradley_terry_scores(_items(10), max_rounds=1)
+    assert calls["n"] == 2
+    order = sorted(scores, key=scores.get, reverse=True)
+    assert order[0] == "id00" and order[-1] == "id09"
+
+
+def test_persistently_corrupt_battle_is_dropped_not_scored(monkeypatch, capsys):
+    """A batch that keeps coming back wrong contributes no pairs; the others still do."""
+    items = _items(20)
+    bad_batches = []
+
+    def fake_call_prompt(name, item):
+        ids = sorted(x["id"] for x in item["items"])
+        if "id00" in ids:  # always swaps id00 for an id from outside this batch
+            bad_batches.append(set(ids))
+            foreign = next(it["id"] for it in items if it["id"] not in ids)
+            return _FakeRanking(ranking=[i for i in ids if i != "id00"] + [foreign])
+        return _FakeRanking(ranking=ids)
+
+    fed = []
+    import lib.rating as R
+    real = R.bradley_terry_from_battles
+    monkeypatch.setattr(R, "bradley_terry_from_battles", lambda ids, b: (fed.append(list(b)), real(ids, b))[1])
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating.time.sleep", lambda s: None)
+
+    scores = bradley_terry_scores(items, items_per_battle=10, max_rounds=1)
+
+    assert set(scores) == {it["id"] for it in items}
+    assert len(bad_batches) == 2  # first try + one retry
+    bad = bad_batches[0]
+    pairs = fed[-1]
+    assert pairs, "the clean batch must still produce pairs"
+    assert not any(w in bad or l in bad for w, l in pairs)
+    assert "corrupt" in capsys.readouterr().err

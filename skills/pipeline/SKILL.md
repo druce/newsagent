@@ -37,7 +37,7 @@ coverage → rate → cluster → select → draft → rewrite → send
 | summarize | prepare/dispatch/apply | sonnet | 10 articles per batch |
 | crossdedupe | prepare/dispatch/apply | haiku | 25 pairs per batch (often 0 batches — no candidates) |
 | coverage | prepare/dispatch/apply | haiku | 25 pairs per batch (often 0 batches — no candidates) |
-| rate | Python CLI (in-process: rate_* prompts default `openai:gpt-4o-mini`, battles `google:gemini-3.1-flash-lite`) | — | — |
+| rate | Python CLI (in-process: rate_* prompts default `openai:gpt-4o-mini`, battles `google:gemini-3.5-flash-lite`, 10 per call) | — | — |
 | cluster | prepare/dispatch/apply | haiku | 1 batch (all clusters) |
 | select | **3 sequential rounds** then apply | sonnet (repechage, consolidate); haiku (reassign) | 50 noise per repechage batch; 1 consolidate batch; 25 headlines per reassign batch |
 | draft | prepare/dispatch/apply | sonnet | 1 batch per section |

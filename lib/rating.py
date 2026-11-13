@@ -23,8 +23,18 @@ import choix
 from lib.engines.base import EngineBlockedError, EngineError
 from lib.llm import call_prompt
 
-# Items per battle batch sent to the LLM judge
-_BATTLE_BATCH_SIZE = 6
+# Items per battle batch sent to the LLM judge. 10 per the 2026-11-12 batch-size
+# sweep (evals/run/battle.py, gemini-3.5-flash-lite vs an Opus gold ranking):
+# pair accuracy is flat from 6 through 15 and drops significantly at 20, while
+# calls per run fall ~3x from 6 to 10.
+_BATTLE_BATCH_SIZE = 10
+
+# A returned ranking must be exactly the ids that were sent: no missing, extra
+# (foreign) or duplicate ids. A mismatched ranking is retried this many times,
+# then the battle is dropped. Corrupt rankings are rare and random (~1 in 300
+# at k=10 for flash-lite 3.5), so one retry almost always recovers.
+_BATTLE_CORRUPT_RETRIES = 1
+_CORRUPT = object()  # sentinel: battle dropped for a corrupt ranking
 
 # Battle retry policy. Gemini occasionally returns transient 5xx during peak
 # load; one failed call would otherwise kill the entire rate step (battles run
@@ -61,6 +71,38 @@ def _call_battle_with_retry(item: Dict[str, Any]) -> Any:
             raise
     assert last_exc is not None
     raise last_exc
+
+
+def _ranking_mismatch(ranking: List[str], ids: List[str]) -> Optional[str]:
+    """None if ``ranking`` is a permutation of ``ids``, else what is wrong."""
+    probs = []
+    missing = sorted(set(ids) - set(ranking))
+    extra = sorted(set(ranking) - set(ids))
+    dups = sorted({x for x in ranking if ranking.count(x) > 1})
+    if missing:
+        probs.append(f"missing {missing}")
+    if extra:
+        probs.append(f"extra {extra}")
+    if dups:
+        probs.append(f"duplicate {dups}")
+    return "; ".join(probs) or None
+
+
+def _call_battle_validated(item: Dict[str, Any]) -> Any:
+    """_call_battle_with_retry, plus a check that the ranking matches what was
+    sent. Returns the result, None (content-filter block) or _CORRUPT."""
+    ids = [str(x["id"]) for x in item["items"]]
+    problem = None
+    for attempt in range(_BATTLE_CORRUPT_RETRIES + 1):
+        result = _call_battle_with_retry(item)
+        if result is None:
+            return None
+        problem = _ranking_mismatch([str(x) for x in result.ranking], ids)
+        if problem is None:
+            return result
+        print(f"  [battle] corrupt ranking (attempt {attempt + 1}): {problem}", file=sys.stderr)
+    print(f"  [battle] dropping battle over {ids} after a corrupt ranking: {problem}", file=sys.stderr)
+    return _CORRUPT
 
 
 def swiss_pairing(
@@ -226,7 +268,7 @@ def bradley_terry_scores(
         # transient Gemini blip can't kill the whole step.
         inputs = [{"items": b} for b in batches]
         with ThreadPoolExecutor(max_workers=_BATTLE_PARALLELISM) as pool:
-            results = list(pool.map(_call_battle_with_retry, inputs))
+            results = list(pool.map(_call_battle_validated, inputs))
 
         # Battles the provider's content filter refused come back as None.
         blocked = sum(1 for r in results if r is None)
@@ -237,6 +279,13 @@ def bradley_terry_scores(
                 file=sys.stderr,
             )
             results = [r for r in results if r is not None]
+        corrupt = sum(1 for r in results if r is _CORRUPT)
+        if corrupt:
+            print(
+                f"  [battle] dropped {corrupt}/{len(inputs)} battle(s) with a corrupt ranking",
+                file=sys.stderr,
+            )
+            results = [r for r in results if r is not _CORRUPT]
 
         # Extract pairwise outcomes from each ranking
         for result in results:
