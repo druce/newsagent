@@ -45,3 +45,9 @@ docs/superpowers/
 # Eval extraction intermediates (large, regenerable from runs/ + DB until truncation)
 /evals/archive/
 /evals/work/
+
+# Local artifacts
+*.db.bak*
+/logs/
+.playwright-mcp/
+.claude/settings.local.json.*
