@@ -24,6 +24,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from lib.fetch.browser import launch_stealth_context_async
+from lib.fetch.site_logins import perform_logins
 
 
 _DEFAULT_NAV_TIMEOUT_MS = 30_000
@@ -350,6 +351,10 @@ async def fetch_urls_html_batch_async(
     async with async_playwright() as p:
         ctx = await launch_stealth_context_async(p, headless=True)
         try:
+            # Sites with session-only login cookies (see site_logins) must be
+            # logged in on this context before any of their URLs are fetched.
+            await perform_logins(ctx, urls)
+
             async def _one(u: str) -> None:
                 nonlocal done
                 async with sem:

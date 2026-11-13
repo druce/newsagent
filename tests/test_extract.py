@@ -165,3 +165,132 @@ def test_extract_article_text_serializes_trafilatura_calls(monkeypatch):
 
     assert all(r == "extracted body text" for r in results)
     assert not overlaps, f"trafilatura.extract ran concurrently: {overlaps}"
+
+
+def _split_body_html() -> str:
+    """Ars-style page: body split into several post-content blocks with ads between."""
+    def block(tag: str) -> str:
+        paras = "".join(
+            f"<p>{tag} paragraph {i} carries real reporting about the story at hand. "
+            f"{'More substantive article detail follows here. ' * 4}</p>"
+            for i in range(4)
+        )
+        return f'<div class="post-content post-content-double">{paras}</div>'
+
+    ad = '<div class="ad-wrapper"><span>Advertisement</span></div>'
+    return (
+        "<html><head><title>Split story</title></head><body>"
+        '<article class="double-column h-entry">'
+        f'<div class="relative">{block("First")}</div>{ad}'
+        f'<div class="relative">{block("Second")}</div>{ad}'
+        f'<div class="relative">{block("Third")}</div>'
+        "</article>"
+        '<footer class="site-footer"><p>Ars Technica has been separating the signal '
+        "from the noise for over 25 years with our unique combination of skills.</p></footer>"
+        "</body></html>"
+    )
+
+
+def test_extract_article_text_joins_split_post_content_blocks():
+    # Ars Technica splits one article across several div.post-content blocks
+    # separated by ad slots; trafilatura alone keeps only the first block.
+    text = extract_article_text(_split_body_html())
+    assert text
+    for tag in ("First", "Second", "Third"):
+        assert f"{tag} paragraph 3" in text
+    assert "separating the signal" not in text
+
+
+def test_post_content_join_needs_multiple_blocks():
+    from lib.fetch.extract import article_body_from_post_content
+
+    single = (
+        '<html><body><div class="post-content"><p>only one block</p></div></body></html>'
+    )
+    assert article_body_from_post_content(single) is None
+
+
+# --- headline vs dek when several anchors share a URL -----------------------
+_WSJ = """<div><a href="https://www.wsj.com/finance/stocks/nvidia-underappreciated-bdfd936c?mod=ai_lead_pos3" slotname="media"><picture><img alt="x" src="i.jpg"></picture></a>
+<h3 class="css-fsvegl"><a data-testid="flexcard-headline" href="https://www.wsj.com/finance/stocks/nvidia-underappreciated-bdfd936c?mod=ai_lead_pos3"><div class="HeadlineTextBlock">Even at $5 Trillion, Nvidia Is Underappreciated</div></a></h3>
+<div><a href="https://www.wsj.com/finance/stocks/nvidia-underappreciated-bdfd936c?mod=ai_lead_pos3"><span><p data-testid="flexcard-text">Competition is growing, but the AI chip maker’s sluggish stock doesn’t give enough credit for its strong position.</p></span></a></div>
+<a href="https://www.wsj.com/finance/stocks/nvidia-underappreciated-bdfd936c?mod=ai_lead_pos3#comments_sector">82</a></div>"""
+
+_FT = """<li class="o-header__mega-item"><a class="o-header__mega-link" href="/content/52b5f9a8">How Singapore became a route for Nvidia chips to China</a></li>
+<div class="o-teaser__heading"><a class="js-teaser-heading-link" data-trackable="heading-link" href="/content/52b5f9a8?syn=1">How Singapore became a route for Nvidia chips to China</a></div>
+<p class="o-teaser__standfirst"><a class="js-teaser-standfirst-link" data-trackable="standfirst-link" href="/content/52b5f9a8?syn=1">A suspected Chinese spy and Singaporean chip deal reveal the Asian networks testing Washington’s grip on AI technology</a></p>"""
+
+_BLOOMBERG = """<a data-component="story-link" href="/news/features/2026-11-10/jensen-huang-succession"><div data-component="story-block"><div data-component="optional-eyebrow">The Big Take</div><div class="Headline_phoenix" data-component="headline" data-testid="headline"><span>Jensen Huang’s 700,000% Return Magnifies Nvidia Succession Crisis</span></div><section class="Summary_summary typography_articleDek" data-component="summary">The board is weighing the risk of a future without its singular leader.</section></div></a>"""
+
+_ARS = """<h2><a href="https://arstechnica.com/ai/2026/06/pokemon-go-players/"><em>Pokémon Go</em> players unwittingly contributed to tech with military drone uses</a></h2>"""
+
+_IMG_CAPTION = """<a href="https://venturebeat.com/ai/story-x">Credit: VentureBeat made with Midjourney</a>
+<a href="https://venturebeat.com/ai/story-x">Startup ships a reasoning model that beats the frontier labs</a>"""
+
+
+def _one(html, url):
+    arts = extract_article_links(html, {"url": url}, source_name="S")
+    assert len(arts) == 1, arts
+    return arts[0]
+
+
+def test_wsj_prefers_headline_anchor_and_keeps_dek_as_summary():
+    a = _one(_WSJ, "https://www.wsj.com/tech/ai")
+    assert a.title == "Even at $5 Trillion, Nvidia Is Underappreciated"
+    assert a.rss_summary and a.rss_summary.startswith("Competition is growing")
+
+
+def test_ft_prefers_heading_link_over_standfirst():
+    a = _one(_FT, "https://www.ft.com/artificial-intelligence")
+    assert a.title == "How Singapore became a route for Nvidia chips to China"
+    assert a.rss_summary.startswith("A suspected Chinese spy")
+
+
+def test_bloomberg_uses_inner_headline_not_eyebrow_and_dek():
+    a = _one(_BLOOMBERG, "https://www.bloomberg.com/ai")
+    assert a.title == "Jensen Huang’s 700,000% Return Magnifies Nvidia Succession Crisis"
+    assert a.rss_summary == "The board is weighing the risk of a future without its singular leader."
+
+
+def test_inline_markup_keeps_word_spacing():
+    a = _one(_ARS, "https://arstechnica.com/ai/")
+    assert a.title == "Pokémon Go players unwittingly contributed to tech with military drone uses"
+    assert a.rss_summary is None
+
+
+def test_without_headline_markup_longest_text_still_wins():
+    a = _one(_IMG_CAPTION, "https://venturebeat.com/ai")
+    assert a.title == "Startup ships a reasoning model that beats the frontier labs"
+    assert a.rss_summary is None
+
+
+def test_dek_inside_headline_anchor_without_dek_markup():
+    # The Register / Washington Post: headline element + bare dek text in one anchor.
+    html = """<a href="https://www.theregister.com/2026/11/10/leibniz/"><h4>Insight about how 'nature makes no leaps' promises better robot predictions</h4>
+    <div>Leibniz lives on as researchers apply continuity to motion planning for humanoids</div></a>"""
+    a = _one(html, "https://www.theregister.com/")
+    assert a.title == "Insight about how 'nature makes no leaps' promises better robot predictions"
+    assert a.rss_summary == "Leibniz lives on as researchers apply continuity to motion planning for humanoids"
+
+
+def test_short_headline_marked_fragments_still_respect_minlength():
+    html = """<h3><a href="https://www.businessinsider.com/so-expensive">So Expensive</a></h3>"""
+    assert extract_article_links(html, {"url": "https://www.businessinsider.com/"}, source_name="S") == []
+
+
+def test_style_tags_named_like_headlines_are_ignored():
+    html = """<h3><a data-testid="flexcard-headline" href="https://www.wsj.com/opinion/honeypot-25b4"><style data-emotion="css kcrx2-HeadlineTextBlock">.x{margin:0}</style><div class="HeadlineTextBlock">Nvidia Gets a Chinese Honeypot Lesson</div></a></h3>"""
+    assert _one(html, "https://www.wsj.com/tech/ai").title == "Nvidia Gets a Chinese Honeypot Lesson"
+
+
+def test_short_headline_wins_when_url_also_has_a_long_dek():
+    html = """<h3><a data-testid="flexcard-headline" href="https://www.wsj.com/tech/ai/big-blue-blues-b83c"><div>Big Blue Blues</div></a></h3>
+    <div><a href="https://www.wsj.com/tech/ai/big-blue-blues-b83c"><p>Plus, what happens when you give an AI agent access to your passwords.</p></a></div>"""
+    a = _one(html, "https://www.wsj.com/tech/ai")
+    assert a.title == "Big Blue Blues"
+    assert a.rss_summary.startswith("Plus, what happens")
+
+
+def test_flag_labels_are_dropped_from_headline():
+    html = """<h3><a data-testid="flexcard-headline" href="https://www.wsj.com/tech/ai/google-blackstone-0e35"><div class="HeadlineTextBlock"><div><div class="FlagContainer" data-testid="content-tag"><span>EXCLUSIVE</span></div></div>Google and Blackstone to Create New AI Cloud Company</div></a></h3>"""
+    assert _one(html, "https://www.wsj.com/tech/ai").title == "Google and Blackstone to Create New AI Cloud Company"

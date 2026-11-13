@@ -101,3 +101,8 @@ GOOGLE_UPLOADER_CLIENT_SECRET=''
 
 GOOGLE_UPLOADER_SERVICE_ACCOUNT=''
 GOOGLE_UPLOADER_SERVICE_ACCOUNT_ID=''
+
+# Digitimes subscription login — Playwright logs in once per download batch
+# (session-only cookies; see lib/fetch/site_logins.py). Optional.
+DIGITIMES_EMAIL=''
+DIGITIMES_PASSWORD=''
