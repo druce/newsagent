@@ -232,7 +232,7 @@ def rate_units(ckpts: Iterable[dict], prompt: str) -> list[dict]:
                 tags.append("axis_conflict")
                 hard += 0.5
             text = f"{it.get('title', '')}\n{it['summary']}"
-            units.append(_unit(prompt, rec, it["id"], {"items": [{"id": it["id"], "input_text": text}]},
+            units.append(_unit(prompt, rec, it["id"], {"input_text": text},
                                {"confidence": c}, key=norm(it.get("title")),
                                strata={"source": it.get("site_name") or it.get("source"),
                                        "bucket": round(c, 1)},

@@ -13,7 +13,7 @@ Composite:
 Terms:
   reputation     — sites.reputation lookup by URL domain (default 0.0)
   adjusted_len   — clip(log10(content_length) - 3, 0, 2); content_length from text_path
-  on_topic/importance/quality_low — LLM 0..1 confidences
+  on_topic/importance/quality_low — 0..1 predicate probabilities (OpenAI Decisions API)
   bt_z           — z-scored Bradley-Terry score
   recency_score  — 2*exp(-ln2 * age_days) - 1   (≈ +1 today, 0 at 1d, -0.5 at 2d, -1 floor)
   coverage_score — log2(coverage_count) where coverage_count is the same-story group size
@@ -50,17 +50,17 @@ import trafilatura
 from dotenv import load_dotenv
 
 import lib.prompts  # noqa: F401 — register all prompts including rating prompts
-from lib.config import MAX_ARTICLE_AGE_DAYS, RATING_COEFFS
+from lib.config import MAX_ARTICLE_AGE_DAYS, NO_CONTENT_QUALITY_LOW, RATING_COEFFS
 from lib.db import Site
 from lib.fetch.extract import HTML_PARSE_LOCK
+from lib.engines.base import EngineError
 from lib.llm import call_prompt
 from lib.rating import bradley_terry_scores
 from lib.state import NewsletterAgentState
-from lib.utilities import send_gmail, write_short_digest
+from lib.utilities import is_no_content, send_gmail, write_short_digest
 
-_BATCH = 25
-# All three axes' batches fan out into one pool. OpenAI tier-1 RPM caps around
-# 500/min for gpt-4o-mini, well above what 16 in-flight requests will sustain.
+# One Decisions API call per article per axis (~0.3 s each, no output tokens);
+# 16 in flight per axis, 48 total across the three concurrent axes.
 _PER_AXIS_PARALLELISM = 16
 _URL_DATE_RE = re.compile(r"/(20\d\d)[/-](\d{1,2})[/-](\d{1,2})(?:[/-]|$)")
 _RECENCY_K = math.log(2)  # half-life: 1 day
@@ -75,22 +75,29 @@ def _collect_confidences(
     *,
     parallelism: int = _PER_AXIS_PARALLELISM,
 ) -> Dict[str, float]:
-    """Call the given rating prompt in batches concurrently; return {id: confidence}."""
-    batches = [items[i:i + _BATCH] for i in range(0, len(items), _BATCH)]
-    n_batches = len(batches)
-    click.echo(f"  {prompt_name}: dispatching {n_batches} batch(es), parallelism={parallelism}")
+    """Score every article on one rating axis; return {id: probability}.
 
-    def _one(batch):
-        return call_prompt(prompt_name, {"items": batch}, engine=engine)
+    Each rate_* prompt is a yes/no predicate over one article, so this makes one
+    call per article. An article whose call still fails after the engine's own
+    retries and fallback is left out (the composite then uses a neutral 0.5)
+    instead of failing the whole step.
+    """
+    click.echo(f"  {prompt_name}: {len(items)} article(s), parallelism={parallelism}")
+
+    def _one(item):
+        try:
+            out = call_prompt(prompt_name, {"input_text": item["input_text"]}, engine=engine)
+            return item["id"], out.probability
+        except EngineError as exc:
+            print(f"  [{prompt_name}] article {item['id']} failed: {exc}", file=sys.stderr)
+            return item["id"], None
 
     with ThreadPoolExecutor(max_workers=parallelism) as pool:
-        outs = list(pool.map(_one, batches))
-
-    result: Dict[str, float] = {}
-    for out in outs:
-        for sc in out.results_list:
-            result[sc.id] = sc.confidence
-    return result
+        pairs = list(pool.map(_one, items))
+    failed = sum(p is None for _, p in pairs)
+    if failed:
+        click.echo(f"  {prompt_name}: {failed} article(s) failed; scored neutral (0.5)")
+    return {i: p for i, p in pairs if p is not None}
 
 
 def _z_score(scores: Dict[str, float]) -> Dict[str, float]:
@@ -287,7 +294,7 @@ def cli(
 
     click.echo(f"Rating {len(items)} articles across 3 axes + Bradley-Terry battles.")
 
-    # --- Per-axis confidence scores (all 3 axes run concurrently) ---
+    # --- Per-axis predicate probabilities (all 3 axes run concurrently) ---
     click.echo("[1/4] Rating quality, on_topic, importance concurrently")
     with ThreadPoolExecutor(max_workers=3) as pool:
         fut_quality = pool.submit(_collect_confidences, items, "rate_quality", engine)
@@ -324,6 +331,8 @@ def cli(
         key = str(idx)
 
         quality_low = quality_dict.get(key, 0.5)
+        if NO_CONTENT_QUALITY_LOW is not None and is_no_content(h.get("summary")):
+            quality_low = NO_CONTENT_QUALITY_LOW
         on_topic = on_topic_dict.get(key, 0.5)
         importance = importance_dict.get(key, 0.5)
         btz = bt_z.get(key, 0.0)

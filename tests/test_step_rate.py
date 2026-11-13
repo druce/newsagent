@@ -9,7 +9,7 @@ from click.testing import CliRunner
 import lib.prompts  # noqa: F401 — register prompts
 from lib.config import MAX_ARTICLE_AGE_DAYS, RATING_COEFFS
 from lib.db import Site, init_db
-from lib.prompts._rating_schemas import RatingOutput, StoryConfidence
+from lib.prompts._rating_schemas import PredicateOutput
 from lib.state import NewsletterAgentState
 from lib.steps.rate import (
     _adjusted_len,
@@ -169,8 +169,7 @@ def test_reputation_used_in_composite(tmp_db, monkeypatch, tmp_path):
         Site(domain="good.com", name="Good", reputation=2.0).upsert(conn)
 
     def fake_call_prompt(name, inputs, *, engine=None):
-        ids = [it["id"] for it in inputs["items"]]
-        return RatingOutput(results_list=[StoryConfidence(id=i, confidence=0.5) for i in ids])
+        return PredicateOutput(probability=0.5)
 
     def fake_bt(items, **_):
         return {item["id"]: 0.0 for item in items}
@@ -209,8 +208,7 @@ def test_articles_older_than_7d_dropped(tmp_db, monkeypatch, tmp_path):
     state.save_checkpoint("summarize")
 
     def fake_call_prompt(name, inputs, *, engine=None):
-        ids = [it["id"] for it in inputs["items"]]
-        return RatingOutput(results_list=[StoryConfidence(id=i, confidence=0.5) for i in ids])
+        return PredicateOutput(probability=0.5)
 
     def fake_bt(items, **_):
         return {item["id"]: 0.0 for item in items}
@@ -233,18 +231,11 @@ def test_composite_is_additive_legacy_shape(tmp_db, monkeypatch, tmp_path):
     _seed(tmp_db, n=3)
 
     def fake_call_prompt(name, inputs, *, engine=None):
-        ids = [it["id"] for it in inputs["items"]]
-        if name == "rate_quality":
-            scores = [0.1, 0.1, 0.1]
-        elif name == "rate_on_topic":
-            scores = [0.9, 0.9, 0.9]
-        elif name == "rate_importance":
-            scores = [0.8, 0.5, 0.2]
-        else:
-            scores = [0.5] * len(ids)
-        return RatingOutput(results_list=[
-            StoryConfidence(id=i, confidence=s) for i, s in zip(ids, scores)
-        ])
+        # one article per call; its input_text starts with the title "T<i>"
+        i = int(inputs["input_text"].split("\n")[0][1:])
+        scores = {"rate_quality": [0.1, 0.1, 0.1], "rate_on_topic": [0.9, 0.9, 0.9],
+                  "rate_importance": [0.8, 0.5, 0.2]}[name]
+        return PredicateOutput(probability=scores[i])
 
     def fake_bt(items, **_):
         ids = [item["id"] for item in items]
@@ -315,10 +306,7 @@ def test_rate_skips_headlines_without_summary(tmp_db, monkeypatch, tmp_path):
     state.save_checkpoint("summarize")
 
     def fake_call_prompt(name, inputs, *, engine=None):
-        ids = [it["id"] for it in inputs["items"]]
-        return RatingOutput(results_list=[
-            StoryConfidence(id=i, confidence=0.5) for i in ids
-        ])
+        return PredicateOutput(probability=0.5)
 
     def fake_bt(items, **_):
         return {item["id"]: 0.0 for item in items}
@@ -333,3 +321,71 @@ def test_rate_skips_headlines_without_summary(tmp_db, monkeypatch, tmp_path):
     rated = [h for h in state.headline_data if "rating" in h]
     assert len(rated) == 1
     assert rated[0]["id"] == 0
+
+
+# ── Decisions-API axes: one article per call ──────────────
+
+def _run_rate(tmp_db, session, fake_call_prompt):
+    def fake_bt(items, **_):
+        return {item["id"]: 0.0 for item in items}
+    with patch("lib.steps.rate.call_prompt", side_effect=fake_call_prompt):
+        with patch("lib.steps.rate.bradley_terry_scores", side_effect=fake_bt):
+            result = CliRunner().invoke(rate_cli, ["--db", tmp_db, "--session", session, "--no-email"])
+    assert result.exit_code == 0, result.output
+    state = NewsletterAgentState(session_id=session, db_path=tmp_db).load_latest_from_db()
+    return {h["id"]: h for h in state.headline_data}, result.output
+
+
+def test_each_axis_sends_one_article_per_call(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed(tmp_db, n=3)
+    seen = []
+
+    def fake_call_prompt(name, inputs, *, engine=None):
+        seen.append((name, inputs["input_text"]))
+        return PredicateOutput(probability=0.5)
+
+    _run_rate(tmp_db, "r1", fake_call_prompt)
+    for name in ("rate_quality", "rate_on_topic", "rate_importance"):
+        assert sorted(t for n, t in seen if n == name) == ["T0\nS0", "T1\nS1", "T2\nS2"]
+
+
+def test_failed_article_defaults_to_neutral_without_killing_step(tmp_db, monkeypatch, tmp_path):
+    from lib.engines.base import EngineError
+    monkeypatch.chdir(tmp_path)
+    _seed(tmp_db, n=2)
+
+    def fake_call_prompt(name, inputs, *, engine=None):
+        if name == "rate_importance" and inputs["input_text"].startswith("T1"):
+            raise EngineError("boom")
+        return PredicateOutput(probability=0.9)
+
+    rows, out = _run_rate(tmp_db, "r1", fake_call_prompt)
+    assert rows[0]["importance"] == 0.9
+    assert rows[1]["importance"] == 0.5
+    assert "rate_importance: 1 article(s) failed" in out
+
+
+@pytest.mark.parametrize("setting,expected", [(1.0, 1.0), (0.0, 0.0), (None, 0.2)])
+def test_no_content_quality_policy(tmp_db, monkeypatch, tmp_path, setting, expected):
+    monkeypatch.chdir(tmp_path)
+    init_db(tmp_db)
+    state = NewsletterAgentState(session_id="nc", db_path=tmp_db)
+    for s in ("start", "gather", "filter", "download", "summarize"):
+        state.complete_step(s)
+    pub = _now().isoformat()
+    state.headline_data = [
+        {"id": 0, "title": "Paywalled", "url": "https://e.com/a", "summary": "- no content",
+         "is_ai": True, "published": pub},
+        {"id": 1, "title": "Real", "url": "https://e.com/b", "summary": "- facts",
+         "is_ai": True, "published": pub},
+    ]
+    state.save_checkpoint("summarize")
+    monkeypatch.setattr("lib.steps.rate.NO_CONTENT_QUALITY_LOW", setting)
+
+    def fake_call_prompt(name, inputs, *, engine=None):
+        return PredicateOutput(probability=0.2)
+
+    rows, _ = _run_rate(tmp_db, "nc", fake_call_prompt)
+    assert rows[0]["quality_low"] == expected
+    assert rows[1]["quality_low"] == 0.2

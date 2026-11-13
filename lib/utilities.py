@@ -340,6 +340,11 @@ def render_row_action_links(
 # ── Rated-digest HTML rendering ──────────────────────────────────────────────
 
 
+def is_no_content(value: Optional[str]) -> bool:
+    """True if ``value`` is the summarize step's 'no content' sentinel."""
+    return bool(value) and value.strip().lower() in ("no content", "- no content")
+
+
 def _strip_no_content(value: Optional[str]) -> str:
     """Drop the summarize step's 'no content' sentinel.
 

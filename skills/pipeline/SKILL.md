@@ -37,7 +37,7 @@ coverage → rate → cluster → select → draft → rewrite → send
 | summarize | prepare/dispatch/apply | opus | 10 articles per batch |
 | crossdedupe | prepare/dispatch/apply | opus | 25 pairs per batch (often 0 batches — no candidates) |
 | coverage | prepare/dispatch/apply | opus | 25 pairs per batch (often 0 batches — no candidates) |
-| rate | Python CLI (in-process: rate_* prompts default `openai:gpt-4o-mini`, battles `google:gemini-3.5-flash-lite`, 10 per call) | — | — |
+| rate | Python CLI (in-process: rate_* predicates default `openai-decisions:gpt-6-luna`, battles `google:gemini-3.5-flash-lite`, 10 per call) | — | — |
 | cluster | prepare/dispatch/apply | opus | 1 batch (all clusters) |
 | select | **3 sequential rounds** then apply | opus (repechage, consolidate); haiku (reassign) | 50 noise per repechage batch; 1 consolidate batch; 25 headlines per reassign batch |
 | draft | prepare/dispatch/apply | opus | 1 batch per section |

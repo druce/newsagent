@@ -27,5 +27,12 @@ RATING_COEFFS = {
     "coverage": 1.0,      # c_coverage * log2(coverage_count); singleton (N=1) -> 0
 }
 
+# quality_low for an article whose summary is the summarize step's "no content"
+# sentinel (paywall, empty extraction). The rate_quality predicate itself judges
+# such items by title alone; this decides whether a missing body also costs
+# points. 1.0 = full low-quality penalty (behavior before 2026-11-13), 0.0 = no
+# penalty, None = use the model's title-only score.
+NO_CONTENT_QUALITY_LOW: float | None = 1.0
+
 # Drop articles older than this many days (legacy do_rating.py:426).
 MAX_ARTICLE_AGE_DAYS = 7

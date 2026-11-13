@@ -27,15 +27,16 @@ when the task finishes.
 ## Behavior
 
 - Processes headlines that have a `summary` field; skips any without one.
-- Calls three per-axis prompts in sequence, each batched at 25 items:
-  - `rate_quality` — confidence the article is low quality (0..1, inverted in composite)
-  - `rate_on_topic` — confidence the article is on-topic for AI news (0..1)
-  - `rate_importance` — confidence the article is important (0..1)
+- Runs three per-axis yes/no predicates concurrently, one article per call, each returning a probability (0..1) from the OpenAI Decisions API (`openai-decisions:gpt-6-luna`):
+  - `rate_quality` — probability the article is low quality (subtracted in the composite)
+  - `rate_on_topic` — probability the article is about AI
+  - `rate_importance` — probability the article is important to AI-newsletter readers
+  An article whose call fails (after the engine's retries and its chat-completions fallback) scores a neutral 0.5 on that axis; the step continues.
+- Articles whose summary is the "no content" sentinel get `quality_low = NO_CONTENT_QUALITY_LOW` (`lib/config.py`, default 1.0 = full penalty; `None` uses the model's title-only score).
 - Calls `lib.rating.bradley_terry_scores` to run Swiss-paired LLM battles; z-scores the result.
-- Computes composite: `rating = 0.2*(1-quality_low) + 0.3*on_topic + 0.3*importance + 0.2*bt_z`
-- Adds recency bonus `+0.1 * exp(-hours_since/48)` if `published` date is set and parseable.
+- Computes the additive composite documented in `lib/steps/rate.py` (coefficients in `lib/config.py:RATING_COEFFS`): reputation, length, on_topic, importance, −quality_low, bt_z, recency, log2(coverage).
 - Writes six fields to each rated headline: `quality_low`, `on_topic`, `importance`, `bt_z`, `bt_score`, `rating`.
-- Default engine: each prompt's own default (e.g. `openai:gpt-4o-mini` for axis prompts). Override all with `--engine`.
+- Default engine: each prompt's own default (`openai-decisions:gpt-6-luna` for the axis predicates, `google:gemini-3.5-flash-lite` for battles). `--engine` overrides all of them; a chat engine then answers each predicate with a verbalized probability.
 - Writes `runs/<SID>/rate.json` with rating distribution (min/max/mean).
 - After ratings compute, **always** renders a rated digest and writes:
   - `out/<stamp>_short.html` — sorted-by-rating list of headline + short_summary + bullets

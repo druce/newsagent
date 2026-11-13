@@ -66,7 +66,7 @@ def test_rate_units_skip_unrated_and_flag_midrange():
         {"id": "1", "title": "U", "summary": None, "on_topic": None}]}]
     units = C.rate_units(ck, "rate_on_topic")
     (u,) = units
-    assert u["input"] == {"items": [{"id": "0", "input_text": "T\n- s"}]}
+    assert u["input"] == {"input_text": "T\n- s"}
     assert u["prod_output"] == {"confidence": 0.5}
     assert "midrange" in u["tags"]
     (imp,) = C.rate_units(ck, "rate_importance")
