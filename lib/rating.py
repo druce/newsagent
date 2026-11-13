@@ -12,6 +12,7 @@ are unit-tested without any LLM involvement.
 from __future__ import annotations
 
 import math
+import random
 import re
 import sys
 import time
@@ -28,6 +29,10 @@ from lib.llm import call_prompt
 # pair accuracy is flat from 6 through 15 and drops significantly at 20, while
 # calls per run fall ~3x from 6 to 10.
 _BATTLE_BATCH_SIZE = 10
+# Swiss pairing walks items in current-score order, so each batch would reach
+# the judge already sorted by the prior ranking. LLM rankers favour early items,
+# which would make that ranking self-reinforcing; shuffle every batch instead.
+_battle_rng = random.Random()
 
 # A returned ranking must be exactly the ids that were sent: no missing, extra
 # (foreign) or duplicate ids. A mismatched ranking is retried this many times,
@@ -279,6 +284,7 @@ def bradley_terry_scores(
             chunk = [id_to_data[rid] for rid in round_ids[i: i + items_per_battle]
                      if rid in id_to_data]
             if len(chunk) >= 2:
+                _battle_rng.shuffle(chunk)
                 batches.append(chunk)
 
         if not batches:

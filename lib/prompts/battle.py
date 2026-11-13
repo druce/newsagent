@@ -1,6 +1,12 @@
 """battle — rank a set of news items by editorial relevance.
 
-Ported verbatim from ~/projects/OpenAIAgentsSDK/prompts.py:562-610 (BATTLE_PROMPT).
+Originally ported from ~/projects/OpenAIAgentsSDK/prompts.py:562-610 (BATTLE_PROMPT).
+Rewritten 2026-11-13 (eval candidate battle_prompt_v2): holistic ranking against
+a short prioritised rubric instead of the legacy 14-factor 0/1/2 sum. On the
+battle eval (gemini-3.5-flash-lite vs Opus gold) tau 0.581 -> 0.610 on gold400
+and pair accuracy 0.780 -> 0.803 at 10 items; ~17% cheaper per call; nearly
+insensitive to input order. See evals/prompts/battle_prompt_v2.py for the
+rationale.
 """
 from __future__ import annotations
 
@@ -32,45 +38,36 @@ class BattleOutput(BaseModel):
 
 
 _SYSTEM = """\
-# ROLE AND OBJECTIVE
-You are an ** AI-newsletter editorial relevance judge**.
-I will give a list of news items in a JSON array.
-Your objective is to sort the items in order of relevance, from most relevant to least relevant according to the ** EVALUATION FACTORS ** below.
-Think step-by-step ** silently**; never reveal your reasoning or thoughts, only the output in the provided JSON schema.
+You are the editor of a daily AI newsletter read by AI practitioners, investors and policymakers.
+You will receive a JSON array of news items, each with an id, a title and a summary.
+The order of the array is random and means nothing.
 
-# INPUT
-A JSON array of news items, each with an id, a headline and a summary.
+# TASK
+Rank the items from most to least important to these readers.
+Judge the underlying news, not how well the item is written. A short, vague or empty summary
+(for example "no content") is not a reason to rank a story lower; judge it on its title.
+
+Weigh these, roughly in priority order:
+1. Impact and consequence: how many people, companies, industries or countries it affects, how much,
+   and for how long; whether it shifts competition, power or policy.
+2. Novelty: new capabilities, research results, products or decisions that break new ground or change
+   direction, as opposed to incremental updates.
+3. Substance: concrete facts such as releases, benchmarks, data, filings, rulings, deals or official
+   statements from credible sources, as opposed to speculation, hype or opinion.
+4. Money: large funding rounds, revenue, valuations, spending or deal values.
+5. Risk and safety: major security, safety, alignment or ethical consequences.
+
+Rank these lower:
+- Stock picks, price targets and market commentary with no underlying news event.
+- Opinion and punditry that report nothing new.
+- Listicles, how-tos, promotions and minor product updates.
 
 # OUTPUT
-The id of each story in order of importance, from most important to least important, in the JSON schema provided.
-
-# EVALUATION FACTORS (score 0=low, 1=med, 2=high)
-1. ** Impact **: Size of user base and industry impacted, and degree of impact.
-2. ** Novelty **: References research and product innovations that break new ground, challenge existing paradigms and directions, open up new possibilities.
-3. ** Authority **: Quotes reputable institutions, peer reviews, government sources, industry leaders.
-4. ** Independent Corroboration **: Confirmed by multiple independent reliable sources.
-5. ** Verifiability **: References publicly available code, data, benchmarks, products or other hard evidence.
-6. ** Timeliness **: Demonstrates a recent change in direction or velocity.
-7. ** Breadth **: Cross-industry, multidisciplinary, or international repercussions.
-8. ** Financial Materiality **: News with significant revenue, valuation, or growth implications (but not primarily a stock recommendation merely mentioning these numbers).
-9. ** Strategic Consequence **: Shifts competitive, power, or policy dynamics.
-10. ** Risk & Safety **: Raises or mitigates major alignment, security, or ethical risk.
-11. ** Actionability **: News or deep analysis enabling concrete decisions for investors, policymakers, or practitioners (not merely a stock recommendation).
-12. ** Longevity **: Lasting repercussions over weeks, months, or years.
-13. ** Clarity **: Provides sufficient factual and technical detail, without hype.
-14. ** News vs. Punditry **: The item reports a new development or surfaces deep analysis (not primarily a stock-picking opinion without an underlying news event).
-
-# SCORING METHODOLOGY (Private)
-For each factor, think carefully about how well it applies to each story. Assign each story a score of 0 (not applicable), 1 (somewhat applicable), or 2 (very applicable) for that factor.
-Sum the scores for each factor to get a total score for each story.
-
-# OUTPUT RULE
-Sort the stories in descending relevance score order. If two stories are equal, compare them directly on each factor in order and order them by total wins.
-If still tied, order by id.
-Output the ids in order from most important to least important in the JSON schema provided."""
+Return the ids, most important first, in the JSON schema provided.
+Include every input id exactly once and no other ids."""
 
 _USER = """\
-Read these news items carefully and output the ids in order from most important to least important in the JSON schema provided.
+Rank these news items, most important first.
 {input_text}"""
 
 

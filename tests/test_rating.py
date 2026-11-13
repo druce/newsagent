@@ -388,3 +388,34 @@ def test_persistently_corrupt_battle_is_dropped_not_scored(monkeypatch, capsys):
     assert pairs, "the clean batch must still produce pairs"
     assert not any(w in bad or l in bad for w, l in pairs)
     assert "corrupt" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# position bias — a battle must not show items in current-score order
+# ---------------------------------------------------------------------------
+
+
+def test_battle_items_are_shuffled_not_sent_in_score_order(monkeypatch):
+    """Swiss pairing walks items in current-score order, so unshuffled batches
+    would hand the judge the prior ranking as the input order (LLM rankers
+    favour early items, which makes that ranking self-reinforcing)."""
+    import random as _random
+
+    n = 40
+    items = [{"id": f"id{i:02d}", "title": "", "summary": ""} for i in range(n)]
+    sent: _List[_List[str]] = []
+
+    def fake_call_prompt(name, item):
+        ids = [x["id"] for x in item["items"]]
+        sent.append(ids)
+        return _FakeRanking(ranking=sorted(ids))
+
+    monkeypatch.setattr("lib.rating.call_prompt", fake_call_prompt)
+    monkeypatch.setattr("lib.rating._battle_rng", _random.Random(0))
+    bradley_terry_scores(items, max_rounds=1, items_per_battle=10)
+
+    assert sent, "no battles were sent"
+    # Same membership as unshuffled contiguous chunks of the score order...
+    assert sorted(map(sorted, sent)) == [[f"id{i:02d}" for i in range(k, k + 10)] for k in range(0, n, 10)]
+    # ...but not presented in that order.
+    assert any(ids != sorted(ids) for ids in sent)

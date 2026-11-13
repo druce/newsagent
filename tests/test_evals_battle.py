@@ -50,6 +50,8 @@ def test_ranking_problem_flags_missing_extra_and_duplicate_ids():
 def test_cost_per_million():
     assert B.cost("hydrogen-low", 1_000_000, 100_000) == pytest.approx(1.50 + 0.75)
     assert B.cost("flashlite31-low", 1_000_000, 1_000_000) == pytest.approx(0.25 + 1.50)
+    assert B.cost("luna-medium", 1_000_000, 1_000_000) == pytest.approx(0.10 + 0.50)
+    assert B.cost("terra-none", 1_000_000, 1_000_000) == pytest.approx(1.00 + 5.00)
 
 
 def test_model_specs_cover_the_three_configs():
@@ -57,6 +59,19 @@ def test_model_specs_cover_the_three_configs():
     assert B.MODELS["flashlite35-low"] == ("gemini-3.5-flash-lite", "low")
     assert B.MODELS["hydrogen-low"] == ("gemini-4-hydrogen", "low")
     assert B.MODELS["hydrogen-medium"] == ("gemini-4-hydrogen", "medium")
+    assert B.MODELS["luna-medium"] == ("gpt-6-luna", "medium")
+    assert B.MODELS["terra-none"] == ("gpt-6.1-terra", "none")
+
+
+def test_provider_routing(monkeypatch):
+    seen = []
+    monkeypatch.setattr(B, "call_gemini", lambda *a: seen.append(("gemini", a[0])) or {"ranking": ["a", "b"]})
+    monkeypatch.setattr(B, "call_openai", lambda *a: seen.append(("openai", a[0])) or {"ranking": ["a", "b"]})
+    items = [{"id": "a", "title": "A", "summary": "x"}, {"id": "b", "title": "B", "summary": "y"}]
+    cfg = B._cfg()
+    assert B.battle_call(cfg, "luna-medium", items)["invalid"] is None
+    assert B.battle_call(cfg, "flashlite35-low", items)["invalid"] is None
+    assert seen == [("openai", "gpt-6-luna"), ("gemini", "gemini-3.5-flash-lite")]
 
 
 def test_gold_batches_fit_cap_and_pass_check_batch(tmp_path):
@@ -132,3 +147,27 @@ def test_pair_counts_pool_concordant_pairs_against_gold_subset():
     gold = ["a", "b", "c", "d", "e"]
     assert B.pair_counts(["c", "a"], gold) == (0, 1)       # gold has a > c
     assert B.pair_counts(["a", "b", "c"], gold) == (3, 0)
+
+
+def test_ordered_items_follows_reference_or_reverse():
+    c = _case("q2", 0, ids=("a", "b", "c"))
+    c["input"]["items"] = list(reversed(c["input"]["items"]))  # stored shuffled: c, b, a
+    ids = lambda xs: [x["id"] for x in xs]
+    assert ids(B.ordered_items(c, "as-is")) == ["c", "b", "a"]
+    assert ids(B.ordered_items(c, "reference")) == ["a", "b", "c"]
+    assert ids(B.ordered_items(c, "reverse")) == ["c", "b", "a"]
+
+
+def test_run_tag_names_variants():
+    assert B.run_tag("flashlite35-low", "battle_prompt", "as-is") == "flashlite35-low"
+    assert B.run_tag("flashlite35-low", "battle_prompt_v2", "as-is") == "flashlite35-low@v2"
+    assert B.run_tag("flashlite35-low", "battle_prompt", "reference") == "flashlite35-low+reference"
+    assert B.run_tag("flashlite35-low", "battle_prompt_v2", "reverse") == "flashlite35-low@v2+reverse"
+
+
+def test_battle_call_uses_the_given_prompt(monkeypatch):
+    seen = []
+    monkeypatch.setattr(B, "call_gemini", lambda m, l, system, user, schema: seen.append(system) or {"ranking": ["a", "b"]})
+    items = [{"id": "a", "title": "A", "summary": "x"}, {"id": "b", "title": "B", "summary": "y"}]
+    B.battle_call(B._cfg("battle_prompt_v2"), "flashlite35-low", items)
+    assert "order of the array is random" in seen[0]

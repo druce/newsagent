@@ -37,19 +37,24 @@ PROMPT = "battle_prompt"
 CANDIDATES = ROOT / "candidates" / f"{PROMPT}.jsonl"
 GROUP_TYPES = ("q1_top", "q2", "q3", "q4_bottom", "mixed")
 
-# name -> (Gemini model id, thinking_level). flashlite31-low is production
-# (battle_prompt: gemini-3.1-flash-lite, reasoning_effort=2 -> "low").
+# name -> (model id, thinking/reasoning level). gpt-* ids go to the OpenAI
+# Chat Completions API (strict json_schema), everything else to Gemini.
+# Production since 2026-11-12: flashlite35-low (gemini-3.5-flash-lite, effort 2 -> "low").
 MODELS = {
     "flashlite31-low": ("gemini-3.1-flash-lite", "low"),
     "flashlite35-low": ("gemini-3.5-flash-lite", "low"),
     "hydrogen-low": ("gemini-4-hydrogen", "low"),
     "hydrogen-medium": ("gemini-4-hydrogen", "medium"),
+    "luna-medium": ("gpt-6-luna", "medium"),
+    "terra-none": ("gpt-6.1-terra", "none"),
 }
 # USD per 1M tokens (input, output incl. thinking). OpenRouter list prices 2026-11-12.
 PRICES = {
     "gemini-3.1-flash-lite": (0.25, 1.50),
     "gemini-3.5-flash-lite": (0.30, 2.50),
     "gemini-4-hydrogen": (1.50, 7.50),
+    "gpt-6-luna": (0.10, 0.50),  # cached input bills at 0.01; not modelled
+    "gpt-6.1-terra": (1.00, 5.00),
 }
 PARALLELISM = 8  # production _BATTLE_PARALLELISM
 
@@ -81,10 +86,38 @@ def run_dir(run: str) -> Path:
     return ROOT / "runs" / PROMPT / run
 
 
-def _cfg():
+def _cfg(prompt: str = PROMPT):
     import lib.prompts  # noqa: F401
+    import evals.prompts  # noqa: F401  (eval-only variants, e.g. battle_prompt_v2)
     from lib.llm import get_prompt
-    return get_prompt(PROMPT)
+    return get_prompt(prompt)
+
+
+ORDERS = ("as-is", "reference", "reverse")
+
+
+def ordered_items(case: dict, order: str) -> list[dict]:
+    """The case's items in the requested presentation order. "as-is" is the
+    stored (shuffled) order; "reference" is best-first by the old composite
+    rating, which is how production presented battles before the per-batch
+    shuffle (Swiss pairing walks items in current-score order); "reverse" is
+    worst-first. Comparing the two isolates position bias."""
+    items = case["input"]["items"]
+    if order == "as-is":
+        return list(items)
+    by_id = {it["id"]: it for it in items}
+    ref = [by_id[i] for i in case["prod_output"]["ranking"]]
+    return ref if order == "reference" else ref[::-1]
+
+
+def run_tag(model: str, prompt: str = PROMPT, order: str = "as-is") -> str:
+    """Results file stem: <model>[@<prompt suffix>][+<order>]."""
+    tag = model
+    if prompt != PROMPT:
+        tag += "@" + prompt.removeprefix(PROMPT + "_")
+    if order != "as-is":
+        tag += "+" + order
+    return tag
 
 
 # ------------------------------------------------------------------ metrics
@@ -202,6 +235,22 @@ def call_gemini(model_id: str, level: str, system: str, user: str, schema) -> di
             "out_tok": (m.candidates_token_count or 0) + thoughts, "reasoning_tok": thoughts}
 
 
+def call_openai(model_id: str, level: str, system: str, user: str, schema) -> dict:
+    from openai import OpenAI
+    from lib.engines.openai_chat import _strictify_schema
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    resp = client.chat.completions.create(
+        model=model_id, reasoning_effort=level,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        response_format={"type": "json_schema", "json_schema": {
+            "name": "battle", "strict": True, "schema": _strictify_schema(schema.model_json_schema())}})
+    out = schema.model_validate(json.loads(resp.choices[0].message.content))
+    u = resp.usage
+    details = getattr(u, "completion_tokens_details", None)
+    return {"ranking": [str(x) for x in out.ranking], "in_tok": u.prompt_tokens,
+            "out_tok": u.completion_tokens, "reasoning_tok": getattr(details, "reasoning_tokens", None)}
+
+
 def battle_call(cfg, model: str, items: list[dict]) -> dict:
     """One production battle over ``items``; never raises (errors go in the row)."""
     model_id, level = MODELS[model]
@@ -212,7 +261,8 @@ def battle_call(cfg, model: str, items: list[dict]) -> dict:
     res, err = None, None
     for k in range(3):
         try:
-            res = call_gemini(model_id, level, cfg.system_prompt, user, cfg.output_schema)
+            caller = call_openai if model_id.startswith("gpt-") else call_gemini
+            res = caller(model_id, level, cfg.system_prompt, user, cfg.output_schema)
             err = None
             break
         except Exception as e:  # noqa: BLE001
@@ -226,18 +276,22 @@ def battle_call(cfg, model: str, items: list[dict]) -> dict:
             "cost": cost(model, res.get("in_tok"), res.get("out_tok")), "error": err}
 
 
-def run_api(run: str, model: str, workers: int = PARALLELISM) -> None:
+def run_api(run: str, model: str, workers: int = PARALLELISM,
+            prompt: str = PROMPT, order: str = "as-is") -> None:
     import lib  # noqa: F401  (loads .env)
-    cfg = _cfg()
+    cfg = _cfg(prompt)
     rd = run_dir(run)
     cases = read_jsonl(rd / "cases.jsonl")
-    out_path = rd / f"{model}.jsonl"
+    tag = run_tag(model, prompt, order)
+    out_path = rd / f"{tag}.jsonl"
     prev = [r for r in read_jsonl(out_path) if not r["error"]]  # rerun retries failures
     out_path.write_text("".join(json.dumps(r) + "\n" for r in prev))
     done = {r["case_id"] for r in prev}
 
     def one(c):
-        return {"model": model, "case_id": c["case_id"], **battle_call(cfg, model, c["input"]["items"])}
+        items = ordered_items(c, order)
+        return {"model": model, "prompt": prompt, "order": order, "case_id": c["case_id"],
+                "input_ids": [it["id"] for it in items], **battle_call(cfg, model, items)}
 
     todo = [c for c in cases if c["case_id"] not in done]
     t0 = time.time()
@@ -246,9 +300,9 @@ def run_api(run: str, model: str, workers: int = PARALLELISM) -> None:
     wall = time.time() - t0
     with out_path.open("a") as f:
         f.write("".join(json.dumps(r) + "\n" for r in rows))
-    (rd / f"{model}.wall.json").write_text(json.dumps({"calls": len(todo), "workers": workers, "wall_secs": wall}))
+    (rd / f"{tag}.wall.json").write_text(json.dumps({"calls": len(todo), "workers": workers, "wall_secs": wall}))
     errs = [r for r in rows if r["error"]]
-    click.echo(f"{model}: {len(rows)} calls in {wall:.0f}s wall, {len(errs)} errors, "
+    click.echo(f"{tag}: {len(rows)} calls in {wall:.0f}s wall, {len(errs)} errors, "
                f"{sum(bool(r['invalid']) for r in rows)} invalid rankings"
                + (f" (first error: {errs[0]['error']})" if errs else ""))
 
@@ -297,6 +351,10 @@ def write_report(rd: Path, models: list[str]) -> list[dict]:
         if m != "reference":
             rs = [r for cid, r in rows[m].items() if cid in gold]
             ok = [r for r in rs if not r["error"]]
+            # position bias: how far the output just echoes the presentation order
+            s["input_order_tau"] = _mean([
+                kendall_tau(r["ranking"], r.get("input_ids") or [it["id"] for it in cases[r["case_id"]]["input"]["items"]])
+                for r in ok if not r["invalid"]])
             secs = sorted(r["secs"] for r in ok)
             costs = [r["cost"] for r in ok if r["cost"] is not None]
             wall = rd / f"{m}.wall.json"
@@ -375,12 +433,13 @@ def pair_counts(ranking: list[str], gold: list[str]) -> tuple[int, int]:
     return _pairs(ranking, gold)
 
 
-def run_k(run: str, model: str, k: int, workers: int = PARALLELISM) -> None:
+def run_k(run: str, model: str, k: int, workers: int = PARALLELISM, prompt: str = PROMPT) -> None:
     import lib  # noqa: F401
-    cfg = _cfg()
+    cfg = _cfg(prompt)
     rd = run_dir(run)
+    tag = run_tag(model, prompt)
     jobs = [(c, i, ch) for c in read_jsonl(rd / "cases.jsonl") for i, ch in enumerate(k_chunks(c, k))]
-    out_path = rd / f"{model}-k{k}.jsonl"
+    out_path = rd / f"{tag}-k{k}.jsonl"
     prev = [r for r in read_jsonl(out_path) if not r["error"]]
     done = {(r["case_id"], r["chunk"]) for r in prev}
     jobs = [j for j in jobs if (j[0]["case_id"], j[1]) not in done]
@@ -394,8 +453,8 @@ def run_k(run: str, model: str, k: int, workers: int = PARALLELISM) -> None:
         rows = list(ex.map(one, jobs))
     wall = time.time() - t0
     out_path.write_text("".join(json.dumps(r) + "\n" for r in prev + rows))
-    (rd / f"{model}-k{k}.wall.json").write_text(json.dumps({"calls": len(jobs), "wall_secs": wall}))
-    click.echo(f"{model} k={k}: {len(rows)} calls in {wall:.0f}s, "
+    (rd / f"{tag}-k{k}.wall.json").write_text(json.dumps({"calls": len(jobs), "wall_secs": wall}))
+    click.echo(f"{tag} k={k}: {len(rows)} calls in {wall:.0f}s, "
                f"{sum(bool(r['error']) for r in rows)} errors, {sum(bool(r['invalid']) for r in rows)} invalid")
 
 
@@ -471,19 +530,32 @@ def prepare_cmd(run, per_type, seed):
 @cli.command("api")
 @click.option("--run", required=True)
 @click.option("--model", type=click.Choice(list(MODELS)), required=True)
-def api_cmd(run, model):
-    run_api(run, model)
+@click.option("--prompt", default=PROMPT, show_default=True, help="e.g. battle_prompt_v2 (evals/prompts)")
+@click.option("--order", type=click.Choice(ORDERS), default="as-is", show_default=True)
+def api_cmd(run, model, prompt, order):
+    run_api(run, model, prompt=prompt, order=order)
 
 
 @cli.command("report")
 @click.option("--run", required=True)
-@click.option("--models", default=",".join(MODELS), show_default=True)
-def report_cmd(run, models):
+@click.option("--models", default=",".join(MODELS), show_default=True,
+              help="Run tags: <model>[@<prompt suffix>][+<order>], e.g. flashlite35-low@v2+reference")
+@click.option("--baseline", default=None, help="Run tag to compare every other tag against (paired tau, 95% CI)")
+def report_cmd(run, models, baseline):
     rd = run_dir(run)
     summary = write_report(rd, [m for m in models.split(",") if (rd / f"{m}.jsonl").exists()])
     for s in summary:
         click.echo(json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in s.items()}))
     click.echo(f"wrote {rd}/groups.csv, models.csv")
+    if baseline:
+        with (rd / "groups.csv").open() as f:
+            grows = list(csv.DictReader(f))
+        per = {m: {r["case_id"]: float(r[f"{m}_tau"]) for r in grows if r.get(f"{m}_tau")}
+               for m in ["reference"] + [s["model"] for s in summary]}
+        for m, vals in per.items():
+            if m != baseline and vals and per.get(baseline):
+                d, lo, hi = paired_diff(vals, per[baseline])
+                click.echo(f"{m} - {baseline}: tau {d:+.4f} (95% CI {lo:+.4f} .. {hi:+.4f}, n={len(set(vals) & set(per[baseline]))})")
 
 
 @cli.command("prepare-sizes")
@@ -510,7 +582,9 @@ def prepare_sizes_cmd(run, n, size, seed):
 @click.option("--ks", default="6,8,10,12,15,20", show_default=True)
 @click.option("--min-drop", default=0.01, show_default=True,
               help="Stop once pair accuracy is this far below the first k AND the 95% CI excludes 0.")
-def sweep_cmd(run, model, ks, min_drop):
+@click.option("--prompt", default=PROMPT, show_default=True)
+def sweep_cmd(run, model, ks, min_drop, prompt):
+    tag = run_tag(model, prompt)
     rd = run_dir(run)
     gold, problems = read_gold(rd)
     if problems:
@@ -518,8 +592,8 @@ def sweep_cmd(run, model, ks, min_drop):
     ks = [int(k) for k in ks.split(",")]
     base, out = None, []
     for k in ks:
-        run_k(run, model, k)
-        st = k_stats(rd, model, k, gold)
+        run_k(run, model, k, prompt=prompt)
+        st = k_stats(rd, tag, k, gold)
         per = st.pop("_per_group")
         if base is None:
             base = per
@@ -531,11 +605,11 @@ def sweep_cmd(run, model, ks, min_drop):
         if st["diff_vs_base"] <= -min_drop and st["ci_hi"] < 0:
             click.echo(f"stopping: k={k} is significantly worse than k={ks[0]}")
             break
-    with (rd / f"{model}-sweep.csv").open("w", newline="") as f:
+    with (rd / f"{tag}-sweep.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out[0]))
         w.writeheader()
         w.writerows(out)
-    click.echo(f"wrote {rd}/{model}-sweep.csv")
+    click.echo(f"wrote {rd}/{tag}-sweep.csv")
 
 
 if __name__ == "__main__":
