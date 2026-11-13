@@ -27,8 +27,8 @@ import click
 STEP_PROMPTS: dict[str, tuple[str, tuple[str, ...]]] = {
     "filter": ("filter_urls", ("items",)),
     "summarize": ("extract_summaries", ("items",)),
-    "crossdedupe": ("same_story", ("pairs",)),
-    "coverage": ("same_story_sameday", ("pairs",)),
+    "crossdedupe": ("dedupe_vs_archive", ("pairs",)),
+    "coverage": ("coverage_boost", ("pairs",)),
     "cluster": ("name_topic_batch", ("clusters",)),
     "select-repechage": ("extract_noise_clusters", ("headlines",)),
     "select-consolidate": ("consolidate_cluster_names", ("clusters",)),

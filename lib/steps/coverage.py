@@ -2,7 +2,7 @@
 
 Between `crossdedupe` and `rate`. Embeds `title + short_summary` for every
 summarized headline, builds the full pairwise cosine matrix, shortlists pairs
-above a cosine threshold, and asks a Haiku `same_story_sameday` judge (shown the
+above a cosine threshold, and asks an Opus `coverage_boost` judge (shown the
 FULL bullet `summary`) whether each shortlisted pair reports the same event.
 Confirmed-same pairs are grouped by union-find; every headline is stamped
 `coverage_count = size of its component`. Nothing is dropped or merged — `rate`
@@ -10,8 +10,8 @@ turns the count into a `log2(count)` importance boost and `select`'s MMR keeps
 one representative.
 
 Three modes, mirroring `crossdedupe`:
-  1. classic (default): in-process `same_story_sameday` calls via `call_prompt`.
-  2. --prepare-batches: write 25-pair batches for Haiku subagent dispatch.
+  1. classic (default): in-process `coverage_boost` calls via `call_prompt`.
+  2. --prepare-batches: write 25-pair batches for Opus subagent dispatch.
   3. --apply-results DIR: read verdicts, group, stamp coverage_count.
 """
 from __future__ import annotations
@@ -25,12 +25,12 @@ import click
 import numpy as np
 from pydantic import ValidationError
 
-import lib.prompts  # noqa: F401 — register same_story_sameday
+import lib.prompts  # noqa: F401 — register coverage_boost
 from lib.embeddings import embed_texts
 from lib.llm import call_prompt, get_prompt
-from lib.prompts.same_story_sameday import (
-    SameStorySamedayInput,
-    SameStorySamedayOutput,
+from lib.prompts.coverage_boost import (
+    CoverageBoostInput,
+    CoverageBoostOutput,
 )
 from lib.state import NewsletterAgentState
 
@@ -131,8 +131,8 @@ def _group_counts(
 # ── batch prepare / apply ────────────────────────────────────────────
 
 def _render_prompts(pairs: list[dict]) -> tuple[str, str]:
-    cfg = get_prompt("same_story_sameday")
-    validated = SameStorySamedayInput.model_validate({"pairs": pairs})
+    cfg = get_prompt("coverage_boost")
+    validated = CoverageBoostInput.model_validate({"pairs": pairs})
     user = cfg.user_prompt.format(**validated.model_dump())
     return cfg.system_prompt, user
 
@@ -175,7 +175,7 @@ def _write_batches(
             "pairs": chunk,
             "system_prompt": system,
             "user_prompt": user,
-            "output_schema": SameStorySamedayOutput.model_json_schema(),
+            "output_schema": CoverageBoostOutput.model_json_schema(),
         }
         path = batches_dir / f"batch-{batch_idx:03d}.json"
         path.write_text(json.dumps(payload, indent=2))
@@ -217,7 +217,7 @@ def _load_results(
             problems.append(f"{f.name}: invalid JSON ({exc})")
             continue
         try:
-            parsed = SameStorySamedayOutput.model_validate(raw)
+            parsed = CoverageBoostOutput.model_validate(raw)
         except ValidationError as exc:
             problems.append(f"{f.name}: schema mismatch ({exc.error_count()} errors)")
             continue
@@ -305,7 +305,7 @@ def cli(
         click.echo(f"Prepared {len(paths)} batch(es) ({len(pairs)} candidate pairs).")
         for p in paths:
             click.echo(f"  {p}")
-        click.echo("\nDispatch one Haiku subagent per batch. Write each result to:")
+        click.echo("\nDispatch one Opus subagent per batch. Write each result to:")
         click.echo(f"  runs/{session_id}/{_RESULTS_SUBDIR}/batch-NNN.json")
         click.echo(f"Then run: python -m lib.steps.coverage --session {session_id} "
                    f"--apply-results runs/{session_id}/{_RESULTS_SUBDIR}")
@@ -354,8 +354,8 @@ def cli(
     verdicts: dict[str, bool] = {}
     for i in range(0, len(pairs), batch_size):
         chunk = pairs[i:i + batch_size]
-        result = call_prompt("same_story_sameday", {"pairs": chunk}, engine=engine)
-        assert isinstance(result, SameStorySamedayOutput)
+        result = call_prompt("coverage_boost", {"pairs": chunk}, engine=engine)
+        assert isinstance(result, CoverageBoostOutput)
         for v in result.results:
             verdicts[v.id] = v.same
 

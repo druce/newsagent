@@ -1,6 +1,6 @@
 ---
 name: crossdedupe
-description: Drop stories already published in the last N days (cross-day, story-level de-duplication). Runs after summarize, before rate. Embeds title+short_summary with OpenAI text-embedding-3-large, shortlists candidates against the published_articles store by cosine, then a Haiku judge confirms same/different per pair. Interactive mode dispatches parallel Haiku subagents (25 pairs per batch); classic mode runs the same_story prompt through one engine. Catches the same event reported by a different outlet on a different day (Yahoo-today / Fortune-yesterday) that in-session dedupe never sees.
+description: Drop stories already published in the last N days (cross-day, story-level de-duplication). Runs after summarize, before rate. Embeds title+short_summary with OpenAI text-embedding-3-large, shortlists candidates against the published_articles store by cosine, then an Opus judge confirms same/different per pair. Interactive mode dispatches parallel Opus subagents (25 pairs per batch); classic mode runs the dedupe_vs_archive prompt through one engine. Catches the same event reported by a different outlet on a different day (Yahoo-today / Fortune-yesterday) that in-session dedupe never sees.
 ---
 
 # newsagent:crossdedupe
@@ -16,13 +16,13 @@ threshold).
 candidates are compared against the `published_articles` store (articles that
 survived into a final newsletter, recorded at `send`). A permissive cosine
 shortlist (`--shortlist-threshold`, default 0.70) picks candidate/prior pairs; a
-Haiku judge (`same_story` prompt) makes the real same/different call. Only
+Opus judge (`dedupe_vs_archive` prompt) makes the real same/different call. Only
 confirmed duplicates are dropped from `state.headline_data`.
 
-Prompt source of truth: `lib/prompts/same_story.py`. Two execution paths, same
+Prompt source of truth: `lib/prompts/dedupe_vs_archive.py`. Two execution paths, same
 prompt:
 
-1. **Interactive** — parent Claude dispatches parallel Haiku subagents, one per
+1. **Interactive** — parent Claude dispatches parallel Opus subagents, one per
    batch of 25 pairs.
 2. **Classic** — one LLM engine processes batches via `lib.llm.call_prompt`
    (cron / CI).
@@ -31,7 +31,7 @@ prompt:
 `--prepare-batches` writes **no** batch files. That is normal — dispatch nothing
 and go straight to `--apply-results` (a no-op that completes the step).
 
-## Interactive mode — Haiku subagent dispatch
+## Interactive mode — Opus subagent dispatch
 
 ### Step 1: prepare batches
 
@@ -48,13 +48,13 @@ holds the candidate (`a_title`, `a_short_summary`) and the matched prior
 (`b_title`, `b_short_summary`, `b_url`). If it prints "No cross-day duplicate
 candidates to check.", skip to Step 3.
 
-### Step 2: dispatch parallel Haiku subagents
+### Step 2: dispatch parallel Opus subagents
 
 For each `runs/<SID>/crossdedupe-batches/batch-NNN.json` printed by prepare,
 dispatch an Agent in parallel (single message, multiple Agent tool calls):
 
 - `subagent_type: "general-purpose"`
-- `model: "haiku"`
+- `model: "opus"`
 - `description: "Judge cross-day dup batch NNN"`
 - `prompt:` of the shape:
 
@@ -92,7 +92,7 @@ python -m lib.steps.crossdedupe --session SID \
   --apply-results runs/<SID>/crossdedupe-results
 ```
 
-Reads each `batch-*.json` (validated against `SameStoryOutput`), drops every
+Reads each `batch-*.json` (validated against `DedupeVsArchiveOutput`), drops every
 candidate confirmed `same=True` from `state.headline_data`, marks the step
 complete, and writes `runs/<SID>/crossdedupe.json` with `considered / dropped`
 counts. Safe to run when no batches were prepared (completes as a no-op).
@@ -110,9 +110,9 @@ python -m lib.steps.crossdedupe --session SID [--engine ENGINE] \
   [--lookback-days 4] [--shortlist-threshold 0.70] [--batch-size 25]
 ```
 
-Routes the `same_story` prompt through one engine (default
+Routes the `dedupe_vs_archive` prompt through one engine (default
 `google:gemini-3.1-flash-lite`). Override via `--engine` or
-`NEWS_PROMPT_SAME_STORY_ENGINE`.
+`NEWS_PROMPT_DEDUPE_VS_ARCHIVE_ENGINE`.
 
 ## Output contract
 

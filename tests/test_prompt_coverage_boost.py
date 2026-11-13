@@ -1,20 +1,20 @@
-import lib.prompts  # noqa: F401 — registers same_story_sameday
+import lib.prompts  # noqa: F401 — registers coverage_boost
 from lib.llm import get_prompt
-from lib.prompts.same_story_sameday import (
-    SameStorySamedayInput,
-    SameStorySamedayOutput,
+from lib.prompts.coverage_boost import (
+    CoverageBoostInput,
+    CoverageBoostOutput,
 )
 
 
 def test_prompt_registered_with_cheap_engine():
-    cfg = get_prompt("same_story_sameday")
-    assert cfg.name == "same_story_sameday"
+    cfg = get_prompt("coverage_boost")
+    assert cfg.name == "coverage_boost"
     assert cfg.default_engine == "google:gemini-3.1-flash-lite"
 
 
 def test_input_renders_full_summaries_into_user_prompt():
-    cfg = get_prompt("same_story_sameday")
-    validated = SameStorySamedayInput.model_validate({
+    cfg = get_prompt("coverage_boost")
+    validated = CoverageBoostInput.model_validate({
         "pairs": [{
             "id": "3-7",
             "a_title": "OpenAI delays IPO",
@@ -29,7 +29,7 @@ def test_input_renders_full_summaries_into_user_prompt():
 
 
 def test_output_schema_roundtrip():
-    out = SameStorySamedayOutput.model_validate(
+    out = CoverageBoostOutput.model_validate(
         {"results": [{"id": "3-7", "same": True}]}
     )
     assert out.results[0].id == "3-7"

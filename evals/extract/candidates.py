@@ -120,7 +120,7 @@ def filter_units(recs: Iterable[dict], gather: dict) -> list[dict]:
     return units
 
 
-# ------------------------------------------------------ same_story(_sameday)
+# ------------------------------------------------------ dedupe_vs_archive, coverage_boost
 def pair_units(recs: Iterable[dict]) -> list[dict]:
     units = []
     for rec in recs:
@@ -555,8 +555,8 @@ def cli(arch: Path, out_dir: Path, n: int, hard_frac: float, seed: int) -> None:
     plan: list[tuple[str, Callable[[], list[dict]], float]] = [  # (prompt, build, hard_frac)
         ("filter_urls", lambda: filter_units(load("filter_urls"), gather), hard_frac),
         ("extract_summaries", lambda: summarize_units(load("extract_summaries"), summ_cat), hard_frac),
-        ("same_story", lambda: pair_units(load("same_story")), hard_frac),
-        ("same_story_sameday", lambda: pair_units(load("same_story_sameday")), hard_frac),
+        ("dedupe_vs_archive", lambda: pair_units(load("dedupe_vs_archive")), hard_frac),
+        ("coverage_boost", lambda: pair_units(load("coverage_boost")), hard_frac),
         ("rate_quality", lambda: rate_units(rate_ck, "rate_quality"), hard_frac),
         ("rate_on_topic", lambda: rate_units(rate_ck, "rate_on_topic"), hard_frac),
         ("rate_importance", lambda: rate_units(rate_ck, "rate_importance"), hard_frac),
@@ -583,7 +583,7 @@ def cli(arch: Path, out_dir: Path, n: int, hard_frac: float, seed: int) -> None:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     report = {}
-    balanced = {"filter_urls", "same_story", "same_story_sameday"}
+    balanced = {"filter_urls", "dedupe_vs_archive", "coverage_boost"}
     for prompt, build, hf in plan:
         units = build()
         picked = select(units, n=n, hard_frac=hf, seed=seed, balance_label=prompt in balanced)

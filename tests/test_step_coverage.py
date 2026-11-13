@@ -8,9 +8,9 @@ import lib.prompts  # noqa: F401
 from lib.db import init_db
 from lib.state import NewsletterAgentState
 from lib.steps.coverage import cli as coverage_cli
-from lib.prompts.same_story_sameday import (
-    SameStorySamedayOutput,
-    SameStorySamedayVerdict,
+from lib.prompts.coverage_boost import (
+    CoverageBoostOutput,
+    CoverageBoostVerdict,
 )
 
 
@@ -147,10 +147,10 @@ def test_classic_mode_stamps_counts(tmp_db, monkeypatch, tmp_path):
         return [[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
 
     def fake_call_prompt(name, inputs, *, engine=None):
-        assert name == "same_story_sameday"
+        assert name == "coverage_boost"
         ids = [p["id"] for p in inputs["pairs"]]
-        return SameStorySamedayOutput(results=[
-            SameStorySamedayVerdict(id=i, same=True) for i in ids
+        return CoverageBoostOutput(results=[
+            CoverageBoostVerdict(id=i, same=True) for i in ids
         ])
 
     with patch("lib.steps.coverage.embed_texts", side_effect=fake_embed), \

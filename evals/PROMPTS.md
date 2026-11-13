@@ -24,8 +24,8 @@ Every prompt is in `lib/prompts/`; `call_prompt` (`lib/llm.py`) is the single en
 |---|---|---|---|---|---|---|
 | filter_urls | subagent (Haiku) / 4 | 25 titles | binary | filter-batches/results | 103.5K items | 1000 (500/500 by label, 70% hard) |
 | extract_summaries | subagent (Opus) / 6 | ≤10 articles (text ≤8K chars) | code checks + judge (faithfulness) | summarize-batches; text parsed out of `user_prompt` | 51.5K items | 1000 (70% hard) |
-| same_story | gemini-3.1-flash-lite / 2 (live: Opus agents) | 25 pairs, today vs published | binary | crossdedupe-batches (since 09-16 only) | 5.3K pairs | 1000 (500/500) |
-| same_story_sameday | gemini-3.1-flash-lite / 2 (live: Opus agents) | 25 same-day pairs | binary | coverage-batches (since 07-08) | 7.6K pairs | 1000 (500/500) |
+| dedupe_vs_archive | gemini-3.1-flash-lite / 2 (live: Opus agents) | 25 pairs, today vs published | binary | crossdedupe-batches (since 09-16 only) | 5.3K pairs | 1000 (500/500) |
+| coverage_boost | gemini-3.1-flash-lite / 2 (live: Opus agents) | 25 same-day pairs | binary | coverage-batches (since 07-08) | 7.6K pairs | 1000 (500/500) |
 | rate_quality / rate_on_topic / rate_importance | openai:gpt-4o-mini (logprobs) | 25 items, `title\nsummary` | numeric confidence | `rate` checkpoint (scalars only) | 46.7K items each | 1000 each (70% hard) |
 | battle_prompt | gemini-3.5-flash-lite / 2 (was 3.1, 6 items, until 2026-11-12) | 10 items `{id, title, summary}` → ranking | ranking | **not saved**; groups built from each session's rated set (= that run's `_short.html`), quartiles by composite `rating` | 314 sessions | 1000 = 200 each of q1_top/q2/q3/q4_bottom (6 random from one quartile) + 200 mixed (1 per quartile + 2 random); reference ranking = rating desc |
 | name_topic_batch | subagent (Opus) / 3 | all clusters | code checks + judge | cluster-batches | 12.2K clusters | 1000 |
@@ -72,7 +72,7 @@ model disagreement.
 | Prompt | Signals |
 |---|---|
 | filter_urls | same title labeled both ways on different days (`inconsistent_prod`); borderline topic words; minority label for a mixed source |
-| same_story / same_story_sameday | "different" with high title overlap; "same" with near-zero overlap; overlap in between |
+| dedupe_vs_archive / coverage_boost | "different" with high title overlap; "same" with near-zero overlap; overlap in between |
 | extract_summaries | source attribution left in; not 3 bullets; >25 words; "no content"; short or truncated text |
 | rate_* | mid-range confidence; importance disagreeing with the battle z-score; on-topic vs. importance conflict |
 | reassign_to_clusters | "Other"; word overlap prefers a different cluster; off-vocabulary assignment |

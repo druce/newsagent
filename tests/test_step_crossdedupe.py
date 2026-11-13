@@ -6,11 +6,11 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-import lib.prompts  # noqa: F401 — register same_story
+import lib.prompts  # noqa: F401 — register dedupe_vs_archive
 from lib.db import init_db, PublishedArticle
 from lib.state import NewsletterAgentState
 from lib.steps.crossdedupe import cli as crossdedupe_cli
-from lib.prompts.same_story import SameStoryOutput, SameStoryVerdict
+from lib.prompts.dedupe_vs_archive import DedupeVsArchiveOutput, DedupeVsArchiveVerdict
 
 
 def _seed_state(tmp_db, headlines):
@@ -224,10 +224,10 @@ def test_classic_mode_drops_duplicate(tmp_db, monkeypatch, tmp_path):
         return [[1.0, 0.0], [0.0, 1.0]]
 
     def fake_call_prompt(name, inputs, *, engine=None):
-        assert name == "same_story"
+        assert name == "dedupe_vs_archive"
         ids = [p["id"] for p in inputs["pairs"]]
-        return SameStoryOutput(results=[
-            SameStoryVerdict(id=i, same=True) for i in ids
+        return DedupeVsArchiveOutput(results=[
+            DedupeVsArchiveVerdict(id=i, same=True) for i in ids
         ])
 
     with patch("lib.steps.crossdedupe.embed_texts", side_effect=fake_embed), \

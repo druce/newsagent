@@ -1,6 +1,6 @@
 ---
 name: coverage
-description: Count how many of today's articles report the same event and boost each member's rating by log2 of the group size. Runs after crossdedupe, before rate. Embeds title+short_summary, shortlists near pairs by cosine, and a Haiku same_story_sameday judge (shown the full summary) confirms same/different. Union-find grouping stamps coverage_count on every headline; rate turns it into a log2 importance boost and MMR keeps one representative. No drops or merges.
+description: Count how many of today's articles report the same event and boost each member's rating by log2 of the group size. Runs after crossdedupe, before rate. Embeds title+short_summary, shortlists near pairs by cosine, and an Opus coverage_boost judge (shown the full summary) confirms same/different. Union-find grouping stamps coverage_count on every headline; rate turns it into a log2 importance boost and MMR keeps one representative. No drops or merges.
 ---
 
 # newsagent:coverage
@@ -9,7 +9,7 @@ Step after `crossdedupe` (before `rate`) in /newsagent:pipeline. Restores the
 legacy "widely-covered stories are more important" signal that the split of
 merge-vs-rank dropped. Two execution paths.
 
-## Interactive mode — Haiku subagent dispatch
+## Interactive mode — Opus subagent dispatch
 
 ### Step 1: prepare batches
 
@@ -24,15 +24,15 @@ threshold. Each pair carries both articles' **full `summary`**. Frequently
 **zero** batches (most stories are singletons) — that is the normal no-op case;
 run `--apply-results` straight away.
 
-### Step 2: dispatch parallel Haiku subagents
+### Step 2: dispatch parallel Opus subagents
 
 For each `runs/<SID>/coverage-batches/batch-NNN.json`, dispatch an Agent
-(`subagent_type: "general-purpose"`, `model: "haiku"`,
+(`subagent_type: "general-purpose"`, `model: "opus"`,
 `description: "Judge coverage pairs batch NNN"`):
 
   ```
   Read runs/<SID>/coverage-batches/batch-NNN.json. It contains:
-    - system_prompt, user_prompt (pre-rendered same_story_sameday task)
+    - system_prompt, user_prompt (pre-rendered coverage_boost task)
     - ids: the pair ids you MUST judge
     - output_schema: required JSON shape (results[] of {id, same})
 
@@ -64,7 +64,7 @@ re-dispatch only the failing batch(es) (overwrite the result file), re-run apply
 python -m lib.steps.coverage --session SID --engine google:gemini-3.1-flash-lite
 ```
 
-Runs the `same_story_sameday` judge in-process. Do not use `--engine subagent`.
+Runs the `coverage_boost` judge in-process. Do not use `--engine subagent`.
 
 ## Output contract
 

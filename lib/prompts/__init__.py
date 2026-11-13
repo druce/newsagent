@@ -16,8 +16,8 @@ from lib.prompts import generate_title  # noqa: F401
 from lib.prompts import bsky_reorder  # noqa: F401
 from lib.prompts import bsky_headlines  # noqa: F401
 from lib.prompts import sitename  # noqa: F401
-from lib.prompts import same_story  # noqa: F401
-from lib.prompts import same_story_sameday  # noqa: F401
+from lib.prompts import dedupe_vs_archive  # noqa: F401
+from lib.prompts import coverage_boost  # noqa: F401
 
 __all__ = [
     "filter_urls",
@@ -40,6 +40,6 @@ __all__ = [
     "bsky_reorder",
     "bsky_headlines",
     "sitename",
-    "same_story",
-    "same_story_sameday",
+    "dedupe_vs_archive",
+    "coverage_boost",
 ]

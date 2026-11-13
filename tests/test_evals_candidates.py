@@ -35,7 +35,7 @@ def test_filter_units_enrich_source_and_flag_inconsistent_titles():
 
 
 def test_pair_units_flag_label_vs_overlap_mismatch():
-    rec = {"prompt": "same_story", "sid": "2026-10-01-07-00-00", "batch": "batch-000",
+    rec = {"prompt": "dedupe_vs_archive", "sid": "2026-10-01-07-00-00", "batch": "batch-000",
            "input": {"pairs": [
                {"id": "0", "a_title": "Nvidia beats earnings estimates",
                 "a_short_summary": "", "b_title": "Nvidia beats earnings estimates again",

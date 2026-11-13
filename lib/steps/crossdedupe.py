@@ -11,13 +11,13 @@ available post-`summarize`, length-normalized, event-focused). Today's
 candidates are compared against the `published_articles` store (articles that
 survived into a final newsletter in the last `--lookback-days` days). A
 permissive cosine shortlist (`--shortlist-threshold`, default 0.70) picks which
-candidate/prior pairs a Haiku judge then confirms as same/different; only
+candidate/prior pairs an Opus judge then confirms as same/different; only
 confirmed duplicates are dropped.
 
 Three modes, mirroring `filter`:
-  1. classic (default): in-process `same_story` calls via `call_prompt`
+  1. classic (default): in-process `dedupe_vs_archive` calls via `call_prompt`
      (use `--engine`; CI/cron only).
-  2. --prepare-batches: write 25-pair batch files for parallel Haiku subagent
+  2. --prepare-batches: write 25-pair batch files for parallel Opus subagent
      dispatch by the calling Claude session.
   3. --apply-results DIR: read result JSONs, drop confirmed duplicates.
 """
@@ -33,11 +33,11 @@ import click
 import numpy as np
 from pydantic import ValidationError
 
-import lib.prompts  # noqa: F401 — register SAME_STORY
+import lib.prompts  # noqa: F401 — register DEDUPE_VS_ARCHIVE
 from lib.db import PublishedArticle
 from lib.embeddings import embed_texts
 from lib.llm import call_prompt, get_prompt
-from lib.prompts.same_story import SameStoryInput, SameStoryOutput
+from lib.prompts.dedupe_vs_archive import DedupeVsArchiveInput, DedupeVsArchiveOutput
 from lib.state import NewsletterAgentState
 
 
@@ -139,8 +139,8 @@ def _compute_pairs(
 # ──────────────────────────────────────────────────────────────────────
 
 def _render_prompts(pairs: list[dict]) -> tuple[str, str]:
-    cfg = get_prompt("same_story")
-    validated = SameStoryInput.model_validate({"pairs": pairs})
+    cfg = get_prompt("dedupe_vs_archive")
+    validated = DedupeVsArchiveInput.model_validate({"pairs": pairs})
     user = cfg.user_prompt.format(**validated.model_dump())
     return cfg.system_prompt, user
 
@@ -166,7 +166,7 @@ def _write_batches(
             "pairs": chunk,
             "system_prompt": system,
             "user_prompt": user,
-            "output_schema": SameStoryOutput.model_json_schema(),
+            "output_schema": DedupeVsArchiveOutput.model_json_schema(),
         }
         path = batches_dir / f"batch-{batch_idx:03d}.json"
         path.write_text(json.dumps(payload, indent=2))
@@ -213,7 +213,7 @@ def _load_results(
             problems.append(f"{f.name}: invalid JSON ({exc})")
             continue
         try:
-            parsed = SameStoryOutput.model_validate(raw)
+            parsed = DedupeVsArchiveOutput.model_validate(raw)
         except ValidationError as exc:
             problems.append(f"{f.name}: schema mismatch ({exc.error_count()} errors)")
             continue
@@ -312,7 +312,7 @@ def cli(
         click.echo(f"Prepared {len(paths)} batch(es) ({len(pairs)} candidate pairs).")
         for p in paths:
             click.echo(f"  {p}")
-        click.echo("\nDispatch one Haiku subagent per batch. Write each result to:")
+        click.echo("\nDispatch one Opus subagent per batch. Write each result to:")
         click.echo(f"  runs/{session_id}/{_RESULTS_SUBDIR}/batch-NNN.json")
         click.echo(f"Then run: python -m lib.steps.crossdedupe --session {session_id} "
                    f"--apply-results runs/{session_id}/{_RESULTS_SUBDIR}")
@@ -356,8 +356,8 @@ def cli(
     verdicts: dict[str, bool] = {}
     for i in range(0, len(pairs), batch_size):
         chunk = pairs[i:i + batch_size]
-        result = call_prompt("same_story", {"pairs": chunk}, engine=engine)
-        assert isinstance(result, SameStoryOutput)
+        result = call_prompt("dedupe_vs_archive", {"pairs": chunk}, engine=engine)
+        assert isinstance(result, DedupeVsArchiveOutput)
         for v in result.results:
             verdicts[v.id] = v.same
 
