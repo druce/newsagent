@@ -521,6 +521,27 @@ def select(units: list[dict], n: int, hard_frac: float, seed: int = 0,
     return out
 
 
+def recent_units(units: list[dict], n: int) -> list[dict]:
+    """The n newest units by session id, one per `key` (the newest copy wins),
+    marked sample="recent". Used to build eval sets from current production
+    traffic rather than a stratified sample."""
+    out, seen = [], set()
+    for u in sorted(units, key=lambda u: u["provenance"]["sid"], reverse=True):
+        if u["key"] in seen:
+            continue
+        seen.add(u["key"])
+        out.append({**u, "sample": "recent"})
+        if len(out) == n:
+            break
+    return out
+
+
+RECENT_BUILDERS: dict[str, Callable[[list[dict]], list[dict]]] = {
+    "coverage_boost": pair_units,
+    "dedupe_vs_archive": pair_units,
+}
+
+
 # ---------------------------------------------------------------------- CLI
 def _validate(prompt: str, units: list[dict]) -> int:
     import lib.prompts  # noqa: F401  (registers prompts)
@@ -536,13 +557,40 @@ def _validate(prompt: str, units: list[dict]) -> int:
     return bad
 
 
-@click.command()
+@click.group(invoke_without_command=True)
 @click.option("--archive", "arch", default="evals/archive", type=click.Path(path_type=Path))
 @click.option("--out", "out_dir", default="evals/work/candidates", type=click.Path(path_type=Path))
 @click.option("--n", default=1000, show_default=True)
 @click.option("--hard-frac", default=0.7, show_default=True)
 @click.option("--seed", default=0, show_default=True)
-def cli(arch: Path, out_dir: Path, n: int, hard_frac: float, seed: int) -> None:
+@click.pass_context
+def cli(ctx: click.Context, arch: Path, out_dir: Path, n: int, hard_frac: float, seed: int) -> None:
+    """With no subcommand: the stratified ~n candidates per prompt (Phase B)."""
+    ctx.obj = {"arch": arch}
+    if ctx.invoked_subcommand is None:
+        build_all(arch, out_dir, n, hard_frac, seed)
+
+
+@cli.command("recent")
+@click.option("--prompt", required=True, type=click.Choice(sorted(RECENT_BUILDERS)))
+@click.option("--n", default=1000, show_default=True)
+@click.option("--out", "out_path", required=True, type=click.Path(path_type=Path))
+@click.pass_context
+def recent_cmd(ctx: click.Context, prompt: str, n: int, out_path: Path) -> None:
+    """The n most recent production cases for one prompt, deduped by key."""
+    p = ctx.obj["arch"] / f"{prompt}.jsonl.gz"
+    units = recent_units(RECENT_BUILDERS[prompt](list(read_jsonl_gz(p))), n)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w") as f:
+        for u in units:
+            f.write(json.dumps(u, ensure_ascii=False) + "\n")
+    sids = [u["provenance"]["sid"] for u in units]
+    labels = Counter(str(u["prod_output"].get("same")) for u in units)
+    click.echo(f"{out_path}: {len(units)} cases, sids {min(sids)} .. {max(sids)}, "
+               f"prod labels {dict(labels)}, invalid={_validate(prompt, units)}")
+
+
+def build_all(arch: Path, out_dir: Path, n: int, hard_frac: float, seed: int) -> None:
     def load(name):
         p = arch / f"{name}.jsonl.gz"
         return list(read_jsonl_gz(p)) if p.exists() else []

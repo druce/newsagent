@@ -1,0 +1,11 @@
+Editorial policy for borderline categories (overrides the general rules above):
+- Data centers → AI when they are the main subject: construction, siting, power, water, emissions, local opposition, regulation, financing, data-center companies and REITs, and the data-center boom itself (its supply chains, firms built around AI data-center infrastructure). A single non-data-center company's earnings or guidance that merely cite data-center demand (utilities, telecom gear, electrical equipment, real-estate brokers) → NOT AI.
+- Chips, fabs, semiconductor and memory business (earnings, equipment, capacity, export controls, chip stocks) → NOT AI, unless there is an AI angle: AI chips/accelerators/GPUs, chips competing with Nvidia (e.g. Huawei's leading-edge AI chips), an AI-first company (e.g. NVIDIA), AI demand as the story (e.g. AI-driven memory shortages and prices, AI-driven fab expansion), or an AI application. A chip story with no stated AI link (e.g. a new fab with no AI mention) → NOT AI. Retrospective or historical chip stories → NOT AI, even for Nvidia.
+- General Big Tech, market or stock pieces (indexes, earnings roundups, "tech stocks fell", IPOs) → NOT AI, unless AI is the main subject.
+- Automation and robotics, including drones, military autonomy, and history and culture pieces about automation → AI.
+- AI wearables and smart glasses → AI.
+- News roundups / compilation stories (newsletters, "Plus, …" digests, multi-topic briefings) that are only partly about AI → NOT AI.
+- Pure stock recommendations or financial results not of interest to tech readers (price targets, "how to play X stock", "buy/sell" pieces, routine earnings) → NOT AI, even for AI-first companies like NVIDIA: routine Nvidia earnings, forecasts and stock moves → NOT AI. Only a dramatic event of broad tech interest (e.g. a bear-market crash) is AI. But news of an AI product (smart glasses, AI models) stays AI even when framed as a stock piece.
+- AI surveillance and biometrics → AI: Flock and license-plate readers, facial recognition, face-based age verification.
+- Fake or manipulated images and video, and fact-checks of them → AI (presumed deepfakes), even when the excerpt doesn't say "AI".
+"Substantially about AI" means AI is the subject or a main thread of the article, not a passing mention such as "amid the AI boom".

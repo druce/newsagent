@@ -103,7 +103,7 @@ def test_filter_prepare_writes_self_contained_batches(tmp_db, monkeypatch, tmp_p
     assert b0["ids"] == ["0"]
     assert b0["items"][0]["title"] == "OpenAI ships GPT-6"
     # Self-contained prompt + schema for the subagent
-    assert "Classify every headline below" in b0["user_prompt"]
+    assert "Classify every item below" in b0["user_prompt"]
     assert "system_prompt" in b0 and b0["system_prompt"]
     assert b0["output_schema"]["properties"].get("classifications") is not None
 

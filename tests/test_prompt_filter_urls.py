@@ -50,3 +50,30 @@ def test_filter_urls_system_prompt_mentions_json():
 def test_filter_urls_has_reasoning_effort():
     cfg = get_prompt("filter_urls")
     assert cfg.reasoning_effort == 4
+
+
+def test_filter_urls_excerpt_is_optional_and_omitted_when_absent():
+    cfg = get_prompt("filter_urls")
+    parsed = cfg.input_schema.model_validate({"items": [
+        {"id": "h1", "title": "GPT-6 released"},
+        {"id": "h2", "title": "Fab opens", "excerpt": "AI demand drives it."}]})
+    import json
+    assert json.loads(parsed.input_text) == [
+        {"id": "h1", "title": "GPT-6 released"},
+        {"id": "h2", "title": "Fab opens", "excerpt": "AI demand drives it."}]
+
+
+def test_filter_urls_prompt_carries_editorial_policy():
+    cfg = get_prompt("filter_urls")
+    u = cfg.user_prompt
+    assert "explicitly or implicitly" not in u
+    for phrase in ("Data centers when they are the main subject", "AI wearables and smart glasses",
+                   "AI surveillance and biometrics", "News roundups", "amid the AI boom",
+                   "Retrospective or historical tech stories"):
+        assert phrase in u
+
+
+def test_filter_urls_v2_eval_prompt_matches_production():
+    import evals.prompts.filter_urls_v2 as V
+    import lib.prompts.filter_urls as P
+    assert (V.FILTER_URLS_V2.system_prompt, V.FILTER_URLS_V2.user_prompt) == (P._SYSTEM, P._USER)

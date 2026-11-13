@@ -161,3 +161,35 @@ def test_select_caps_any_single_tag_among_hard_picks():
     assert len(picked) == 100
     assert tags.count("no_content") == 40
     assert tags.count("source_attribution") <= 40 and tags.count("bullets_not_3") <= 40
+
+
+def test_recent_units_newest_first_and_dedupes_by_key():
+    u = lambda sid, key: {"key": key, "provenance": {"sid": sid}, "sample": None}
+    units = [u("2026-11-01-07", "a"), u("2026-11-09-18", "b"), u("2026-11-09-07", "b"), u("2026-11-05-07", "c")]
+    out = C.recent_units(units, n=2)
+    assert [x["key"] for x in out] == ["b", "c"]          # newest sid wins the duplicate "b"
+    assert out[0]["provenance"]["sid"] == "2026-11-09-18"
+    assert all(x["sample"] == "recent" for x in out)
+    assert units[1]["sample"] is None                     # inputs not mutated
+
+
+def test_recent_cli_writes_newest_pairs(tmp_path):
+    import gzip, json
+    from click.testing import CliRunner
+    arch = tmp_path / "arch"
+    arch.mkdir()
+    def rec(sid, pid, a, b, same):
+        return {"prompt": "coverage_boost", "sid": sid, "batch": "batch-000",
+                "input": {"pairs": [{"id": pid, "a_title": a, "a_summary": "- x", "b_title": b, "b_summary": "- y"}]},
+                "output": {"results": [{"id": pid, "same": same}]}}
+    with gzip.open(arch / "coverage_boost.jsonl.gz", "wt") as f:
+        for r in (rec("2026-11-01-07-00-00", "1-2", "Old A", "Old B", False),
+                  rec("2026-11-10-07-00-00", "3-4", "New A", "New B", True)):
+            f.write(json.dumps(r) + "\n")
+    out = tmp_path / "recent.jsonl"
+    res = CliRunner().invoke(C.cli, ["--archive", str(arch), "recent", "--prompt", "coverage_boost",
+                                     "--n", "1", "--out", str(out)])
+    assert res.exit_code == 0, res.output
+    rows = [json.loads(l) for l in out.read_text().splitlines()]
+    assert [r["input"]["pairs"][0]["a_title"] for r in rows] == ["New A"]
+    assert rows[0]["prod_output"] == {"same": True}

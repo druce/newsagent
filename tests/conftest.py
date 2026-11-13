@@ -43,7 +43,8 @@ def _ensure_prompts_registered():
     if not _registry:
         importlib.import_module("lib.prompts")  # ensure top-level prompt package loaded
         for modname, mod in list(sys.modules.items()):
-            if not modname.startswith("lib.prompts.") or mod is None:
+            # eval-only variants (evals.prompts.*) register the same way
+            if not modname.startswith(("lib.prompts.", "evals.prompts.")) or mod is None:
                 continue
             for attr in dir(mod):
                 obj = getattr(mod, attr, None)

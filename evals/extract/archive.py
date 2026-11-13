@@ -43,7 +43,7 @@ RATE_FIELDS = (
     "bt_z", "bt_score", "reputation", "coverage_count", "recency_score",
     "rating",
 )
-GATHER_FIELDS = ("title", "source", "url", "published")
+GATHER_FIELDS = ("title", "source", "url", "published", "rss_summary")
 SUMMARIZE_FIELDS = ("title", "source", "site_name", "url", "final_url", "short_summary")
 
 

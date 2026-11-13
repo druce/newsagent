@@ -121,3 +121,16 @@ def test_rate_records_exclude_embeddings(tmp_path):
     item = rec["items"][0]
     assert item["id"] == "0" and item["on_topic"] == 0.9 and item["bt_z"] == 1.2
     assert "embedding" not in item
+
+
+def test_gather_records_keep_rss_summary(tmp_path):
+    db = tmp_path / "x.db"
+    con = sqlite3.connect(db)
+    con.execute("create table agent_state (id integer primary key, session_id text, step_name text, state_data text)")
+    state = {"headline_data": [{"title": "T", "source": "NYT", "url": "u", "rss_summary": "A dek."}]}
+    con.execute("insert into agent_state (session_id, step_name, state_data) values (?,?,?)",
+                ("2026-11-09-18-00-11", "gather", json.dumps(state)))
+    con.commit()
+    con.close()
+    (rec,) = A.checkpoint_items(db, "gather", A.GATHER_FIELDS)
+    assert rec["items"][0]["rss_summary"] == "A dek."

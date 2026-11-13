@@ -54,6 +54,7 @@ PRICES: dict[str, tuple[float, float] | None] = {
 MODEL_IDS = {
     "terra": "openai:gpt-6.1-terra (reasoning_effort=medium)",
     "gemini": "google:gemini-3.5-flash-lite (thinking_level=medium)",
+    "flashlite31": "google:gemini-3.1-flash-lite (thinking_level=medium)",
     "luna": "openai decisions api: gpt-6-luna (predicate)",
     "haiku": "Agent dispatch: haiku effort=medium",
     "opus": "Agent dispatch: opus effort=medium",
@@ -63,7 +64,15 @@ DEFAULT_MODELS = ["haiku", "opus", "terra", "gemini", "luna"]
 EFFORT = 4  # filter_urls' own PromptConfig effort; maps to "medium" on every engine
 
 # per-prompt adapters: output → {local_id: label dict}, and the label column
-LABEL_FIELD = {"filter_urls": "is_ai"}
+LABEL_FIELD = {"filter_urls": "is_ai", "filter_urls_v2": "is_ai",
+               "coverage_boost": "same", "coverage_boost_v2": "same",
+               "coverage_boost_v4": "same", "dedupe_vs_archive": "same", "dedupe_vs_archive_old": "same"}
+# the list field of the prompt's input that holds the batched units
+ITEM_KEY = {"filter_urls": "items", "filter_urls_v2": "items",
+            "coverage_boost": "pairs", "coverage_boost_v2": "pairs",
+            "coverage_boost_v4": "pairs", "dedupe_vs_archive": "pairs", "dedupe_vs_archive_old": "pairs"}
+# Agent-dispatch batch files must stay under the subagent Read cap (~60KB).
+MAX_PROMPT_BYTES = 55_000
 
 
 def cost(model: str, in_tok: int | None, out_tok: int | None) -> float | None:
@@ -74,13 +83,28 @@ def cost(model: str, in_tok: int | None, out_tok: int | None) -> float | None:
 
 
 def parse_labels(prompt: str, out: dict) -> dict:
-    if prompt == "filter_urls":
+    if prompt in ("filter_urls", "filter_urls_v2"):
         return {str(c["id"]): {"is_ai": bool(c["is_ai"])} for c in out.get("classifications", [])}
+    if prompt == "coverage_boost_v4":  # three-way; "same" keeps the binary view comparable
+        return {str(r["id"]): {"same": r["relation"] == "same", "relation": r["relation"]}
+                for r in out.get("results", [])}
+    if prompt in ("coverage_boost", "coverage_boost_v2", "dedupe_vs_archive", "dedupe_vs_archive_old"):
+        return {str(r["id"]): {"same": bool(r["same"])} for r in out.get("results", [])}
     raise NotImplementedError(prompt)
+
+
+def case_title(c: dict) -> str:
+    """One display line per case: the headline, or "A title || B title" for a pair."""
+    inp = c["input"]
+    if "pairs" in inp:
+        (p,) = inp["pairs"]
+        return f"{p['a_title']} || {p['b_title']}"
+    return inp["items"][0].get("title")
 
 
 def _cfg(prompt: str):
     import lib.prompts  # noqa: F401  (registers prompts)
+    import evals.prompts  # noqa: F401  (registers eval-only variants)
     from lib.llm import get_prompt
     return get_prompt(prompt)
 
@@ -101,31 +125,42 @@ def read_jsonl(path: Path) -> list[dict]:
 
 # ------------------------------------------------------------------- packing
 def pack(cases: list[dict], prompt: str, batch_size: int = 25, seed: int = 0,
-         limit: int | None = None) -> list[dict]:
+         limit: int | None = None, max_bytes: int = MAX_PROMPT_BYTES) -> list[dict]:
     """Shuffle once (fixed seed), pack into batches of production size, renumber
     ids 0..n-1 inside each batch. A --limit run is a prefix of the full run, so
-    its batches are identical to the full run's first batches."""
+    its batches are identical to the full run's first batches. A batch whose
+    rendered user_prompt exceeds max_bytes is split in halves until it fits."""
     cfg = _cfg(prompt)
+    key = ITEM_KEY[prompt]
     order = sorted(cases, key=lambda c: c["case_id"])
     random.Random(seed).shuffle(order)
     if limit:
         order = order[:limit]
-    batches = []
-    for b, start in enumerate(range(0, len(order), batch_size)):
-        chunk = order[start:start + batch_size]
+
+    def render(chunk):
         items = []
         for i, c in enumerate(chunk):
-            (it,) = c["input"]["items"]
+            (it,) = c["input"][key]
             items.append({**it, "id": str(i)})
-        inp = cfg.input_schema.model_validate({"items": items})
-        batches.append({
-            "batch": f"batch-{b:03d}", "case_ids": [c["case_id"] for c in chunk],
-            "ids": [it["id"] for it in items], "items": items,
-            "system_prompt": cfg.system_prompt,
-            "user_prompt": cfg.user_prompt.format(**inp.model_dump()),
-            "output_schema": cfg.output_schema.model_json_schema(),
-        })
-    return batches
+        inp = cfg.input_schema.model_validate({key: items})
+        return items, cfg.user_prompt.format(**inp.model_dump())
+
+    def fit(chunk):
+        items, user = render(chunk)
+        if len(user.encode()) > max_bytes and len(chunk) > 1:
+            half = len(chunk) // 2
+            return fit(chunk[:half]) + fit(chunk[half:])
+        return [(chunk, items, user)]
+
+    parts = []
+    for start in range(0, len(order), batch_size):
+        parts += fit(order[start:start + batch_size])
+    return [{
+        "batch": f"batch-{b:03d}", "case_ids": [c["case_id"] for c in chunk],
+        "ids": [it["id"] for it in items], "items": items,
+        "system_prompt": cfg.system_prompt, "user_prompt": user,
+        "output_schema": cfg.output_schema.model_json_schema(),
+    } for b, (chunk, items, user) in enumerate(parts)]
 
 
 # ---------------------------------------------------------------- API models
@@ -161,14 +196,14 @@ def call_terra(b: dict, prompt: str) -> dict:
             "reasoning_tok": getattr(details, "reasoning_tokens", None)}
 
 
-def call_gemini(b: dict, prompt: str) -> dict:
+def call_gemini(b: dict, prompt: str, model_id: str = "gemini-3.5-flash-lite") -> dict:
     from google import genai
     from google.genai import types
     from lib.engines.google import _MAX_OUTPUT_TOKENS, _thinking_level
     cfg = _cfg(prompt)
     client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
     resp = client.models.generate_content(
-        model="gemini-3.5-flash-lite", contents=b["user_prompt"],
+        model=model_id, contents=b["user_prompt"],
         config=types.GenerateContentConfig(
             system_instruction=b["system_prompt"], max_output_tokens=_MAX_OUTPUT_TOKENS,
             response_mime_type="application/json", response_schema=cfg.output_schema,
@@ -184,11 +219,32 @@ def call_gemini(b: dict, prompt: str) -> dict:
 def decisions_instructions(prompt: str) -> str:
     """The Decisions API takes criteria, not a chat prompt: keep the rules from
     the user prompt, drop the JSON/IO boilerplate."""
-    if prompt != "filter_urls":
+    if prompt not in ("filter_urls", "filter_urls_v2"):
         raise NotImplementedError(prompt)
     rules = _cfg(prompt).user_prompt.split("Input:")[0]
-    rules = rules.replace("Classify every headline below.", "").strip()
-    return "The input is a news headline. True if it is AI-related.\n\n" + rules
+    rules = rules.split("\n", 1)[1].strip()  # drop "Classify every item below. ..."
+    return ("The input is a news headline, optionally followed by a blank line and the feed's "
+            "excerpt of the article. True if the article is AI-related.\n\n" + rules)
+
+
+def luna_input(item: dict) -> str:
+    return item["title"] + (f"\n\n{item['excerpt']}" if item.get("excerpt") else "")
+
+
+def make_v2_cases(cases: list[dict], excerpts: dict, with_excerpt: bool,
+                  titles: dict | None = None) -> list[dict]:
+    """Copy filter_urls cases onto filter_urls_v2 (same case_ids → same batches),
+    attaching the feed excerpt when with_excerpt and one exists. ``titles``
+    overrides the archived title (HTML headlines re-extracted from saved pages)."""
+    titles = titles or {}
+    out = []
+    for c in cases:
+        (it,) = c["input"]["items"]
+        it = {"id": it["id"], "title": titles.get(c["case_id"]) or it["title"]}
+        if with_excerpt and excerpts.get(c["case_id"]):
+            it["excerpt"] = excerpts[c["case_id"]]
+        out.append({**c, "prompt": "filter_urls_v2", "input": {"items": [it]}})
+    return out
 
 
 def call_luna(title: str, prompt: str) -> dict:
@@ -202,9 +258,13 @@ def call_luna(title: str, prompt: str) -> dict:
                          "prompt_cache_key": "ai-news-classifier-v1"})
     r.raise_for_status()
     p = r.json()
-    prob = float(p["answers"][0]["probability"])
+    ans = p["answers"][0]
+    # Luna sometimes declines to judge (e.g. bare "440 comments" captions):
+    # {"type": "refusal"} with no probability. That's an outcome, not an error.
+    refusal = ans.get("type") == "refusal"
+    prob = None if refusal else float(ans["probability"])
     u = p.get("usage", {})
-    return {"prob": prob, "in_tok": u.get("input_tokens"), "out_tok": u.get("output_tokens", 0),
+    return {"prob": prob, "refusal": refusal, "in_tok": u.get("input_tokens"), "out_tok": u.get("output_tokens", 0),
             "cached_tok": (u.get("input_tokens_details") or {}).get("cached_tokens", 0),
             "reasoning_tok": (u.get("output_tokens_details") or {}).get("reasoning_tokens", 0)}
 
@@ -227,7 +287,10 @@ def run_api(prompt: str, run: str, model: str, workers: int = 8) -> None:
     rd = run_dir(prompt, run)
     batches = json.loads((rd / "batches.json").read_text())
     out_path = rd / f"{model}.jsonl"
-    done = {(r["batch"], r.get("item")) for r in read_jsonl(out_path) if not r["error"]}
+    prev = read_jsonl(out_path)
+    if any(r["error"] for r in prev):  # a rerun retries failures; drop the old failed rows
+        out_path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in prev if not r["error"]))
+    done = {(r["batch"], r.get("item")) for r in prev if not r["error"]}
 
     if model == "luna":
         jobs = [(b, it) for b in batches for it in b["items"] if (b["batch"], it["id"]) not in done]
@@ -236,14 +299,18 @@ def run_api(prompt: str, run: str, model: str, workers: int = 8) -> None:
             b, it = job
             t = time.time()
             try:
-                res = _retry(lambda: call_luna(it["title"], prompt))
-                labels = {it["id"]: {"is_ai": res["prob"] >= 0.5, "prob": res["prob"]}}
+                res = _retry(lambda: call_luna(luna_input(it), prompt))
+                if res["refusal"]:
+                    labels = {it["id"]: {"is_ai": None, "prob": None, "refusal": True}}
+                else:
+                    labels = {it["id"]: {"is_ai": res["prob"] >= 0.5, "prob": res["prob"]}}
                 return _row(model, b, "item", labels, time.time() - t, res, None, item=it["id"])
             except Exception as e:
                 return _row(model, b, "item", {}, time.time() - t, None, f"{type(e).__name__}: {e}"[:300], item=it["id"])
         workers = max(workers, 16)
     else:
-        caller = {"terra": call_terra, "gemini": call_gemini}[model]
+        caller = {"terra": call_terra, "gemini": call_gemini,
+                  "flashlite31": lambda b, p: call_gemini(b, p, "gemini-3.1-flash-lite")}[model]
         jobs = [b for b in batches if (b["batch"], None) not in done]
 
         def one(b):
@@ -336,7 +403,7 @@ def write_csvs(rd: Path, prompt: str, models: list[str]) -> None:
         for lid, cid in zip(b["ids"], b["case_ids"]):
             c = cases[cid]
             row = {"case_id": cid, "batch": b["batch"], "local_id": lid,
-                   "title": c["input"]["items"][0].get("title"),
+                   "title": case_title(c), "cosine": c["strata"].get("cosine"),
                    "source": c["strata"].get("source"), "month": c["strata"].get("month"),
                    "tags": " ".join(c["tags"]), "sample": c.get("sample"),
                    f"prod_{field}": c["prod_output"].get(field)}
@@ -347,6 +414,7 @@ def write_csvs(rd: Path, prompt: str, models: list[str]) -> None:
                 row[f"{m}_{field}"] = v
                 if m == "luna":
                     row["luna_prob"] = None if lab is None else lab.get("prob")
+                    row["luna_refusal"] = bool(lab and lab.get("refusal"))
                 if v is not None:
                     votes[m] = v
             yes = sum(votes.values())
@@ -415,6 +483,137 @@ def write_csvs(rd: Path, prompt: str, models: list[str]) -> None:
         w.writerows({k: _fmt(v) for k, v in r.items()} for r in summary)
 
 
+# ------------------------------------------------------------- gold (Phase D)
+def select_gold(items: list[dict], n: int = 300, seed: int = 0) -> list[dict]:
+    """Pick gold candidates from items.csv rows, in priority order:
+    1. every case where the models split;
+    2. every case where all models agree but prod said the opposite;
+    3. unanimous controls (prod agrees), balanced by label, spread over months.
+    Each picked row gets gold_reason = split | prod_vs_consensus | control."""
+    rng = random.Random(seed)
+    splits = [r for r in items if r["unanimous"] == "False"]
+    prod_bad = [r for r in items if r["unanimous"] == "True" and r["prod_agrees_majority"] == "False"]
+    controls = [r for r in items if r["unanimous"] == "True" and r["prod_agrees_majority"] == "True"]
+    picked = []
+    for reason, pool in (("split", splits), ("prod_vs_consensus", prod_bad)):
+        pool = pool[:]
+        rng.shuffle(pool)
+        for r in pool[: n - len(picked)]:
+            picked.append({**r, "gold_reason": reason})
+    left = n - len(picked)
+    if left > 0:
+        by_label: dict[str, list] = {}
+        for r in controls:
+            by_label.setdefault(r["majority"], []).append(r)
+        labels = sorted(by_label)
+        for i, lab in enumerate(labels):
+            want = left // len(labels) + (1 if i < left % len(labels) else 0)
+            pool = by_label[lab][:]
+            rng.shuffle(pool)
+            pool.sort(key=lambda r: r["month"])  # stable: random within month
+            months = sorted({r["month"] for r in pool})
+            buckets = {m: [r for r in pool if r["month"] == m] for m in months}
+            take = []
+            while len(take) < want and any(buckets.values()):
+                for m in months:
+                    if buckets[m] and len(take) < want:
+                        take.append(buckets[m].pop(0))
+            picked += [{**r, "gold_reason": "control"} for r in take]
+    return picked
+
+
+ADJ_SYSTEM = """You are the gold-standard labeler for an evaluation of an AI-news headline filter.
+You will receive JSON objects with id, title and source. Return **only** a JSON object that satisfies the schema given in the user message, with exactly one label per id. No markdown, no extra keys."""
+
+ADJ_USER = """A title-only classifier decides whether each headline belongs in a daily AI newsletter. It sees only the title. Your labels are the reference answers it will be graded against, so judge each title the way a careful human editor would, from the title (and source) alone, applying these rules:
+
+{rules}
+
+For each item return:
+- is_ai: the correct label under the rules.
+- confidence: "high", "medium" or "low". Use "low" when a reasonable editor could go either way from the title alone.
+- not_a_headline: true if the title is not a real headline (e.g. "440 comments", a section name, a bare product name with no news). Label those is_ai=false.
+- rationale: one sentence, at most 25 words, naming the rule that decides it.
+
+Schema: {{"labels": [{{"id": str, "is_ai": bool, "confidence": "high"|"medium"|"low", "not_a_headline": bool, "rationale": str}}]}}
+
+Input:
+{items}"""
+
+ADJ_SCHEMA = {"type": "object", "properties": {"labels": {"type": "array", "items": {
+    "type": "object", "properties": {
+        "id": {"type": "string"}, "is_ai": {"type": "boolean"},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "not_a_headline": {"type": "boolean"}, "rationale": {"type": "string"}},
+    "required": ["id", "is_ai", "confidence", "not_a_headline", "rationale"]}}},
+    "required": ["labels"]}
+
+
+def prepare_adjudication(rd: Path, prompt: str, n: int, batch_size: int = 25, seed: int = 0) -> list[Path]:
+    items = list(csv.DictReader((rd / "items.csv").open()))
+    gold = select_gold(items, n=n, seed=seed)
+    gd = rd / "gold"
+    (gd / "adjudicate-batches").mkdir(parents=True, exist_ok=True)
+    (gd / "adjudicate-results").mkdir(exist_ok=True)
+    with (gd / "candidates.csv").open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(gold[0]))
+        w.writeheader()
+        w.writerows(gold)
+    rules = decisions_instructions(prompt).split("\n\n", 1)[1]
+    order = gold[:]
+    random.Random(seed).shuffle(order)  # don't group splits together in a batch
+    paths = []
+    for b, start in enumerate(range(0, len(order), batch_size)):
+        chunk = order[start:start + batch_size]
+        its = [{"id": str(i), "title": r["title"], "source": r["source"]} for i, r in enumerate(chunk)]
+        p = gd / "adjudicate-batches" / f"batch-{b:03d}.json"
+        p.write_text(json.dumps({
+            "batch": f"batch-{b:03d}", "ids": [it["id"] for it in its], "items": its,
+            "case_ids": [r["case_id"] for r in chunk], "system_prompt": ADJ_SYSTEM,
+            "user_prompt": ADJ_USER.format(rules=rules, items=json.dumps(its, ensure_ascii=False)),
+            "output_schema": ADJ_SCHEMA}, indent=1))
+        paths.append(p)
+    return paths
+
+
+def write_gold_review(rd: Path, models: list[str]) -> Path:
+    gd = rd / "gold"
+    cand = {r["case_id"]: r for r in csv.DictReader((gd / "candidates.csv").open())}
+    adj = {}
+    for bp in sorted((gd / "adjudicate-batches").glob("batch-*.json")):
+        b = json.loads(bp.read_text())
+        rp = gd / "adjudicate-results" / bp.name
+        if not rp.exists():
+            continue
+        labels = {str(l["id"]): l for l in json.loads(rp.read_text())["labels"]}
+        for lid, cid in zip(b["ids"], b["case_ids"]):
+            if lid in labels:
+                adj[cid] = labels[lid]
+    rows = []
+    for cid, c in cand.items():
+        a = adj.get(cid, {})
+        gold = a.get("is_ai")
+        rows.append({
+            "case_id": cid, "gold_reason": c["gold_reason"], "title": c["title"], "source": c["source"],
+            "month": c["month"], "tags": c["tags"], "prod": c["prod_is_ai"],
+            **{m: c.get(f"{m}_is_ai", "") for m in models}, "luna_prob": c.get("luna_prob", ""),
+            "n_ai_votes": c["n_ai_votes"], "majority": c["majority"],
+            "opus_gold": gold, "opus_confidence": a.get("confidence"),
+            "opus_not_a_headline": a.get("not_a_headline"), "opus_rationale": a.get("rationale"),
+            "gold_matches_majority": None if gold is None else str(gold) == c["majority"],
+            "gold_matches_prod": None if gold is None else str(gold) == c["prod_is_ai"],
+            "human_is_ai": "", "human_notes": ""})
+    conf_rank = {"low": 0, "medium": 1, "high": 2, None: 3}
+    rows.sort(key=lambda r: (conf_rank[r["opus_confidence"]], r["gold_matches_majority"] is not False,
+                             r["gold_reason"] != "split"))
+    out = gd / "gold_review.csv"
+    with out.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows({k: _fmt(v) for k, v in r.items()} for r in rows)
+    return out
+
+
 # ---------------------------------------------------------------------- CLI
 @click.group()
 def cli():
@@ -431,8 +630,10 @@ _run = click.option("--run", "run", required=True)
 @click.option("--limit", type=int, default=None)
 @click.option("--batch-size", default=25, show_default=True)
 @click.option("--seed", default=0, show_default=True)
-def pack_cmd(prompt, run, limit, batch_size, seed):
-    cases = read_jsonl(ROOT / "candidates" / f"{prompt}.jsonl")
+@click.option("--cases", "cases_path", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Cases JSONL (default: evals/work/candidates/<prompt>.jsonl); a gold set works too.")
+def pack_cmd(prompt, run, limit, batch_size, seed, cases_path):
+    cases = read_jsonl(cases_path or ROOT / "candidates" / f"{prompt}.jsonl")
     batches = pack(cases, prompt, batch_size=batch_size, seed=seed, limit=limit)
     rd = run_dir(prompt, run)
     rd.mkdir(parents=True, exist_ok=True)
@@ -445,7 +646,7 @@ def pack_cmd(prompt, run, limit, batch_size, seed):
 @cli.command("api")
 @_prompt
 @_run
-@click.option("--model", type=click.Choice(["terra", "gemini", "luna"]), required=True)
+@click.option("--model", type=click.Choice(["terra", "gemini", "flashlite31", "luna"]), required=True)
 def api_cmd(prompt, run, model):
     run_api(prompt, run, model)
 
@@ -476,6 +677,44 @@ def csv_cmd(prompt, run, models):
     rd = run_dir(prompt, run)
     write_csvs(rd, prompt, [m for m in models.split(",") if (rd / f"{m}.jsonl").exists()])
     click.echo(f"wrote {rd}/items.csv, models.csv, calls.csv")
+
+
+@cli.command("v2-cases")
+@click.option("--from-run", "from_run", default="full1000", show_default=True)
+@click.option("--run", "run", required=True)
+@click.option("--excerpt/--no-excerpt", default=True)
+def v2_cases_cmd(from_run, run, excerpt):
+    """Build a filter_urls_v2 run dir from a filter_urls run's cases (+ excerpts.jsonl)."""
+    src = run_dir("filter_urls", from_run)
+    cases = read_jsonl(src / "cases.jsonl")
+    ex_rows = read_jsonl(src / "excerpts.jsonl")
+    ex = {r["case_id"]: r["excerpt"] for r in ex_rows}
+    titles = {r["case_id"]: r["title"] for r in ex_rows if r.get("title")}
+    v2 = make_v2_cases(cases, ex, with_excerpt=excerpt, titles=titles)
+    rd = run_dir("filter_urls_v2", run)
+    rd.mkdir(parents=True, exist_ok=True)
+    batches = pack(v2, "filter_urls_v2")
+    (rd / "cases.jsonl").write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in v2))
+    (rd / "batches.json").write_text(json.dumps(batches, indent=1, ensure_ascii=False))
+    click.echo(f"{rd}: {len(v2)} cases, {sum('excerpt' in c['input']['items'][0] for c in v2)} with excerpt, "
+               f"{len(batches)} batches")
+
+
+@cli.command("gold-prepare")
+@_prompt
+@_run
+@click.option("--n", default=300, show_default=True)
+def gold_prepare_cmd(prompt, run, n):
+    for p in prepare_adjudication(run_dir(prompt, run), prompt, n):
+        click.echo(p)
+
+
+@cli.command("gold-review")
+@_prompt
+@_run
+@click.option("--models", default=",".join(DEFAULT_MODELS), show_default=True)
+def gold_review_cmd(prompt, run, models):
+    click.echo(write_gold_review(run_dir(prompt, run), models.split(",")))
 
 
 if __name__ == "__main__":
