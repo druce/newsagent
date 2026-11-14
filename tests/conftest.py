@@ -76,3 +76,12 @@ sources:
     p = tmp_path / "sources.yaml"
     p.write_text(content)
     return str(p)
+
+
+@pytest.fixture(autouse=True)
+def _stub_published_embeddings(monkeypatch):
+    """`select` (and send's fallback) record into published_articles via
+    lib.published, which embeds the picks. Never hit OpenAI from tests; tests
+    that care patch lib.published.embed_texts themselves (overrides this)."""
+    monkeypatch.setattr(
+        "lib.published.embed_texts", lambda texts: [[0.5, 0.5] for _ in texts])

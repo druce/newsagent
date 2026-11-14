@@ -15,7 +15,7 @@ import markdown as md
 from dotenv import load_dotenv
 
 from lib.db import PublishedArticle
-from lib.embeddings import embed_texts
+from lib.published import record_session_articles
 from lib.state import NewsletterAgentState
 from lib.utilities import (
     render_bsky_share_script,
@@ -278,52 +278,6 @@ def _render_html(title: str, body_md: str, local_path: Optional[str] = None) -> 
 """
 
 
-def _record_published_articles(
-    state: NewsletterAgentState, session_id: str, db_path: str,
-    published_at: Optional[str] = None,
-) -> int:
-    """Store each published article (title + short_summary embedding) in the
-    `published_articles` table so future runs can suppress cross-day repeats.
-
-    Canonical representation = OpenAI text-embedding-3-large of
-    `title + short_summary` — matches what `crossdedupe` embeds for candidates.
-    `published_at` defaults to now; `backfill_published` passes the original
-    newsletter timestamp so crossdedupe's lookback window sees the right day.
-    Returns the number of rows written.
-    """
-    items = state.newsletter_section_data or []
-    if not items:
-        return 0
-    now = published_at or datetime.now().isoformat()
-    texts: list[str] = []
-    metas: list[tuple[str, str, str]] = []  # (url, title, short_summary)
-    for it in items:
-        idx = it.get("id")
-        h = (
-            state.headline_data[idx]
-            if isinstance(idx, int) and 0 <= idx < len(state.headline_data)
-            else {}
-        )
-        title = it.get("headline") or h.get("title", "")
-        short_summary = h.get("short_summary") or it.get("summary", "") or ""
-        url = it.get("link") or h.get("final_url") or h.get("url", "")
-        if not url:
-            continue
-        texts.append((title + "\n" + short_summary).strip())
-        metas.append((url, title, short_summary))
-    if not texts:
-        return 0
-
-    vectors = embed_texts(texts)
-    with sqlite3.connect(db_path) as conn:
-        for (url, title, short_summary), vec in zip(metas, vectors):
-            PublishedArticle(
-                session_id=session_id, url=url, title=title,
-                short_summary=short_summary, embedding=vec, published_at=now,
-            ).insert(conn)
-    return len(texts)
-
-
 def _already_sent(db_path: str, session_id: str) -> bool:
     """True if a newsletters row already exists for this session."""
     try:
@@ -389,11 +343,19 @@ def deliver_newsletter(
         )
         conn.commit()
 
-    # Record survivors (articles that made it into this newsletter) into the
-    # cross-day dedup store, once per session. Never let this break a send.
+    # Stamp this issue's articles as published in the cross-day dedup store,
+    # once per session. `select` already wrote the rows (published_at NULL);
+    # sessions selected before that existed get recorded here instead.
+    # Never let this break a send.
     if not previously_sent:
         try:
-            n = _record_published_articles(state, session_id, db_path)
+            now = datetime.now().isoformat()
+            with sqlite3.connect(db_path) as conn:
+                existing = PublishedArticle.session_count(conn, session_id)
+                n = PublishedArticle.mark_published(conn, session_id, now) if existing else 0
+            if not existing:
+                _total, n = record_session_articles(
+                    state, session_id, db_path, published_at=now)
             if n:
                 if echo:
                     click.echo(f"Recorded {n} article(s) to the cross-day dedup store.")

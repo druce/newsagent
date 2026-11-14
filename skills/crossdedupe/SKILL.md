@@ -13,8 +13,9 @@ different URL with different prose (which never approaches the syndication
 threshold).
 
 **Signal:** OpenAI `text-embedding-3-large` of `title + short_summary`. Today's
-candidates are compared against the `published_articles` store (articles that
-survived into a final newsletter, recorded at `send`). A permissive cosine
+candidates are compared against the `published_articles` store (rows with
+`selected=1` and a `published_at` — written by `select`, stamped by `send`;
+rated-but-unpicked and selected-but-unsent rows are ignored). A permissive cosine
 shortlist (`--shortlist-threshold`, default 0.70) picks candidate/prior pairs; a
 Opus judge (`dedupe_vs_archive` prompt) makes the real same/different call. Only
 confirmed duplicates are dropped from `state.headline_data`.
@@ -119,6 +120,6 @@ Routes the `dedupe_vs_archive` prompt through one engine (default
 - Duplicate headlines dropped from `state.headline_data` before `rate`.
 - `runs/<SID>/crossdedupe.json` written with `considered / dropped` counts.
 - `crossdedupe` step marked COMPLETE.
-- Depends on the `published_articles` store, which `send` populates from each
-  delivered newsletter — protection is live once at least one prior newsletter
+- Depends on the `published_articles` store (`select` writes the rows, `send`
+  stamps `published_at` on each delivered newsletter's picks) — protection is live once at least one prior newsletter
   has been sent within the lookback window.

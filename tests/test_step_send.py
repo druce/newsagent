@@ -258,7 +258,7 @@ def test_send_records_published_articles(tmp_path, tmp_db, monkeypatch):
     def fake_embed(texts):
         return [[0.1, 0.2] for _ in texts]
 
-    with patch("lib.steps.send.embed_texts", side_effect=fake_embed):
+    with patch("lib.published.embed_texts", side_effect=fake_embed):
         runner = CliRunner()
         result = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
     assert result.exit_code == 0, result.output
@@ -281,7 +281,7 @@ def test_send_recording_failure_is_swallowed(tmp_path, tmp_db, monkeypatch):
     def boom(texts):
         raise RuntimeError("no OpenAI key")
 
-    with patch("lib.steps.send.embed_texts", side_effect=boom):
+    with patch("lib.published.embed_texts", side_effect=boom):
         runner = CliRunner()
         result = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
     # Send still succeeds; recording error is a warning, not a failure.
@@ -317,7 +317,7 @@ def test_send_records_articles_after_a_real_draft(tmp_path, tmp_db, monkeypatch)
                                   "--apply-results", str(results_dir)])
     assert r.exit_code == 0, r.output
 
-    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.5] for _ in t]):
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.5] for _ in t]):
         r = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
     assert r.exit_code == 0, r.output
     assert "Recorded 2 article(s)" in r.output
@@ -336,8 +336,40 @@ def test_send_warns_when_nothing_is_recorded(tmp_path, tmp_db, monkeypatch):
     state.newsletter_section_data = [{"cat": "AI", "section_markdown": "## AI\n- x"}]
     state.save_checkpoint("start")
 
-    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.5] for _ in t]):
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.5] for _ in t]):
         runner = CliRunner()
         result = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
     assert result.exit_code == 0, result.output
     assert "Warning" in result.output and "0 article" in result.output
+
+
+def test_send_stamps_rows_recorded_by_select(tmp_path, tmp_db, monkeypatch):
+    """select already wrote the session's rows (published_at NULL); send only
+    stamps the selected ones — no re-embedding."""
+    from lib.published import record_session_articles
+
+    monkeypatch.chdir(tmp_path)
+    state = _setup_with_sections(tmp_db)
+    state.headline_data.append({"title": "Unpicked", "url": "https://e.com/9",
+                                "short_summary": "nine", "rating": 0.5})
+    state.save_checkpoint("start")
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.3] for _ in t]):
+        record_session_articles(state, "s1", tmp_db)
+
+    def no_embed(texts):
+        raise AssertionError("send must not re-embed")
+
+    with patch("lib.published.embed_texts", side_effect=no_embed):
+        runner = CliRunner()
+        r1 = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
+        assert r1.exit_code == 0, r1.output
+        assert "Recorded 2 article(s)" in r1.output
+        with sqlite3.connect(tmp_db) as conn:
+            first = dict(conn.execute("SELECT url, published_at FROM published_articles"))
+        r2 = runner.invoke(send_cli, ["--db", tmp_db, "--session", "s1", "--no-email"])
+        assert r2.exit_code == 0, r2.output
+    with sqlite3.connect(tmp_db) as conn:
+        second = dict(conn.execute("SELECT url, published_at FROM published_articles"))
+    assert first["https://e.com/0"] and first["https://e.com/1"]
+    assert first["https://e.com/9"] is None          # unselected never stamped
+    assert second == first                           # second send doesn't re-stamp

@@ -67,11 +67,20 @@ _SCHEMA_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS published_articles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
-        url TEXT NOT NULL,
+        url TEXT NOT NULL UNIQUE,
         title TEXT,
         short_summary TEXT,
         embedding TEXT,
-        published_at TEXT
+        published_at TEXT,
+        site_name TEXT,
+        cat TEXT,
+        selected INTEGER NOT NULL DEFAULT 1,
+        summary TEXT,
+        rating REAL,
+        bsky_status TEXT NOT NULL DEFAULT 'none',
+        bsky_uri TEXT,
+        bsky_error TEXT,
+        bsky_attempts INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -127,6 +136,61 @@ def _migrate_sites_bright_data_column(conn: sqlite3.Connection) -> None:
         )
 
 
+# Columns added to published_articles after the original 7-column shape. All
+# pre-existing rows were newsletter picks, so `selected` defaults to 1.
+_PUBLISHED_ARTICLES_NEW_COLUMNS = (
+    ("site_name", "TEXT"),
+    ("cat", "TEXT"),
+    ("selected", "INTEGER NOT NULL DEFAULT 1"),
+    ("summary", "TEXT"),
+    ("rating", "REAL"),
+    ("bsky_status", "TEXT NOT NULL DEFAULT 'none'"),
+    ("bsky_uri", "TEXT"),
+    ("bsky_error", "TEXT"),
+    ("bsky_attempts", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _has_unique_url_index(conn: sqlite3.Connection) -> bool:
+    for idx in conn.execute("PRAGMA index_list(published_articles)").fetchall():
+        name, unique = idx[1], idx[2]
+        if not unique:
+            continue
+        cols = [c[2] for c in conn.execute(f"PRAGMA index_info('{name}')").fetchall()]
+        if cols == ["url"]:
+            return True
+    return False
+
+
+def _migrate_published_articles(conn: sqlite3.Connection) -> None:
+    """Bring an existing published_articles table to the current shape:
+    add the editorial + bsky columns, then enforce one row per url (keeping,
+    per url, the most recently published row; highest id breaks ties)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(published_articles)").fetchall()}
+    if not cols:
+        return
+    for name, decl in _PUBLISHED_ARTICLES_NEW_COLUMNS:
+        if name not in cols:
+            conn.execute(f"ALTER TABLE published_articles ADD COLUMN {name} {decl}")
+    if not _has_unique_url_index(conn):
+        conn.execute(
+            """
+            DELETE FROM published_articles WHERE id NOT IN (
+                SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY url
+                        ORDER BY COALESCE(published_at, '') DESC, id DESC
+                    ) AS rn FROM published_articles
+                ) WHERE rn = 1
+            )
+            """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_published_articles_url "
+            "ON published_articles(url)"
+        )
+
+
 def _seed_bright_data_defaults(conn: sqlite3.Connection) -> None:
     """Mark the default Bright-Data-enabled domains. Inserts new rows or
     flips the flag on existing rows; preserves any other columns."""
@@ -145,6 +209,7 @@ def init_db(db_path: str) -> None:
         for stmt in _SCHEMA_STATEMENTS:
             conn.execute(stmt)
         _migrate_sites_bright_data_column(conn)
+        _migrate_published_articles(conn)
         _seed_bright_data_defaults(conn)
         conn.commit()
 
@@ -326,15 +391,18 @@ class Site:
                    scrape_method=row[4],
                    bright_data_enabled=bool(row[5]),
                    last_seen=row[6])
-
-
 @dataclass
 class PublishedArticle:
-    """One article that survived into a final published newsletter.
+    """One rated article, one row per url (UNIQUE).
 
-    Backs cross-day story-level de-dup: `crossdedupe` compares today's
-    candidates against the last N days of these rows. `embedding` is the
+    Written by `select` for every rated article of a session (`selected=1` for
+    the MMR picks, which alone carry an embedding); `send` stamps
+    `published_at`. So "published" ⇔ `selected=1 AND published_at IS NOT NULL`
+    — exactly what `recent()` returns to `crossdedupe`. `embedding` is the
     OpenAI text-embedding-3-large vector of `title + short_summary`.
+
+    The `bsky_*` columns are placeholders: `bsky_queue` is still the share
+    daemon's source of truth, and nothing here writes them yet.
     """
     session_id: str
     url: str
@@ -342,38 +410,115 @@ class PublishedArticle:
     short_summary: Optional[str] = None
     embedding: Optional[List[float]] = None
     published_at: Optional[str] = None
+    site_name: Optional[str] = None
+    cat: Optional[str] = None
+    selected: bool = True
+    summary: Optional[str] = None
+    rating: Optional[float] = None
+    bsky_status: str = "none"
+    bsky_uri: Optional[str] = None
+    bsky_error: Optional[str] = None
+    bsky_attempts: int = 0
     id: Optional[int] = None
 
-    def insert(self, conn: sqlite3.Connection) -> None:
+    _COLS = ("session_id, url, title, short_summary, embedding, published_at, "
+             "site_name, cat, selected, summary, rating")
+
+    def _values(self) -> tuple:
+        return (
+            self.session_id, self.url, self.title, self.short_summary,
+            json.dumps(self.embedding) if self.embedding is not None else None,
+            self.published_at, self.site_name, self.cat,
+            1 if self.selected else 0, self.summary, self.rating,
+        )
+
+    def upsert(self, conn: sqlite3.Connection) -> None:
+        """Insert, or update the existing row for this url — but only while
+        that row is unpublished (`published_at IS NULL`): a published row is
+        frozen at its first publication. Never touches `bsky_*`. No commit."""
         conn.execute(
-            "INSERT INTO published_articles "
-            "(session_id, url, title, short_summary, embedding, published_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                self.session_id, self.url, self.title, self.short_summary,
-                json.dumps(self.embedding) if self.embedding is not None else None,
-                self.published_at,
-            ),
+            f"INSERT INTO published_articles ({self._COLS}) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(url) DO UPDATE SET "
+            "session_id=excluded.session_id, title=excluded.title, "
+            "short_summary=excluded.short_summary, embedding=excluded.embedding, "
+            "published_at=excluded.published_at, site_name=excluded.site_name, "
+            "cat=excluded.cat, selected=excluded.selected, summary=excluded.summary, "
+            "rating=excluded.rating "
+            "WHERE published_articles.published_at IS NULL",
+            self._values(),
+        )
+
+    def insert(self, conn: sqlite3.Connection) -> None:
+        """Upsert this row and commit."""
+        self.upsert(conn)
+        conn.commit()
+
+    @classmethod
+    def upsert_session(
+        cls, conn: sqlite3.Connection, session_id: str, rows: List["PublishedArticle"]
+    ) -> None:
+        """Upsert a session's rated set, then prune this session's rows that
+        dropped out of it — only if still unpublished and never queued to
+        Bluesky. One transaction."""
+        try:
+            for r in rows:
+                r.upsert(conn)
+            urls = [r.url for r in rows]
+            placeholders = ",".join("?" for _ in urls) or "NULL"
+            conn.execute(
+                "DELETE FROM published_articles WHERE session_id = ? "
+                "AND published_at IS NULL AND bsky_status = 'none' "
+                f"AND url NOT IN ({placeholders})",
+                (session_id, *urls),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    @classmethod
+    def mark_published(cls, conn: sqlite3.Connection, session_id: str, ts: str) -> int:
+        """Stamp this session's selected, not-yet-stamped rows as published.
+        Returns the number of rows stamped."""
+        cur = conn.execute(
+            "UPDATE published_articles SET published_at = ? "
+            "WHERE session_id = ? AND selected = 1 AND published_at IS NULL",
+            (ts, session_id),
         )
         conn.commit()
+        return cur.rowcount
+
+    @classmethod
+    def session_count(cls, conn: sqlite3.Connection, session_id: str) -> int:
+        return conn.execute(
+            "SELECT COUNT(*) FROM published_articles WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
 
     @classmethod
     def recent(
         cls, conn: sqlite3.Connection, since: datetime
     ) -> List["PublishedArticle"]:
-        """Rows published at/after `since`, newest first. ISO timestamps sort
-        lexicographically, so a string comparison is a correct date filter."""
+        """Published rows (selected and sent) at/after `since`, newest first.
+        ISO timestamps sort lexicographically, so a string comparison is a
+        correct date filter; NULL `published_at` (selected but unsent) never
+        matches."""
         rows = conn.execute(
             "SELECT id, session_id, url, title, short_summary, embedding, "
-            "published_at FROM published_articles WHERE published_at >= ? "
+            "published_at, site_name, cat, selected, summary, rating, "
+            "bsky_status, bsky_uri, bsky_error, bsky_attempts "
+            "FROM published_articles WHERE published_at >= ? AND selected = 1 "
             "ORDER BY published_at DESC",
             (_iso(since),),
         ).fetchall()
         out: List["PublishedArticle"] = []
         for r in rows:
-            emb = json.loads(r[5]) if r[5] else None
             out.append(cls(
                 id=r[0], session_id=r[1], url=r[2], title=r[3],
-                short_summary=r[4], embedding=emb, published_at=r[6],
+                short_summary=r[4], embedding=json.loads(r[5]) if r[5] else None,
+                published_at=r[6], site_name=r[7], cat=r[8], selected=bool(r[9]),
+                summary=r[10], rating=r[11], bsky_status=r[12], bsky_uri=r[13],
+                bsky_error=r[14], bsky_attempts=r[15],
             ))
         return out

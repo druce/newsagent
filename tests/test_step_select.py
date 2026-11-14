@@ -457,3 +457,58 @@ def test_prepare_consolidate_errors_without_repechage_results(tmp_db, monkeypatc
         "--db", tmp_db, "--session", "s_missing", "--prepare-consolidate",
     ])
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# published_articles: recorded at the end of select (before draft)
+# ---------------------------------------------------------------------------
+
+def test_apply_results_records_rated_articles_unpublished(tmp_db, monkeypatch, tmp_path):
+    import sqlite3
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_pub")
+    rdir = Path("runs/s_pub/select-reassign-results")
+    rdir.mkdir(parents=True)
+    assignments = [{"id": str(i), "assignment": "AI & Robotics"} for i in range(10)]
+    (rdir / "batch-000.json").write_text(json.dumps({"assignments": assignments}))
+    monkeypatch.setattr("lib.steps.select.embed_texts",
+                        lambda texts: [[0.0] * 8 for _ in texts])
+
+    from lib.steps.select import cli as select_cli
+    result = CliRunner().invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_pub", "--apply-results", "runs/s_pub", "--k", "5",
+    ])
+    assert result.exit_code == 0, result.output
+    assert "Recorded 10 rated article(s) (5 selected)" in result.output
+
+    with sqlite3.connect(tmp_db) as conn:
+        rows = conn.execute(
+            "SELECT selected, COUNT(*), SUM(embedding IS NOT NULL), "
+            "SUM(published_at IS NOT NULL), SUM(summary IS NOT NULL) "
+            "FROM published_articles WHERE session_id='s_pub' GROUP BY selected "
+            "ORDER BY selected").fetchall()
+    assert rows == [(0, 5, 0, 0, 5), (1, 5, 5, 0, 5)]
+
+
+def test_select_recording_failure_does_not_fail_select(tmp_db, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, session_id="s_boom")
+    rdir = Path("runs/s_boom/select-reassign-results")
+    rdir.mkdir(parents=True)
+    (rdir / "batch-000.json").write_text(json.dumps(
+        {"assignments": [{"id": str(i), "assignment": "AI"} for i in range(10)]}))
+    monkeypatch.setattr("lib.steps.select.embed_texts",
+                        lambda texts: [[0.0] * 8 for _ in texts])
+
+    def boom(texts):
+        raise RuntimeError("no OpenAI key")
+
+    monkeypatch.setattr("lib.published.embed_texts", boom)
+    from lib.steps.select import cli as select_cli
+    result = CliRunner().invoke(select_cli, [
+        "--db", tmp_db, "--session", "s_boom", "--apply-results", "runs/s_boom", "--k", "5",
+    ])
+    assert result.exit_code == 0, result.output
+    assert "could not record" in result.output
+    state = NewsletterAgentState(session_id="s_boom", db_path=tmp_db).load_latest_from_db()
+    assert len(state.newsletter_section_data) == 5

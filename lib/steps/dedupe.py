@@ -43,6 +43,43 @@ def _cosine_matrix(vectors: List[List[float]]) -> np.ndarray:
     return N @ N.T
 
 
+def _target_key(h: dict) -> str:
+    """The article a headline actually points at: post-redirect final_url, else
+    the downloaded-body path (sha256 of final_url), else the original url."""
+    return h.get("final_url") or h.get("text_path") or h.get("url") or ""
+
+
+def _collapse_same_target(headlines: List[dict]) -> tuple[List[dict], List[dict]]:
+    """Collapse headlines whose different original urls resolve to the same
+    article (aggregator / feed redirects, t.co, Google News …).
+
+    Keeps one per target key — the direct link (url == final_url) if present,
+    else the earliest in gather order — and preserves the original order.
+    Returns (kept, dropped).
+    """
+    chosen: dict[str, int] = {}
+    for i, h in enumerate(headlines):
+        key = _target_key(h)
+        if not key:
+            continue
+        if key not in chosen:
+            chosen[key] = i
+            continue
+        cur = headlines[chosen[key]]
+        cur_direct = bool(cur.get("final_url")) and cur.get("url") == cur.get("final_url")
+        new_direct = bool(h.get("final_url")) and h.get("url") == h.get("final_url")
+        if new_direct and not cur_direct:
+            chosen[key] = i
+    keep_idx = set(chosen.values())
+    kept, dropped = [], []
+    for i, h in enumerate(headlines):
+        if not _target_key(h) or i in keep_idx:
+            kept.append(h)
+        else:
+            dropped.append(h)
+    return kept, dropped
+
+
 def _drop_near_duplicates(
     headlines: List[dict], texts: List[str], sim: np.ndarray, threshold: float
 ) -> List[int]:
@@ -81,6 +118,12 @@ def cli(db_path: str, session_id: str, threshold: float) -> None:
     if state is None:
         raise click.ClickException(f"No state found for session {session_id}")
 
+    # Several original urls can resolve to the same article; keep one of each
+    # before spending embedding calls (and so downstream has one row per url).
+    state.headline_data, collapsed = _collapse_same_target(state.headline_data)
+    for h in collapsed:
+        click.echo(f"  collapsed same-url: {h.get('url')} -> {_target_key(h)}")
+
     # Candidates need a downloaded body; readable text_path is required.
     candidates: list[dict] = []
     texts: list[str] = []
@@ -99,7 +142,10 @@ def cli(db_path: str, session_id: str, threshold: float) -> None:
     state.save_checkpoint("dedupe")
 
     if not candidates:
-        state.complete_step("dedupe", message="nothing to dedupe")
+        msg = "nothing to dedupe"
+        if collapsed:
+            msg = f"collapsed {len(collapsed)} same-url; {msg}"
+        state.complete_step("dedupe", message=msg)
         state.save_checkpoint("dedupe")
         click.echo("Nothing to dedupe (no downloaded article bodies).")
         return
@@ -113,12 +159,15 @@ def cli(db_path: str, session_id: str, threshold: float) -> None:
     sim = _cosine_matrix(vectors)
     drop_indices = _drop_near_duplicates(candidates, texts, sim, threshold)
 
-    drop_urls = {candidates[i]["url"] for i in drop_indices}
-    state.headline_data = [h for h in state.headline_data if h["url"] not in drop_urls]
+    # Drop by identity, not by original url: distinct headlines can share an
+    # original (aggregator) url while resolving to different articles.
+    drop_ids = {id(candidates[i]) for i in drop_indices}
+    state.headline_data = [h for h in state.headline_data if id(h) not in drop_ids]
 
     state.complete_step(
         "dedupe",
-        message=f"dropped {len(drop_indices)}/{len(candidates)} duplicates",
+        message=(f"collapsed {len(collapsed)} same-url, "
+                 f"dropped {len(drop_indices)}/{len(candidates)} duplicates"),
     )
     state.save_checkpoint("dedupe")
 
@@ -127,6 +176,7 @@ def cli(db_path: str, session_id: str, threshold: float) -> None:
     (runs_dir / "dedupe.json").write_text(json.dumps({
         "session_id": session_id,
         "completed_at": datetime.now().isoformat(),
+        "collapsed_same_url": len(collapsed),
         "total_candidates": len(candidates),
         "dropped": len(drop_indices),
         "kept": len(state.headline_data),

@@ -33,7 +33,7 @@ import click
 from dotenv import load_dotenv
 
 from lib.state import NewsletterAgentState
-from lib.steps.send import _record_published_articles
+from lib.published import record_session_articles
 
 _DEFAULT_DAYS = 14
 
@@ -61,7 +61,9 @@ def _already_recorded(conn: sqlite3.Connection, session_id: str) -> int:
 
 
 def _recordable(state: NewsletterAgentState) -> int:
-    """Items send's recorder would write: anything with a resolvable url."""
+    """Selected items the recorder would write (anything with a resolvable url).
+    Zero means the checkpoint has no newsletter picks, so nothing to backfill;
+    the actual write also records the session's unselected rated articles."""
     n = 0
     for it in state.newsletter_section_data or []:
         idx = it.get("id")
@@ -115,11 +117,13 @@ def cli(days: int, session_id: Optional[str], db_path: str, do_write: bool) -> N
 
         day = published_at[:10]
         if do_write:
-            written = _record_published_articles(state, sid, db_path, published_at=published_at)
+            written, n_sel = record_session_articles(
+                state, sid, db_path, published_at=published_at)
             total += written
-            click.echo(f"  recorded {written} article(s)  {sid}  (published {day})")
+            click.echo(f"  recorded {written} article(s) ({n_sel} selected)  {sid}  "
+                       f"(published {day})")
         else:
-            click.echo(f"  would record {n} article(s)  {sid}  (published {day})")
+            click.echo(f"  would record {n} selected article(s)  {sid}  (published {day})")
 
     if do_write:
         click.echo(f"\nWrote {total} row(s) to published_articles.")

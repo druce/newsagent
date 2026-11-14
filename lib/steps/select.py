@@ -53,6 +53,7 @@ from lib.prompts.extract_noise_clusters import (
     ExtractNoiseClustersInput,
     ExtractNoiseClustersOutput,
 )
+from lib.published import record_session_articles
 from lib.state import NewsletterAgentState
 
 
@@ -589,6 +590,17 @@ def _classic_run(
 # Report writer
 # ──────────────────────────────────────────────────────────────────────
 
+def _record_published(state: NewsletterAgentState, session_id: str, db_path: str) -> None:
+    """Record every rated article (selected=1 for the MMR picks) into
+    published_articles, unpublished until `send` stamps it. Never fails select."""
+    try:
+        n_total, n_selected = record_session_articles(state, session_id, db_path)
+        click.echo(f"Recorded {n_total} rated article(s) ({n_selected} selected) "
+                   f"to published_articles.")
+    except Exception as exc:  # noqa: BLE001 — recording is best-effort here
+        click.echo(f"Warning: could not record published_articles: {exc}", err=True)
+
+
 def _write_select_report(
     session_id: str, n_selected: int, per_section: dict[str, int],
     n_final_names: int, top_k: int, mmr_lambda: float,
@@ -725,6 +737,7 @@ def cli(
             message=f"{n_selected} headlines across {len(per_section)} sections",
         )
         state.save_checkpoint("select")
+        _record_published(state, session_id, db_path)
         _write_select_report(
             session_id, n_selected, per_section, len(_final_names), top_k, mmr_lambda,
         )
@@ -749,6 +762,7 @@ def cli(
         message=f"{n_selected} headlines across {len(per_section)} sections",
     )
     state.save_checkpoint("select")
+    _record_published(state, session_id, db_path)
     _write_select_report(
         session_id, n_selected, per_section, len(final_names), top_k, mmr_lambda,
     )

@@ -60,13 +60,13 @@ def test_backfill_dry_run_lists_sessions_without_writing(tmp_db):
     assert result.exit_code == 0, result.output
     assert "DRY-RUN" in result.output
     assert "2026-09-10-07-00-00" in result.output
-    assert "would record 2 article(s)" in result.output
+    assert "would record 2 selected article(s)" in result.output
     assert _rows(tmp_db) == []
 
 
 def test_backfill_yes_writes_rows_stamped_with_the_newsletter_time(tmp_db):
     created = _seed_sent_session(tmp_db, "2026-09-10-07-00-00", days_ago=2)
-    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.1, 0.2] for _ in t]):
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.1, 0.2] for _ in t]):
         result = CliRunner().invoke(backfill_cli, ["--db", tmp_db, "--yes"])
     assert result.exit_code == 0, result.output
     assert "recorded 2 article(s)" in result.output
@@ -83,7 +83,7 @@ def test_backfill_yes_writes_rows_stamped_with_the_newsletter_time(tmp_db):
 
 def test_backfill_is_idempotent(tmp_db):
     _seed_sent_session(tmp_db, "2026-09-10-07-00-00", days_ago=2)
-    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
         r1 = CliRunner().invoke(backfill_cli, ["--db", tmp_db, "--yes"])
         r2 = CliRunner().invoke(backfill_cli, ["--db", tmp_db, "--yes"])
     assert r1.exit_code == 0 and r2.exit_code == 0, r1.output + r2.output
@@ -94,7 +94,7 @@ def test_backfill_is_idempotent(tmp_db):
 def test_backfill_respects_the_days_window(tmp_db):
     _seed_sent_session(tmp_db, "2026-08-01-07-00-00", days_ago=40)
     _seed_sent_session(tmp_db, "2026-09-10-07-00-00", days_ago=2)
-    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
         result = CliRunner().invoke(backfill_cli, ["--db", tmp_db, "--yes", "--days", "14"])
     assert result.exit_code == 0, result.output
     assert {r[0] for r in _rows(tmp_db)} == {"2026-09-10-07-00-00"}
@@ -102,7 +102,7 @@ def test_backfill_respects_the_days_window(tmp_db):
 
 def test_backfill_reports_a_missing_select_checkpoint(tmp_db):
     _seed_sent_session(tmp_db, "2026-09-10-07-00-00", days_ago=2, with_select=False)
-    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
         result = CliRunner().invoke(backfill_cli, ["--db", tmp_db, "--yes"])
     assert result.exit_code == 0, result.output
     assert "no select checkpoint" in result.output
@@ -112,7 +112,7 @@ def test_backfill_reports_a_missing_select_checkpoint(tmp_db):
 def test_backfill_can_target_one_session(tmp_db):
     _seed_sent_session(tmp_db, "2026-09-09-07-00-00", days_ago=3)
     _seed_sent_session(tmp_db, "2026-09-10-07-00-00", days_ago=2)
-    with patch("lib.steps.send.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
+    with patch("lib.published.embed_texts", side_effect=lambda t: [[0.1] for _ in t]):
         result = CliRunner().invoke(
             backfill_cli, ["--db", tmp_db, "--yes", "--session", "2026-09-09-07-00-00"])
     assert result.exit_code == 0, result.output

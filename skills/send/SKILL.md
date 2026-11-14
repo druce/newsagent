@@ -1,6 +1,6 @@
 ---
 name: send
-description: Render the session's newsletter as styled HTML, write to out/YYYY-MM-DD-HHMMSS.html, update out/latest.html symlink, insert a row in the newsletters table, record survivors to the published_articles cross-day dedup store, and email via Gmail (GMAIL_USER/GMAIL_PASSWORD).
+description: Render the session's newsletter as styled HTML, write to out/YYYY-MM-DD-HHMMSS.html, update out/latest.html symlink, insert a row in the newsletters table, stamp this issue's articles as published in the published_articles cross-day dedup store, and email via Gmail (GMAIL_USER/GMAIL_PASSWORD).
 ---
 
 # newsagent:send
@@ -8,12 +8,14 @@ description: Render the session's newsletter as styled HTML, write to out/YYYY-M
 Step 13 (final) of `/newsagent:pipeline`. Also invoked automatically at the end of
 `newsagent:rewrite` so every successful rewrite delivers the newsletter.
 
-On first delivery for a session, `send` also records each published article
-(url, title, short_summary, and a `title + short_summary` OpenAI
-text-embedding-3-large vector) into the `published_articles` table. That store
-is what `newsagent:crossdedupe` reads to suppress stories already published in
-the last few days. Recording is best-effort — a failure logs a warning and never
-blocks the send.
+On first delivery for a session, `send` stamps `published_at` on the session's
+selected rows in `published_articles` (which `newsagent:select` already wrote,
+with their `title + short_summary` OpenAI text-embedding-3-large vectors). Only
+stamped, selected rows count as published, and that is what
+`newsagent:crossdedupe` reads to suppress stories already published in the last
+few days. If the session has no rows (its `select` ran before this existed),
+`send` records and stamps them itself. Best-effort — a failure logs a warning
+and never blocks the send.
 
 ## How to invoke
 

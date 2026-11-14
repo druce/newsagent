@@ -43,7 +43,8 @@ For each session with a `newsletters` row inside the window, oldest first:
    checkpoint, whose section list was overwritten by the pre-fix `draft`.
    Sessions with no `select` checkpoint (garbage-collected) are reported and
    skipped.
-3. **Embed and insert** via `send`'s own recorder (OpenAI
+3. **Embed and insert** via the shared recorder `lib.published.record_session_articles`
+   (all rated articles; only the selected ones embedded and stamped — OpenAI
    `text-embedding-3-large` of `title + short_summary`, needs
    `OPENAI_API_KEY`), stamping `published_at` with the newsletter's
    `created_at` so `crossdedupe`'s `--lookback-days` window sees the right day.

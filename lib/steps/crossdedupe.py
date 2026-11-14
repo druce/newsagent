@@ -123,6 +123,8 @@ def _compute_pairs(
         return []
     since = datetime.now() - timedelta(days=lookback_days)
     with sqlite3.connect(db_path) as conn:
+        # recent() = selected AND sent (published_at stamped by send) within the
+        # window; rated-but-unpicked and selected-but-unsent rows are excluded.
         priors = PublishedArticle.recent(conn, since=since)
     priors_with_emb = [p for p in priors if p.embedding]
     if not priors_with_emb:

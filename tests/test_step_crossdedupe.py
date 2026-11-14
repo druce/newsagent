@@ -254,3 +254,30 @@ def test_rejects_both_prepare_and_apply(tmp_db, monkeypatch, tmp_path):
         "--prepare-batches", "--apply-results", "x",
     ])
     assert result.exit_code != 0
+
+
+def test_prepare_ignores_unselected_and_unsent_priors(tmp_db, monkeypatch, tmp_path):
+    """Rated-but-not-picked articles, and picks from a never-sent session, are
+    in published_articles but were never published — they must not suppress."""
+    monkeypatch.chdir(tmp_path)
+    _seed_state(tmp_db, [
+        {"title": "CEO doubles revenue with AI", "url": "https://yahoo.com/x",
+         "short_summary": "A CEO used Claude to double revenue."},
+    ])
+    with sqlite3.connect(tmp_db) as conn:
+        PublishedArticle(session_id="prev", url="https://fortune.com/unpicked",
+                         title="same story", short_summary="same", embedding=[1.0, 0.0],
+                         selected=False,
+                         published_at=(datetime.now() - timedelta(days=1)).isoformat(),
+                         ).insert(conn)
+        PublishedArticle(session_id="unsent", url="https://fortune.com/unsent",
+                         title="same story", short_summary="same", embedding=[1.0, 0.0],
+                         published_at=None).insert(conn)
+
+    with patch("lib.steps.crossdedupe.embed_texts", side_effect=lambda t: [[1.0, 0.0]]):
+        result = CliRunner().invoke(crossdedupe_cli, [
+            "--db", tmp_db, "--session", "c1", "--prepare-batches",
+            "--shortlist-threshold", "0.7",
+        ])
+    assert result.exit_code == 0, result.output
+    assert not list(Path("runs/c1/crossdedupe-batches").glob("batch-*.json"))

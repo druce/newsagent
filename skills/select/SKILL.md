@@ -127,6 +127,11 @@ The three prepare flags are mutually exclusive with each other and with
 - `runs/<SID>/select.json` written with `n_selected`, per-section counts,
   `n_final_names`, K, λ.
 - `select` step marked COMPLETE.
+- `published_articles` gets one row per rated article (`selected=1` for the
+  MMR picks, which alone are embedded; `cat`, `rating`, `site_name`,
+  `short_summary`, `summary`), with `published_at` NULL until `send` stamps it.
+  Best-effort: a failure prints a warning and select still completes. Re-running
+  select upserts and prunes this session's stale unpublished rows.
 
 ## Retry on failure
 

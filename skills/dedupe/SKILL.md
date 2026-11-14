@@ -18,6 +18,12 @@ python -m lib.steps.dedupe --db newsletter_agent.db --session SID [--threshold 0
 ## Behavior
 
 - Loads the latest session state.
+- **First collapses headlines that point at the same article** — several
+  original urls (aggregator/feed redirects, Google News, t.co …) can resolve to
+  one `final_url`. Keyed on `final_url`, else `text_path`, else `url`; keeps the
+  direct link (`url == final_url`) if present, else the earliest. Covers
+  headlines without a body too, and runs before embedding (no wasted calls).
+  Downstream relies on this: `published_articles` is one row per url.
 - Collects every headline with a readable `text_path` (i.e. download succeeded).
 - Reads the trafilatura-extracted body and truncates to 24,000 chars (≤ embedding model context).
 - Embeds `title + body` via OpenAI `text-embedding-3-large` (batched, 256 per call).
@@ -25,7 +31,7 @@ python -m lib.steps.dedupe --db newsletter_agent.db --session SID [--threshold 0
 - Computes the full pairwise cosine similarity matrix (numpy).
 - For each pair with similarity ≥ threshold (default 0.95) drops the headline with the shorter body; ties break on summary length, then insertion order.
 - Marks the `dedupe` step COMPLETE in workflow state.
-- Writes `runs/<SID>/dedupe.json` with counts.
+- Writes `runs/<SID>/dedupe.json` with counts (incl. `collapsed_same_url`).
 
 ## Why full text (not title+summary)
 
