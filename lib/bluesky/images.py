@@ -75,3 +75,17 @@ def resize_image(input_path: Path, desired_height: int = 240) -> Path:
         resized = resized.convert("RGB")
     resized.save(input_path)
     return input_path
+
+
+def resize_to_width(input_path: Path, width: int = 600) -> Path:
+    """In-place downscale to `width` px wide, keeping aspect ratio. Never upscales."""
+    input_path = Path(input_path)
+    img = Image.open(input_path)
+    w, h = img.size
+    if w <= width or w == 0:
+        return input_path
+    resized = img.resize((width, max(1, round(h * width / w))), Image.LANCZOS)
+    if input_path.suffix.lower() in (".jpg", ".jpeg") and resized.mode != "RGB":
+        resized = resized.convert("RGB")
+    resized.save(input_path)
+    return input_path
