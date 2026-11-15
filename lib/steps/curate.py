@@ -34,7 +34,11 @@ def _int_param(qs: dict, name: str) -> int | None:
 
 class _CurateHandler(BaseHTTPRequestHandler):
     db_path = ""  # bound per server via make_handler
-    since = ""
+    fixed_since: str | None = None  # --since; None = noon yesterday, per request
+
+    def _since(self) -> str:
+        # Recomputed per request so a server left running keeps a rolling window.
+        return self.fixed_since or window_start(datetime.now())
 
     def _send(self, status: int, body: str, content_type: str) -> None:
         payload = body.encode("utf-8")
@@ -55,8 +59,9 @@ class _CurateHandler(BaseHTTPRequestHandler):
                        "text/html; charset=utf-8")
             return
         page = _int_param(parse_qs(parsed.query), "page") or 1
-        result = fetch_page(self.db_path, self.since, page)
-        self._send(200, render_page(result, self.since), "text/html; charset=utf-8")
+        since = self._since()
+        result = fetch_page(self.db_path, since, page)
+        self._send(200, render_page(result, since), "text/html; charset=utf-8")
 
     def do_POST(self) -> None:  # noqa: N802 — http.server API
         parsed = urlparse(self.path)
@@ -86,13 +91,13 @@ class _CurateHandler(BaseHTTPRequestHandler):
         pass
 
 
-def make_handler(db_path: str, since: str):
-    """Return a _CurateHandler subclass bound to db_path and the window start."""
+def make_handler(db_path: str, since: str | None):
+    """Return a _CurateHandler subclass bound to db_path and an optional fixed window start."""
     return type("BoundCurateHandler", (_CurateHandler,),
-                {"db_path": db_path, "since": since})
+                {"db_path": db_path, "fixed_since": since})
 
 
-def start_server(db_path: str, port: int, since: str) -> ThreadingHTTPServer:
+def start_server(db_path: str, port: int, since: str | None) -> ThreadingHTTPServer:
     """Start the curate server on a daemon thread; return the server."""
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(db_path, since))
     Thread(target=httpd.serve_forever, daemon=True).start()
@@ -109,11 +114,11 @@ def start_server(db_path: str, port: int, since: str) -> ThreadingHTTPServer:
 def cli(port: int | None, db_path: str, since: str | None) -> None:
     """Serve the curation page for toggling published_articles.selected."""
     init_db(db_path)
-    since = since or window_start(datetime.now())
     resolved_port = port or int(os.environ.get("CURATE_PORT", str(_DEFAULT_PORT)))
     httpd = ThreadingHTTPServer(("127.0.0.1", resolved_port),
                                 make_handler(db_path, since))
-    click.echo(f"Curate on http://127.0.0.1:{resolved_port}/ (since {since}). "
+    window = since or "noon yesterday, rolling"
+    click.echo(f"Curate on http://127.0.0.1:{resolved_port}/ (since {window}). "
                "Ctrl-C to stop.")
     try:
         httpd.serve_forever()

@@ -81,3 +81,19 @@ def test_get_toggle_not_allowed(tmp_db):
         resp = httpx.get(f"{base}/toggle", params={"id": aid})
     assert resp.status_code in (404, 405)
     assert _selected(tmp_db, aid) == 1
+
+
+def test_default_window_recomputed_per_request(tmp_db, monkeypatch):
+    """With no --since, the window follows the clock instead of freezing at startup."""
+    import lib.steps.curate as curate_step
+    _insert(tmp_db, "https://a.com/1")
+    stamps = iter(["2026-11-14-12-00-00", "2026-11-16-12-00-00"])
+    monkeypatch.setattr(curate_step, "window_start", lambda now: next(stamps))
+    server = start_server(tmp_db, 0, None)
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        assert "since 2026-11-14-12-00-00" in httpx.get(f"{base}/").text
+        second = httpx.get(f"{base}/").text
+        assert "since 2026-11-16-12-00-00" in second and "No articles since" in second
+    finally:
+        server.shutdown()
