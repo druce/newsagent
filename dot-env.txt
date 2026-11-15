@@ -86,6 +86,9 @@ BSKY_SECRET=''
 # Must match the port the newsletter's butterfly links point at. Default 8765.
 BSKY_QUEUE_PORT='8765'
 
+# Port for the curation web page (lib.steps.curate). Default 8766.
+CURATE_PORT='8766'
+
 GMAIL_USER=''
 GMAIL_PASSWORD=''
 

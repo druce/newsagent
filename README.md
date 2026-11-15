@@ -113,6 +113,7 @@ All optional except where you actually use the corresponding feature.
 | `NEWSAPI_API_KEY` | Only if the `NewsAPI` source is enabled in `sources.yaml` |
 | `BSKY_USERNAME` / `BSKY_SECRET` | For `newsagent:bluesky` and the share-to-Bluesky daemon (`lib.steps.bsky_share`) |
 | `BSKY_QUEUE_PORT` | Optional. Port for the share-to-Bluesky enqueue daemon (default `8765`); must match the port the newsletter's butterfly links point at |
+| `CURATE_PORT` | Optional. Port for the curation page (`lib.steps.curate`, default `8766`) |
 | `GMAIL_USER` / `GMAIL_PASSWORD` | Only if you want the post-rate email digest (`rate` always writes the HTML; email send falls back to a warning when these are missing) |
 | `BRIGHTDATA_API_KEY` (+ optional `BRIGHTDATA_ZONE`) | Only if any domain in the `sites` table has `bright_data_enabled=1` (paywall routing in `download`) |
 
@@ -245,6 +246,23 @@ a plain link that only resolves on the daemon's own machine. Links point at lite
 IPv4-only daemon isn't listening. Each URL is queued at most once, ever (permanent dedup).
 One item posts per `--interval` for gentle rate-limiting; the queue lives in the
 `bsky_queue` table (`sqlite3 newsletter_agent.db "select status, title from bsky_queue"`).
+
+### Curate stories (pick for the newsletter)
+
+A local web page over the `published_articles` table: every article from sessions since
+noon of the previous calendar day, grouped by category (alphabetical, then "Other", then
+uncategorized) and sorted by rating, 50 per page. Each row shows the headline link and
+summary bullets plus a **Select** button that flips `published_articles.selected` on the
+spot (no reload).
+
+```bash
+.venv/bin/python -m lib.steps.curate                 # http://127.0.0.1:8766/
+# --since 2026-11-14-12-00-00   earliest session id to show (default: noon yesterday)
+# --port  overrides $CURATE_PORT (default 8766)
+```
+
+Note: unselecting an article that `send` already stamped (`published_at`) also removes it
+from crossdedupe's "already published" set — your picks are the record of what went out.
 
 ---
 

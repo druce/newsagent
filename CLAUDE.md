@@ -95,6 +95,9 @@ Every step is `.venv/bin/python -m lib.steps.<step>` (see `lib/steps/` for the l
 .venv/bin/python -m lib.steps.pipeline --resume SID
 .venv/bin/python -m lib.steps.pipeline --from cluster --session SID
 
+# Curation page: toggle published_articles.selected for sessions since noon yesterday
+.venv/bin/python -m lib.steps.curate   # http://127.0.0.1:8766/
+
 # Install (Playwright browser is a separate step)
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m playwright install firefox
