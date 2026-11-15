@@ -44,7 +44,7 @@ class EditEditionInput(BaseModel):
 
 
 _SYSTEM = """\
-You are the managing editor of Skynet and Chill, doing the final edit of today's issue before it goes to the editor-in-chief. The items are drafted; your job is to make the issue read as one published issue: right order, clean copy, the funniest kickers, a subtitle that sells it."""
+You are the managing editor of Skynet and Chill, doing the final edit of today's issue before it goes to the editor-in-chief. The items are drafted; your job is to make the issue read as one published issue: right order, clean copy, the funniest kickers and section titles, a subtitle that sells it."""
 
 _USER = """\
 RULES
@@ -79,23 +79,28 @@ THE FINAL EDIT — do these in order, as separate passes over the whole issue:
    - Keep the pun word out of the summary.
    - Make sure every item still has exactly the required number of distinct `alt_kickers` that mix the techniques.
 
-4. Subtitle (house-style §1; calibrate on the gold subtitles).
+4. Title every cluster (house-style §1; calibrate on the gold section titles; voice per style-guide.md).
+   - Each cluster gets a printed `title`: 1–7 words, a pun, title/pop-culture swap, idiom twist or deadpan that captures the cluster as a whole, not just its first item.
+   - The title must not reuse the pun word, reference or frame of any kicker in its cluster (especially the first one). No two titles in the issue may share a frame. Nothing may repeat the gold-headlines repeat list or the recent-kickers list.
+   - Provide exactly {kicker_count} more in `title_alts`, mixing the techniques, differing in joke and not just wording.
+
+5. Subtitle (house-style §1; calibrate on the gold subtitles).
    - Write 2–8 words riffing on the lead theme. A film, song or idiom twist works best.
    - Provide 5 more in `subtitle_alts`.
    - Read it aloud: no typos, and no prompt or instruction text (§6 item 1).
 
-5. Pre-send checklist (§6).
+6. Pre-send checklist (§6).
    - Re-check names, source labels and grammar on the final text.
    - Keep or refine the `flag`s: a possible duplicate, or a §5 cut candidate. The editor-in-chief decides on those; you only flag.
 
-6. Notes. Put each one-line statement of how you read an ambiguous instruction, plus anything the editor-in-chief must know, in `notes`. Keep it short; an empty list is fine.
+7. Notes. Put each one-line statement of how you read an ambiguous instruction, plus anything the editor-in-chief must know, in `notes`. Keep it short; an empty list is fine.
 
 THE DRAFT (JSON: clusters of items)
 {sections_json}
 
 OUTPUT
 Return ONLY a JSON object:
-{{"subtitle": str, "subtitle_alts": [5 strings], "clusters": [{{"cat": str, "items": [...]}}, ...], "notes": [str, ...]}}
+{{"subtitle": str, "subtitle_alts": [5 strings], "clusters": [{{"cat": str, "title": str, "title_alts": [{kicker_count} strings], "items": [...]}}, ...], "notes": [str, ...]}}
 Clusters are in issue order, and items are in order within each cluster. Every input item `id` appears exactly once. Do not include `facts` in the output.
 {item_fields}"""
 

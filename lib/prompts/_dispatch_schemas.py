@@ -43,6 +43,8 @@ class EditionItem(BaseModel):
 class EditionSection(BaseModel):
     cat: str
     items: List[EditionItem]
+    title: str = ""              # printed `## title`; written by the final edit only
+    title_alts: List[str] = []
 
 
 class EditionIssue(BaseModel):

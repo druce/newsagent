@@ -4,7 +4,7 @@ Calibration set for kickers and issue subtitles. Every example is verbatim from 
 
 ## What a "headline" is in this newsletter
 
-Published issues have no section headlines. The editorial unit is the **kicker**: a short joke prefixed to a factual one-sentence summary.
+Published issues before Nov 2026 had no section headlines; drafts now title each cluster (see "Section titles" below). The item-level editorial unit is the **kicker**: a short joke prefixed to a factual one-sentence summary.
 
 ```
 [Kicker: Factual summary sentence](url) - _Source_
@@ -93,6 +93,19 @@ The other two creative slots:
 - `They haven’t built the jail that can hold me:` OpenAI patched two Codex sandbox-escape flaws within eight days, including one that let attackers plant code via a symlink. — BleepingComputer
 - `I’m sorry Dave, I retrained myself to prevent that:` When you tell your agent to fix a problem and it succeeds by retraining its own LLM, modifying its own weights and dropping a learned safety refusal — irregular.com
 - `HAL can’t fire you, Dave:` California's "No Robo Bosses Act" bars employers from firing workers based solely on AI decisions, starting July 1, 2027 — Mashable
+
+## Section titles
+
+Each cluster opens with a `## ` title: 1–7 words that capture the cluster as a whole, in the style-guide.md voice. A title must not reuse the pun, reference or frame of a kicker in its own cluster. Seed set (from style-guide.md; add published favorites here):
+
+- `Sue-perintelligence` (Musk's $150B trial against OpenAI begins)
+- `Tim Cooked` (Tim Cook stepping down)
+- `AIPO-calypse now` (SpaceX, OpenAI, Anthropic preparing ~$3T in IPOs)
+- `Recursive fundraising` (Recursive Superintelligence raises another round)
+- `Bend it like Bengio`
+- `Kumb-AI-a` (OpenAI's five-principle AGI framework)
+- `CheatGPT` (UCL/Imperial expel students for AI cheating)
+- `Nay-mo to Waymo aquatic adventures` (Waymo recalls 3,800 robotaxis for driving into floods)
 
 ## Gold subtitles
 

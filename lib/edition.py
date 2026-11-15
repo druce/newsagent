@@ -135,6 +135,12 @@ def validate_issue(result: dict, batch: dict) -> tuple[list[str], list[str]]:
         errors.append("empty subtitle")
     if len(issue.subtitle_alts) != SUBTITLE_ALTS:
         errors.append(f"subtitle_alts has {len(issue.subtitle_alts)}, need {SUBTITLE_ALTS}")
+    n = batch.get("kicker_count")
+    for i, c in enumerate(issue.clusters):
+        if not c.title.strip():
+            errors.append(f"cluster {i}: empty title")
+        if n is not None and len(c.title_alts) != n:
+            errors.append(f"cluster {i}: title_alts has {len(c.title_alts)}, need {n}")
     return errors, warnings
 
 
@@ -257,6 +263,10 @@ def render_edition_md(issue: dict, urls: dict[int, str], title: str) -> str:
     blocks = []
     for cluster in issue["clusters"]:
         lines = []
+        if (cluster.get("title") or "").strip():
+            lines.append(f"## {cluster['title'].strip()}")
+            lines.append(f"<!-- title alts: {_comment(' | '.join(cluster.get('title_alts') or []))} -->")
+            lines.append("")
         for it in cluster["items"]:
             url = strip_tracking_params(urls.get(int(it["id"])) or "#")
             lines.append(_item_line(it, url))

@@ -6,7 +6,7 @@ Derived from 50 published issues (Sep 8 – Oct 26, 2026) and four machine-diges
 
 - **Subject / H1:** `AI Reading for <Weekday> <Month> <D>` (e.g. "AI Reading for Monday October 26"). Fixed template.
 - **Subtitle** (preheader and line under the H1): 2–8 words, riffs on the lead theme. Checked before send; it is the first text readers see in the inbox.
-- **Body:** 15–30 clusters separated by `———`, each usually opening with an image (captions left empty). 40–55 items per issue; 1–7 items per cluster, many single-item clusters.
+- **Body:** 15–30 clusters separated by `———`. Each cluster opens with a `## ` section title (1–7 words, calibrated in gold-headlines.md "Section titles"; voice per style-guide.md), then usually an image (captions left empty), then its items. 40–55 items per issue; 1–7 items per cluster, many single-item clusters.
 - **Order:** lead cluster = the day's dominant story, 3–10 items, chosen by editorial weight, not digest order. Middle = markets/compute, policy, security, labor. Tail = culture, oddities, light items.
 - **Embeds:** YouTube and X embeds render in plain text as `Youtube: <title> (url)` / `Tweet: (url)`. These are embeds, not errors.
 - **Footer:** `Follow the latest AI headlines via druce.ai on Bluesky`.

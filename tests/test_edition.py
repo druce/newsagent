@@ -74,17 +74,20 @@ def _item(i, **kw):
     return base
 
 
+T = {"title": "Tim Cooked", "title_alts": ["A", "B", "C"]}
+
+
 SECTION_BATCH = {"kind": "edition-section", "ids": [1, 2], "kicker_count": 3}
 
 
 def test_validate_section_ok():
-    errors, _ = validate_section({"cat": "A", "items": [_item(1), _item(2)]}, SECTION_BATCH)
+    errors, _ = validate_section({**T, "cat": "A", "items": [_item(1), _item(2)]}, SECTION_BATCH)
     assert errors == []
 
 
 def test_validate_section_missing_extra_and_alt_count():
     errors, _ = validate_section(
-        {"cat": "A", "items": [_item(1, alt_kickers=["a", "b"]), _item(3)]}, SECTION_BATCH)
+        {**T, "cat": "A", "items": [_item(1, alt_kickers=["a", "b"]), _item(3)]}, SECTION_BATCH)
     text = " ".join(errors)
     assert "missing" in text and "2" in text
     assert "extra" in text and "3" in text
@@ -93,7 +96,7 @@ def test_validate_section_missing_extra_and_alt_count():
 
 def test_validate_section_duplicate_and_long_kicker_warning():
     errors, warnings = validate_section(
-        {"cat": "A", "items": [_item(1), _item(1), _item(2, kicker="one two three four five six seven eight")]},
+        {**T, "cat": "A", "items": [_item(1), _item(1), _item(2, kicker="one two three four five six seven eight")]},
         SECTION_BATCH)
     assert any("duplicate" in e for e in errors)
     assert any("7 words" in w for w in warnings)
@@ -102,12 +105,22 @@ def test_validate_section_duplicate_and_long_kicker_warning():
 def test_validate_issue_flattens_clusters():
     batch = {"kind": "edition-issue", "ids": [1, 2], "kicker_count": 3}
     ok = {"subtitle": "Hacktoberfest", "subtitle_alts": list("abcde"),
-          "clusters": [{"cat": "A", "items": [_item(2)]}, {"cat": "B", "items": [_item(1)]}],
+          "clusters": [{**T, "cat": "A", "items": [_item(2)]}, {**T, "cat": "B", "items": [_item(1)]}],
           "notes": []}
     assert validate_issue(ok, batch)[0] == []
-    bad = dict(ok, clusters=[{"cat": "A", "items": [_item(2)]}], subtitle="")
+    bad = dict(ok, clusters=[{**T, "cat": "A", "items": [_item(2)]}], subtitle="")
     text = " ".join(validate_issue(bad, batch)[0])
     assert "missing" in text and "subtitle" in text
+
+
+def test_validate_issue_requires_titles():
+    batch = {"kind": "edition-issue", "ids": [1], "kicker_count": 3}
+    issue = {"subtitle": "S", "subtitle_alts": list("abcde"), "notes": [],
+             "clusters": [{"cat": "A", "title": "", "title_alts": ["x", "y"],
+                           "items": [_item(1)]}]}
+    errors = validate_issue(issue, batch)[0]
+    assert "cluster 0: empty title" in errors
+    assert "cluster 0: title_alts has 2, need 3" in errors
 
 
 # ── renderer ─────────────────────────────────────────────────────────────────
@@ -116,17 +129,24 @@ ISSUE = {
     "subtitle": "Software eats itself",
     "subtitle_alts": ["s1", "s2", "s3", "s4", "s5"],
     "clusters": [
-        {"cat": "Lead", "items": [
+        {**T, "cat": "Lead", "items": [
             _item(1, kicker="Brin it on", summary="Sergey Brin says [Argon] helps",
                    source="Business_Insider"),
             _item(2, kicker="Sparking joy?", summary="Meta releases a thing",
                    flag="possible duplicate of 1 --> check"),
         ]},
-        {"cat": "Tail", "items": [_item(3, kicker="", summary="No kicker here")]},
+        {**T, "cat": "Tail", "items": [_item(3, kicker="", summary="No kicker here")]},
     ],
     "notes": [],
 }
 URLS = {1: "https://a.com/x?utm_source=z", 2: "https://b.com/(y)", 3: "https://c.com/z"}
+
+
+def test_render_cluster_title():
+    md = render_edition_md(ISSUE, URLS, "AI Reading")
+    block = "## Tim Cooked\n<!-- title alts: A | B | C -->\n"
+    assert block in md
+    assert md.index(block) < md.index("[Brin it on")
 
 
 def test_render_edition_md_format():
@@ -184,8 +204,8 @@ def test_section_and_edit_round_trip_uses_db_urls(tmp_db, tmp_path):
     assert "Old frame" in (edit_meta.with_suffix(".md")).read_text()
 
     issue = {"subtitle": "Sub", "subtitle_alts": list("abcde"),
-             "clusters": [{"cat": "Beta", "items": [_item(b)]},
-                          {"cat": "Alpha", "items": [_item(a)]}], "notes": ["n"]}
+             "clusters": [{**T, "cat": "Beta", "items": [_item(b)]},
+                          {**T, "cat": "Alpha", "items": [_item(a)]}], "notes": ["n"]}
     edit_res = run_dir / "edition-edit-results"
     edit_res.mkdir(parents=True)
     (edit_res / "batch-000.json").write_text(json.dumps(issue))
@@ -219,10 +239,10 @@ def test_check_batch_edition_section(tmp_path):
     bd, rd = tmp_path / "edition-sections-batches", tmp_path / "edition-sections-results"
     bd.mkdir(); rd.mkdir()
     (bd / "batch-000.json").write_text(json.dumps(SECTION_BATCH))
-    (rd / "batch-000.json").write_text(json.dumps({"cat": "A", "items": [_item(1), _item(2)]}))
+    (rd / "batch-000.json").write_text(json.dumps({**T, "cat": "A", "items": [_item(1), _item(2)]}))
     ok = _check(rd / "batch-000.json")
     assert ok.returncode == 0 and ok.stdout.startswith("OK")
-    (rd / "batch-000.json").write_text(json.dumps({"cat": "A", "items": [_item(1)]}))
+    (rd / "batch-000.json").write_text(json.dumps({**T, "cat": "A", "items": [_item(1)]}))
     bad = _check(rd / "batch-000.json")
     assert bad.returncode == 1 and "missing" in bad.stdout
 
@@ -234,7 +254,7 @@ def test_check_batch_edition_issue(tmp_path):
         {"kind": "edition-issue", "ids": [1], "kicker_count": 3}))
     (rd / "batch-000.json").write_text(json.dumps(
         {"subtitle": "S", "subtitle_alts": list("abcde"),
-         "clusters": [{"cat": "A", "items": [_item(1)]}], "notes": []}))
+         "clusters": [{**T, "cat": "A", "items": [_item(1)]}], "notes": []}))
     assert _check(rd / "batch-000.json").returncode == 0
 
 
@@ -261,14 +281,14 @@ def test_cli_end_to_end(tmp_db, tmp_path, monkeypatch):
     run_dir = tmp_path / "runs" / run
     (run_dir / "edition-sections-results").mkdir()
     (run_dir / "edition-sections-results" / "batch-000.json").write_text(
-        json.dumps({"cat": "Alpha", "items": [_item(a)]}))
+        json.dumps({**T, "cat": "Alpha", "items": [_item(a)]}))
     res = r.invoke(step.cli, ["--apply-sections", run])
     assert res.exit_code == 0, res.output
 
     (run_dir / "edition-edit-results").mkdir()
     (run_dir / "edition-edit-results" / "batch-000.json").write_text(json.dumps(
         {"subtitle": "Sub", "subtitle_alts": list("abcde"),
-         "clusters": [{"cat": "Alpha", "items": [_item(a)]}], "notes": ["read X as Y"]}))
+         "clusters": [{**T, "cat": "Alpha", "items": [_item(a)]}], "notes": ["read X as Y"]}))
     res = r.invoke(step.cli, ["--apply-edit", run, "--db", tmp_db])
     assert res.exit_code == 0, res.output
     assert "1 items" in res.output and "note: read X as Y" in res.output
