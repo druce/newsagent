@@ -15,12 +15,15 @@ and tracking-stripped here.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from pydantic import ValidationError
+
+from lib.edition_images import DEFAULT_IMAGE_DIR, fetch_item_images
 
 from lib.prompts._dispatch_schemas import EditionIssue, EditionSection
 from lib.prompts.edit_edition import EDIT_EDITION, EditEditionInput
@@ -202,8 +205,13 @@ def _urls_by_id(db_path: str, ids: list[int]) -> dict[int, str]:
 
 
 def apply_edit(run_dir: Path, db_path: str, out_dir: Path,
-               now: datetime | None = None) -> Path:
-    """Validate the final edit, render markdown to out/edition-<stamp>.md."""
+               now: datetime | None = None, images: bool = True,
+               image_dir: Path = DEFAULT_IMAGE_DIR) -> tuple[Path, dict | None]:
+    """Validate the final edit, render markdown to out/edition-<stamp>.md.
+
+    With `images`, fetches a candidate og:image for every item into `image_dir`
+    and returns stats {"with", "total"}; image paths in the md are relative to out_dir.
+    """
     run_dir, out_dir = Path(run_dir), Path(out_dir)
     now = now or datetime.now()
     batch = json.loads((run_dir / EDIT_BATCHES / "batch-000.json").read_text())
@@ -213,7 +221,14 @@ def apply_edit(run_dir: Path, db_path: str, out_dir: Path,
         raise ValueError("final edit failed validation: " + "; ".join(errors))
     issue = EditionIssue.model_validate(result).model_dump()
     urls = _urls_by_id(db_path, [int(i) for i in batch["ids"]])
-    md = render_edition_md(issue, urls, now.strftime("AI Reading for %A %B %-d"))
+    rel_images, stats = None, None
+    if images:
+        fetched = fetch_item_images(urls, cache_dir=image_dir)
+        rel_images = {i: (os.path.relpath(p, out_dir) if p else None, reason)
+                      for i, (p, reason) in fetched.items()}
+        stats = {"with": sum(1 for p, _ in fetched.values() if p), "total": len(urls)}
+    md = render_edition_md(issue, urls, now.strftime("AI Reading for %A %B %-d"),
+                           images=rel_images)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"edition-{now:%Y-%m-%d-%H%M%S}.md"
@@ -225,7 +240,7 @@ def apply_edit(run_dir: Path, db_path: str, out_dir: Path,
         latest.symlink_to(path.name)
     except OSError:
         latest.write_text(md)
-    return path
+    return path, stats
 
 
 # ── rendering ────────────────────────────────────────────────────────────────
@@ -255,7 +270,10 @@ def _item_line(it: dict, url: str) -> str:
     return f"[{_link_text(text)}]({_href(url)}) - _{source}_"
 
 
-def render_edition_md(issue: dict, urls: dict[int, str], title: str) -> str:
+def render_edition_md(issue: dict, urls: dict[int, str], title: str,
+                      images: dict[int, tuple[str | None, str]] | None = None) -> str:
+    """`images` maps item id → (path relative to the md file, "") or (None, reason).
+    None (the default) emits no image lines at all."""
     out = [f"# {title}", issue["subtitle"].strip(),
            f"<!-- subtitle alts: {_comment(' | '.join(issue['subtitle_alts']))} -->"]
     for note in issue.get("notes") or []:
@@ -269,6 +287,10 @@ def render_edition_md(issue: dict, urls: dict[int, str], title: str) -> str:
             lines.append("")
         for it in cluster["items"]:
             url = strip_tracking_params(urls.get(int(it["id"])) or "#")
+            if images is not None:
+                img, reason = images.get(int(it["id"]), (None, "no og:image"))
+                lines.append(f"![]({_href(img)})" if img
+                             else f"<!-- img: none ({_comment(reason)}) -->")
             lines.append(_item_line(it, url))
             lines.append(f"<!-- alts: {_comment(' | '.join(it['alt_kickers']))} -->")
             if it.get("flag"):

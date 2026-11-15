@@ -165,6 +165,22 @@ def test_render_edition_md_format():
     assert lines[-1] == "Follow the latest AI headlines via druce.ai on Bluesky"
 
 
+def test_render_image_line_and_none_comment():
+    imgs = {1: ("../download/edition-images/x.jpg", ""), 2: (None, "logo")}
+    lines = render_edition_md(ISSUE, URLS, "T", images=imgs).splitlines()
+    i1 = next(i for i, l in enumerate(lines) if l.startswith("[Brin it on"))
+    assert lines[i1 - 1] == "![](../download/edition-images/x.jpg)"
+    i2 = next(i for i, l in enumerate(lines) if l.startswith("[Sparking joy?"))
+    assert lines[i2 - 1] == "<!-- img: none (logo) -->"
+    i3 = next(i for i, l in enumerate(lines) if l.startswith("[No kicker"))
+    assert lines[i3 - 1] == "<!-- img: none (no og:image) -->"
+
+
+def test_render_no_images_kwarg_emits_nothing():
+    md = render_edition_md(ISSUE, URLS, "T")
+    assert "![" not in md and "img:" not in md
+
+
 # ── recent_kickers ───────────────────────────────────────────────────────────
 
 def test_recent_kickers_parses_recent_files_only(tmp_path):
@@ -178,7 +194,7 @@ def test_recent_kickers_parses_recent_files_only(tmp_path):
 
 # ── batch build / apply round trip ───────────────────────────────────────────
 
-def test_section_and_edit_round_trip_uses_db_urls(tmp_db, tmp_path):
+def test_section_and_edit_round_trip_uses_db_urls(tmp_db, tmp_path, monkeypatch):
     a = _insert(tmp_db, url="https://a.com/1?utm_source=n", cat="Alpha")
     b = _insert(tmp_db, url="https://b.com/2", cat="Beta")
     rows = selected_rows(tmp_db, SINCE)
@@ -210,8 +226,19 @@ def test_section_and_edit_round_trip_uses_db_urls(tmp_db, tmp_path):
     edit_res.mkdir(parents=True)
     (edit_res / "batch-000.json").write_text(json.dumps(issue))
     out_dir = tmp_path / "out"
-    path = apply_edit(run_dir, tmp_db, out_dir, now=datetime(2026, 11, 15, 9, 0, 0))
+    img = tmp_path / "download" / "edition-images" / "abc.jpg"
+    import lib.edition as edition_mod
+    monkeypatch.setattr(edition_mod, "fetch_item_images",
+                        lambda urls, cache_dir: {a: (img, ""), b: (None, "fetch failed")})
+    path, stats = apply_edit(run_dir, tmp_db, out_dir, now=datetime(2026, 11, 15, 9, 0, 0),
+                             image_dir=img.parent)
     md = path.read_text()
+    assert stats == {"with": 1, "total": 2}
+    assert "![](../download/edition-images/abc.jpg)" in md
+    assert "<!-- img: none (fetch failed) -->" in md
+    path2, stats2 = apply_edit(run_dir, tmp_db, out_dir, now=datetime(2026, 11, 15, 9, 0, 0),
+                               images=False)
+    assert stats2 is None and "![" not in path2.read_text()
     assert path.name == "edition-2026-11-15-090000.md"
     assert (out_dir / "latest-edition.md").resolve() == path.resolve()
     assert md.index("https://b.com/2") < md.index("https://a.com/1)")
@@ -289,7 +316,7 @@ def test_cli_end_to_end(tmp_db, tmp_path, monkeypatch):
     (run_dir / "edition-edit-results" / "batch-000.json").write_text(json.dumps(
         {"subtitle": "Sub", "subtitle_alts": list("abcde"),
          "clusters": [{**T, "cat": "Alpha", "items": [_item(a)]}], "notes": ["read X as Y"]}))
-    res = r.invoke(step.cli, ["--apply-edit", run, "--db", tmp_db])
+    res = r.invoke(step.cli, ["--apply-edit", run, "--db", tmp_db, "--no-images"])
     assert res.exit_code == 0, res.output
     assert "1 items" in res.output and "note: read X as Y" in res.output
     assert "https://a.com/1" in (tmp_path / "out" / "latest-edition.md").read_text()

@@ -8,7 +8,8 @@ yesterday (the curate page's window), and drives two subagent passes:
     .venv/bin/python -m lib.steps.edition --apply-sections RUN
     #   → validates, then writes the final-edit batch; dispatch one Opus agent
     .venv/bin/python -m lib.steps.edition --apply-edit RUN
-    #   → out/edition-<stamp>.md + out/latest-edition.md
+    #   → out/edition-<stamp>.md + out/latest-edition.md (+ a candidate image per
+    #     item in download/edition-images/; --no-images skips the fetch)
 """
 from __future__ import annotations
 
@@ -50,10 +51,12 @@ def _kb(p: Path) -> str:
               help="Alternative kickers suggested under each item.")
 @click.option("--since", default=None,
               help="Earliest session id (default: noon yesterday).")
+@click.option("--no-images", is_flag=True,
+              help="With --apply-edit: skip fetching a candidate image per item.")
 @click.option("--db", "db_path", default="newsletter_agent.db", show_default=True)
 def cli(prepare_sections: bool, apply_sections_run: str | None,
         apply_edit_run: str | None, kicker_count: int, since: str | None,
-        db_path: str) -> None:
+        no_images: bool, db_path: str) -> None:
     """Draft the issue from published_articles picks (see skills/edition/SKILL.md)."""
     modes = [prepare_sections, bool(apply_sections_run), bool(apply_edit_run)]
     if sum(modes) != 1:
@@ -103,7 +106,8 @@ def cli(prepare_sections: bool, apply_sections_run: str | None,
     result = json.loads(result_path.read_text())
     _, warnings = validate_issue(result, batch)
     try:
-        path = apply_edit(run_dir, db_path, _OUT, now=now)
+        path, img_stats = apply_edit(run_dir, db_path, _OUT, now=now,
+                                     images=not no_images)
     except ValueError as exc:
         raise click.ClickException(str(exc))
     n = sum(len(c["items"]) for c in result["clusters"])
@@ -111,6 +115,9 @@ def cli(prepare_sections: bool, apply_sections_run: str | None,
     click.echo(f"Wrote {path} (and {_OUT / 'latest-edition.md'}): "
                f"{len(result['clusters'])} clusters, {n} items, {flags} flagged.")
     click.echo(f"Subtitle: {result['subtitle']}")
+    if img_stats:
+        click.echo(f"Images: {img_stats['with']}/{img_stats['total']} items "
+                   f"(missing ones are marked <!-- img: none (reason) -->)")
     for note in result.get("notes") or []:
         click.echo(f"  note: {note}")
     for w in warnings:

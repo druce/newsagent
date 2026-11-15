@@ -270,8 +270,11 @@ After curating, `/newsagent:edition` drafts the issue in house style from the se
 articles:
 1. One Opus agent per category writes each item, with a kicker, a one-sentence summary,
    a source label and N alternative kickers.
-2. One Opus agent does the final edit: issue order, copy edit, kicker de-duplication and
-   the subtitle.
+2. One Opus agent does the final edit: issue order, copy edit, kicker de-duplication, a
+   `## ` title (plus N alternatives) for each cluster, and the subtitle.
+3. Python fetches a candidate image for every item (the article's og:image, resized to
+   600px wide, cached in `download/edition-images/`) and puts it above the item. Delete
+   the ones you don't want; missing ones show as `<!-- img: none (reason) -->`.
 
 The output is `out/edition-<stamp>.md` (and `out/latest-edition.md`), to edit by hand.
 Alternatives and flags appear as HTML comments under each item. The style is defined by
