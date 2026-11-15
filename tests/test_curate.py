@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import datetime
 
-from lib.curate import fetch_page, toggle_selected, window_start
+from lib.curate import fetch_page, render_page, toggle_selected, window_start
 from lib.db import init_db
 
 SINCE = "2026-11-14-12-00-00"
@@ -75,3 +75,39 @@ def test_toggle_selected_flips_and_reports(tmp_db):
     assert toggle_selected(tmp_db, aid) == 0
     assert toggle_selected(tmp_db, aid) == 1
     assert toggle_selected(tmp_db, 999999) is None
+
+
+def row(**kw) -> dict:
+    base = {"id": 1, "session_id": IN_SID, "url": "https://ex.com/a",
+            "title": "Title", "short_summary": "Short", "summary": "- one\n- two",
+            "site_name": "Example", "cat": "Alpha", "rating": 1.5, "selected": 0}
+    base.update(kw)
+    return base
+
+
+def test_render_page_rows_headers_and_buttons():
+    result = {"rows": [row(id=1, cat="Alpha", selected=1, short_summary="Big news",
+                           url="https://a.com/x"),
+                       row(id=2, cat="Alpha", selected=0, short_summary="no content",
+                           title="Fallback"),
+                       row(id=3, cat=None, selected=0)],
+              "page": 1, "pages": 2, "total": 60, "selected": 1}
+    html = render_page(result, SINCE)
+    assert html.count("<h2") == 2 and "Uncategorized" in html
+    assert 'href="https://a.com/x"' in html and "Big news" in html and "Fallback" in html
+    assert 'data-id="1">✓ Selected</button>' in html and 'data-id="2">Select</button>' in html
+    assert 'id="nsel">1</span> selected of 60' in html and "page=2" in html and "page=0" not in html
+
+
+def test_render_page_escapes_db_text():
+    html = render_page({"rows": [row(id=1, short_summary="<script>x</script> & co",
+                                     url='https://a.com/?q="><b>', summary="- a <i>")],
+                        "page": 1, "pages": 1, "total": 1, "selected": 0}, SINCE)
+    assert "<script>x</script>" not in html and "&lt;script&gt;" in html
+    assert '"><b>' not in html and "<i>" not in html
+
+
+def test_render_page_empty():
+    html = render_page({"rows": [], "page": 1, "pages": 1, "total": 0, "selected": 0},
+                       SINCE)
+    assert f"No articles since {SINCE}" in html
