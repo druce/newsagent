@@ -52,6 +52,16 @@ def fetch_page(db_path: str, since: str, page: int, per_page: int = PER_PAGE) ->
     }
 
 
+def selected_rows(db_path: str, since: str) -> list[dict]:
+    """Every selected in-window row, in curate-page order (for the edition draft)."""
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT {', '.join(_COLS)} FROM published_articles "
+            f"WHERE {_WHERE} AND selected = 1 ORDER BY {_ORDER}", (since,)
+        ).fetchall()
+    return [dict(zip(_COLS, r)) for r in rows]
+
+
 def toggle_selected(db_path: str, article_id: int) -> int | None:
     """Flip `selected` for one row; return the new value, or None if no such id."""
     with sqlite3.connect(db_path) as conn:

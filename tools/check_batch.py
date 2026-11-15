@@ -89,6 +89,25 @@ def main() -> int:
         print(f"FAIL: result is not valid JSON: {e}")
         return 1
 
+    # ── newsagent:edition batches: validators live in lib/edition.py ──
+    kind = batch.get("kind") if isinstance(batch, dict) else None
+    if kind in ("edition-section", "edition-issue"):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from lib.edition import validate_issue, validate_section
+
+        validate = validate_section if kind == "edition-section" else validate_issue
+        errors, warnings = validate(result, batch)
+        for w in warnings:
+            print(f"  warning: {w}")
+        if errors:
+            print(f"FAIL ({kind}):")
+            for e in errors:
+                print(f"  - {e}")
+            return 1
+        print(f"OK ({kind}): {len(batch.get('ids', []))} ids covered, "
+              f"{batch.get('kicker_count')} alt kickers each")
+        return 0
+
     expected_ids = [str(i) for i in batch.get("ids", [])]
 
     # ── select-repechage result shape: {proposed_clusters, unclustered_ids} ──

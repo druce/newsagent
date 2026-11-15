@@ -18,6 +18,7 @@ from lib.prompts import bsky_headlines  # noqa: F401
 from lib.prompts import sitename  # noqa: F401
 from lib.prompts import dedupe_vs_archive  # noqa: F401
 from lib.prompts import coverage_boost  # noqa: F401
+from lib.prompts import write_edition_section, edit_edition  # noqa: F401
 
 __all__ = [
     "filter_urls",
@@ -42,4 +43,6 @@ __all__ = [
     "sitename",
     "dedupe_vs_archive",
     "coverage_boost",
+    "write_edition_section",
+    "edit_edition",
 ]

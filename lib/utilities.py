@@ -24,6 +24,29 @@ _SMTP_PORT = 587
 _SESSION_ID_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})$")
 
 
+# House-style §3 (docs/style/house-style.md): tracking params stripped before
+# send. Unlike `clean_url`, everything else (gift links, accessToken, ids) stays.
+_TRACKING_EXACT = {"_bhlid", "guccounter", "twclid", "smid", "ck_subscriber_id", "st"}
+_TRACKING_PREFIXES = ("utm_", "guce_", "syn-")
+
+
+def strip_tracking_params(url: str) -> str:
+    """Drop tracking query params, keeping every other param byte-for-byte."""
+    base, hash_, frag = url.partition("#")
+    path, q, query = base.partition("?")
+    if not q:
+        return url
+    kept = [
+        part for part in query.split("&")
+        if part and not (
+            (key := part.split("=", 1)[0]) in _TRACKING_EXACT
+            or key.startswith(_TRACKING_PREFIXES)
+        )
+    ]
+    out = path + ("?" + "&".join(kept) if kept else "")
+    return out + (hash_ + frag if hash_ else "")
+
+
 def run_stamp(session_id: Optional[str] = None) -> str:
     """Return the `YYYY-MM-DD-HHMMSS` suffix used for files in `out/`.
 

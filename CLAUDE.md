@@ -98,6 +98,9 @@ Every step is `.venv/bin/python -m lib.steps.<step>` (see `lib/steps/` for the l
 # Curation page: toggle published_articles.selected for sessions since noon yesterday
 .venv/bin/python -m lib.steps.curate   # http://127.0.0.1:8766/
 
+# Issue draft from the curated picks (house style, docs/style/): /newsagent:edition
+.venv/bin/python -m lib.steps.edition --prepare-sections [--kickers N]
+
 # Install (Playwright browser is a separate step)
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m playwright install firefox
