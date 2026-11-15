@@ -72,7 +72,7 @@ def build_section_batches(rows: list[dict], run_dir: Path, kicker_count: int,
     paths = []
     for idx, (cat, members) in enumerate(by_cat.items()):
         stories = [{k: r.get(k) for k in
-                    ("id", "url", "site_name", "short_summary", "summary", "rating")}
+                    ("id", "url", "title", "site_name", "short_summary", "summary", "rating")}
                    for r in members]
         inp = WriteEditionSectionInput(cat=cat, stories=stories,
                                        kicker_count=kicker_count, docs=docs)

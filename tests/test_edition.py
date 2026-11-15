@@ -287,3 +287,12 @@ def test_cli_prepare_with_no_picks(tmp_db):
     init_db(tmp_db)
     res = CliRunner().invoke(step.cli, ["--prepare-sections", "--since", SINCE, "--db", tmp_db])
     assert res.exit_code == 1 and "no selected articles" in res.output
+
+
+def test_section_batch_includes_title_for_no_content_items(tmp_db, tmp_path):
+    _insert(tmp_db, url="https://wsj.com/x", title="Amazon delivery drones take off",
+            short_summary="no content", summary="- no content")
+    run_dir = tmp_path / "runs" / "edition-x"
+    build_section_batches(selected_rows(tmp_db, SINCE), run_dir, 3, "DOCS")
+    prompt = (run_dir / "edition-sections-batches" / "batch-000.md").read_text()
+    assert "Amazon delivery drones take off" in prompt

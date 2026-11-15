@@ -18,7 +18,7 @@ from lib.prompts._edition_common import ITEM_FIELDS, OVERRIDES, RULES
 
 class WriteEditionSectionInput(BaseModel):
     cat: str
-    stories: List[Dict[str, Any]]  # {id, url, site_name, short_summary, summary, rating}
+    stories: List[Dict[str, Any]]  # {id, url, title, site_name, short_summary, summary, rating}
     kicker_count: int
     docs: str
 
@@ -54,7 +54,7 @@ THE DOCS (style-guide.md = voice and stance; gold-headlines.md = kicker calibrat
 TASK
 Cluster: {cat}
 The editor has already chosen these stories. For each one:
-1. Summary. Write the house-style §2 sentence: one sentence, sentence case, present tense, active voice, actor first, 15–30 words (cap 35), at least one concrete specific, no terminal period, semicolon to join two facts. Start from `short_summary`; use the `summary` bullets only to check facts and pick the best specific. Every fact, number and name must appear in the input. Apply §3 mechanics (AI, US, $40 billion, %, American spelling, straight quotes, no em dashes).
+1. Summary. Write the house-style §2 sentence: one sentence, sentence case, present tense, active voice, actor first, 15–30 words (cap 35), at least one concrete specific, no terminal period, semicolon to join two facts. Start from `short_summary`; use the `summary` bullets only to check facts and pick the best specific. If `short_summary` and `summary` are empty or "no content" (failed download), build the item from `title` alone, add nothing beyond it, and set `flag` to "no content: summary from headline only". Every fact, number and name must appear in the input. Apply §3 mechanics (AI, US, $40 billion, %, American spelling, straight quotes, no em dashes).
 2. Kicker. Read the gold kickers first and match their register: about 3 words, one recognizable reference, hooked on a concrete noun from the story, with a point of view aimed at the powerful or absurd party. It must land on its own and get funnier after the summary. Do not repeat the pun word in the summary (rewrite the summary's wording if needed, without changing facts). Avoid every frame on the gold-headlines repeat list.
 3. Alternatives and flag, per the draft rules above.
 4. Source label. Normalize `site_name` per the §2 table.
