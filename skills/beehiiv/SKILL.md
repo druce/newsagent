@@ -1,6 +1,6 @@
 ---
 name: beehiiv
-description: Turn the newsagent Bluesky digest (out/latest-bsky.html — a flat list of posts, each a thumbnail, a headline link with the source name appended, and an <hr />; no sections) into a beehiiv DRAFT post, end-to-end, via the Claude Chrome extension. Uploads every image to beehiiv and populates the full post body (links + images in document order). Use when the user wants to build/publish their daily Bluesky roundup, "today's issue", "the bsky digest", or import the bsky digest into beehiiv. Creates the draft from a template and authors the title via beehiiv's internal API, then uploads images and pastes the body.
+description: Turn the newsagent Bluesky digest (out/latest-bsky.html — a flat list of posts, each a thumbnail, a headline link with the source name appended, and an <hr />; no sections) — or a hand-edited edition markdown (out/latest-edition.md; its ## sections become Heading 1 with a content break between sections) — into a beehiiv DRAFT post, end-to-end, via the Claude Chrome extension. Uploads every image to beehiiv and populates the full post body (links + images in document order). Use when the user wants to build/publish their daily Bluesky roundup, "today's issue", "the bsky digest", or import the bsky digest into beehiiv. Creates the draft from a template and authors the title via beehiiv's internal API, then uploads images and pastes the body.
 compatibility: Requires the Claude Chrome extension (Control Chrome tools: tabs_context/tabs_create, execute_javascript/javascript_tool, navigate, and the computer tool for native Cmd+V/click). macOS for `pbcopy` (image-set + digest-HTML clipboard staging). Pillow (in the project venv) for transcoding remote AVIF images. The user must be logged in to beehiiv with a tab open on app.beehiiv.com.
 ---
 
@@ -55,6 +55,37 @@ this work:
   "AI Reading for" (what happened on 2026-07-25). `setTitle()` now patches all three
   (`title`, `web_title`, `email_subject_line`) — verify the readback in step 1.
   (`email_preview_text` is left empty for the user to fill with the day's punny headline.)
+
+## Alternate source: an edition markdown file (sectioned issue)
+
+When the user asks for the post **from the edition markdown** (`out/latest-edition.md` →
+`out/edition-<stamp>.md`, written by `newsagent:edition` and then hand-edited), convert it to
+digest-style HTML first and use that file everywhere the steps below say `out/latest-bsky.html`:
+
+```bash
+.venv/bin/python skills/beehiiv/scripts/edition_md_to_html.py out/latest-edition.md out/edition-<stamp>.html
+.venv/bin/python3 skills/beehiiv/scripts/build_image_clipboard.py out/edition-<stamp>.html   # step 2
+pbcopy < out/edition-<stamp>.html                                                           # step 3
+```
+
+- Each `## Section` becomes **`<h1>`**, which `buildDoc` turns into a beehiiv **Heading 1**
+  node (`{type:'heading', attrs:{level:1}}`).
+- **One content break (`<hr />` → `horizontalRule`) goes between sections**: before every
+  heading except the first. The converter ignores the md's own divider lines (`---`, `———`, …) and strips `*…*` from asides, so a missing or
+  extra divider in the hand-edited md never produces a doubled or absent break. There is NO
+  break between items inside a section.
+- The `# Title` line is dropped (the title comes from the API, step 1); `<!-- … -->` editor
+  notes are dropped. The **subtitle** (the first plain line under the title) is NOT put in
+  the body: the converter prints it as `"subtitle"`, and right after step 1 call
+  `window.bh.setSubtitle(id, subtitle)`, which sets `web_subtitle` and `email_preview_text`
+  to it. Confirm `{subtitle_ok:true, preview_ok:true}`. (If `subtitle` is null, skip it.)
+- Images are `download/edition-images/…` (not `bsky-images`); `build_image_clipboard.py`
+  reads any `file://` src, so nothing else changes.
+- The converter fails on an item line it can't parse (`[text](url) - _Source_`) — fix the md,
+  don't hand-patch the HTML. It prints `{items, headings, hrs, imgs, links, subtitle}`: the
+  counts are the targets. Verify `buildDoc` → `heads === headings`, and `editorCounts()` (before and after the
+  persistence reload) → `heads === headings`, `hrs === hrs`, `imgs === imgs`,
+  `links === links`, `emptyParas === 0`, footer last.
 
 ## Chrome is driven ONLY by the Claude Chrome tools
 

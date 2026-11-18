@@ -91,11 +91,12 @@ def main() -> int:
 
     # ── newsagent:edition batches: validators live in lib/edition.py ──
     kind = batch.get("kind") if isinstance(batch, dict) else None
-    if kind in ("edition-section", "edition-issue"):
+    if kind in ("edition-section", "edition-issue", "edition-merge"):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from lib.edition import validate_issue, validate_section
+        from lib.edition import validate_issue, validate_merge, validate_section
 
-        validate = validate_section if kind == "edition-section" else validate_issue
+        validate = {"edition-section": validate_section, "edition-issue": validate_issue,
+                    "edition-merge": validate_merge}[kind]
         errors, warnings = validate(result, batch)
         for w in warnings:
             print(f"  warning: {w}")
@@ -104,8 +105,13 @@ def main() -> int:
             for e in errors:
                 print(f"  - {e}")
             return 1
-        print(f"OK ({kind}): {len(batch.get('ids', []))} ids covered, "
-              f"{batch.get('kicker_count')} alt kickers each")
+        if kind == "edition-merge":
+            n = len({a["cat"].strip() for a in result["assignments"]})
+            print(f"OK ({kind}): {len(batch.get('ids', []))} ids covered, {n} clusters, "
+                  f"{len(result.get('duplicates') or [])} duplicate groups")
+        else:
+            print(f"OK ({kind}): {len(batch.get('ids', []))} ids covered, "
+                  f"{batch.get('kicker_count')} alt kickers each")
         return 0
 
     expected_ids = [str(i) for i in batch.get("ids", [])]

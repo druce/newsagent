@@ -137,6 +137,45 @@ def test_resolve_published_skips_mtime_fallback(tmp_path):
     assert src == "sentinel"
 
 
+def test_resolve_published_ignores_copyright_year_guess(tmp_path):
+    """A bare '© 2026' in the page must not become a 2026-01-01 publish date.
+    trafilatura's extensive text search pads year/month-only guesses to the
+    1st, which made the MIT AI-risk page look 318 days old (2026-11-14 run)."""
+    now = _now()
+    f = tmp_path / "cached.html"
+    f.write_text("<html><head><title>x</title></head><body><article>"
+                 "<p>Some text about risk.</p></article>"
+                 "<footer><p>© 2026 MIT</p></footer></body></html>")
+    h = {"url": "https://airisk.mit.edu/ai-risk-mitigations", "html_path": str(f)}
+    dt, src = _resolve_published(h, now)
+    assert src == "sentinel"
+
+
+def test_resolve_published_uses_html_metadata_date(tmp_path):
+    now = _now()
+    f = tmp_path / "cached.html"
+    f.write_text('<html><head><meta property="article:published_time" '
+                 'content="2026-11-14T10:00:00Z"></head><body><p>x</p></body></html>')
+    h = {"url": "https://news.com/no-date", "html_path": str(f)}
+    dt, src = _resolve_published(h, now)
+    assert src == "trafilatura"
+    assert (dt.year, dt.month, dt.day) == (2026, 11, 14)
+
+
+def test_resolve_published_prefers_url_date_over_html(tmp_path):
+    """A full Y-M-D in the URL is explicit; it beats a page-derived guess.
+    (Bloomberg /2026-11-15/ article was dated 2026-11-01 from page text.)"""
+    now = _now()
+    f = tmp_path / "cached.html"
+    f.write_text('<html><head><meta property="article:published_time" '
+                 'content="2026-11-01T00:00:00Z"></head><body><p>x</p></body></html>')
+    h = {"url": "https://www.bloomberg.com/news/articles/2026-11-15/india-stocks",
+         "html_path": str(f)}
+    dt, src = _resolve_published(h, now)
+    assert src == "url"
+    assert (dt.year, dt.month, dt.day) == (2026, 11, 15)
+
+
 def test_resolve_published_sentinel_last_resort():
     now = _now()
     h = {"url": "https://news.com/no-date"}
@@ -222,6 +261,10 @@ def test_articles_older_than_7d_dropped(tmp_db, monkeypatch, tmp_path):
     state = NewsletterAgentState(session_id="old", db_path=tmp_db).load_latest_from_db()
     rated_ids = [h["id"] for h in state.headline_data if "rating" in h]
     assert rated_ids == [0]
+    # Stale articles are removed from state, not merely left unrated — an
+    # unrated straggler otherwise flows into cluster/select/draft and gets
+    # published with rating 0.0 (MIT AI-risk page, 2026-11-14 run).
+    assert [h["id"] for h in state.headline_data] == [0]
 
 
 # ── composite shape: additive, larger than legacy weighted ─

@@ -20,15 +20,16 @@ Terms:
 
 Published-date fallback chain (resolved at rate-time, best→worst):
   1. h["published"] parsed via parsedate_to_datetime or fromisoformat
-  2. trafilatura.extract_metadata(html_path).date
-  3. regex `/(20\\d\\d)[/-](\\d\\d)[/-](\\d\\d)/` on the URL
+  2. regex `/(20\\d\\d)[/-](\\d\\d)[/-](\\d\\d)/` on the URL
+  3. trafilatura.extract_metadata(html_path, extensive=False).date
   4. now - 1 day (legacy sentinel)
 
 File mtime is intentionally NOT a fallback: it's when we fetched the article,
 not when it was published. Using mtime would set age≈0 for any article we
 downloaded today, even one published years ago, and inflate the recency term.
 
-Articles older than MAX_ARTICLE_AGE_DAYS are dropped before rating.
+Articles older than MAX_ARTICLE_AGE_DAYS are removed from state before rating
+(not just left unrated — downstream steps would otherwise publish them).
 """
 from __future__ import annotations
 
@@ -137,8 +138,11 @@ def _date_from_trafilatura(html_path: Optional[str]) -> Optional[datetime]:
         # Same shared-parser hazard as extract_article_text — this call site is
         # sequential today, but hold the lock so it stays safe if it is ever
         # parallelized. See lib/fetch/extract.py:HTML_PARSE_LOCK.
+        # extensive=False: metadata/structured markup only. The extensive text
+        # search pads year- or month-only guesses (a "© 2026" footer) to the
+        # 1st, which made current articles look weeks or months old.
         with HTML_PARSE_LOCK:
-            meta = trafilatura.extract_metadata(html)
+            meta = trafilatura.extract_metadata(html, extensive=False)
         if meta is None:
             return None
         raw = meta.date  # ISO YYYY-MM-DD per trafilatura/htmldate
@@ -173,16 +177,16 @@ def _resolve_published(h: dict, now: datetime) -> tuple[datetime, str]:
     dt = _parse_date_string(h.get("published") or "")
     if dt is not None:
         return dt, "feed"
-    # 2. Trafilatura metadata from cached HTML
-    dt = _date_from_trafilatura(h.get("html_path"))
-    if dt is not None:
-        h["published"] = dt.isoformat()
-        return dt, "trafilatura"
-    # 3. URL date pattern
+    # 2. URL date pattern — an explicit Y-M-D in the URL beats a page guess
     dt = _date_from_url(h.get("final_url") or h.get("url"))
     if dt is not None:
         h["published"] = dt.isoformat()
         return dt, "url"
+    # 3. Trafilatura metadata from cached HTML
+    dt = _date_from_trafilatura(h.get("html_path"))
+    if dt is not None:
+        h["published"] = dt.isoformat()
+        return dt, "trafilatura"
     # 4. Sentinel: 1 day ago
     fallback = now - timedelta(days=1)
     h["published"] = fallback.isoformat()
@@ -275,13 +279,25 @@ def cli(
         h["date_source"] = src
         if age_days >= MAX_ARTICLE_AGE_DAYS:
             drop_reasons[i] = f"age {age_days:.1f}d >= {MAX_ARTICLE_AGE_DAYS}"
+
+    # Remove stale articles from state entirely (before indexing the rated
+    # set), so they cannot flow into cluster/select/draft unrated.
+    if drop_reasons:
+        for i in sorted(drop_reasons):
+            h = state.headline_data[i]
+            click.echo(f"  drop stale ({drop_reasons[i]}, {h.get('date_source')}): "
+                       f"{h.get('title', '')[:80]!r}")
+        state.headline_data = [
+            h for i, h in enumerate(state.headline_data) if i not in drop_reasons
+        ]
+        click.echo(f"Dropped {len(drop_reasons)} article(s) older than {MAX_ARTICLE_AGE_DAYS} days.")
+
+    for i, h in enumerate(state.headline_data):
+        if not h.get("summary"):
             continue
         input_text = f"{h.get('title', '')}\n{h['summary']}"
         items.append({"id": str(i), "input_text": input_text})
         rated_indices.append(i)
-
-    if drop_reasons:
-        click.echo(f"Dropped {len(drop_reasons)} article(s) older than {MAX_ARTICLE_AGE_DAYS} days.")
     click.echo(
         f"Date sources: " + ", ".join(f"{k}={v}" for k, v in date_source_counts.items() if v)
     )

@@ -97,3 +97,114 @@ def test_default_window_recomputed_per_request(tmp_db, monkeypatch):
         assert "since 2026-11-16-12-00-00" in second and "No articles since" in second
     finally:
         server.shutdown()
+
+
+def test_cli_latest_rejects_since_and_empty_db(tmp_db):
+    from click.testing import CliRunner
+    from lib.steps.curate import cli
+    r = CliRunner().invoke(cli, ["--db", tmp_db, "--latest",
+                                 "--since", "2026-11-14-12-00-00"])
+    assert r.exit_code == 2 and "mutually exclusive" in r.output
+    r = CliRunner().invoke(cli, ["--db", tmp_db, "--latest"])
+    assert r.exit_code == 1 and "No sessions" in r.output
+
+
+# ── CRUD routes ──────────────────────────────────────────────────────────────
+
+def _post(base, path, obj):
+    return httpx.post(f"{base}{path}", json=obj)
+
+
+def _row(db, aid):
+    with sqlite3.connect(db) as conn:
+        return conn.execute(
+            "SELECT url, short_summary, site_name FROM published_articles WHERE id = ?",
+            (aid,)).fetchone()
+
+
+def test_update_route(tmp_db):
+    aid = _insert(tmp_db, "https://a.com/1")
+    with _server(tmp_db) as base:
+        resp = _post(base, "/update", {"id": aid, "url": "https://b.com/2",
+                                       "short_summary": "Fixed headline",
+                                       "site_name": "b.com"})
+    assert resp.status_code == 200
+    j = resp.json()
+    assert j["row"]["url"] == "https://b.com/2" and "Fixed headline" in j["html"]
+    assert _row(tmp_db, aid) == ("https://b.com/2", "Fixed headline", "b.com")
+
+
+def test_update_route_duplicate_409(tmp_db):
+    _insert(tmp_db, "https://a.com/1")
+    b = _insert(tmp_db, "https://a.com/2")
+    with _server(tmp_db) as base:
+        resp = _post(base, "/update", {"id": b, "url": "https://a.com/1",
+                                       "short_summary": "X", "site_name": ""})
+    assert resp.status_code == 409 and "already exists" in resp.json()["error"]
+    assert _row(tmp_db, b)[0] == "https://a.com/2"
+
+
+def test_update_route_bad_json_and_id_400(tmp_db):
+    _insert(tmp_db, "https://a.com/1")
+    with _server(tmp_db) as base:
+        assert httpx.post(f"{base}/update", content=b"{nope",
+                          headers={"Content-Type": "application/json"}).status_code == 400
+        assert _post(base, "/update", {"id": "x", "url": "https://a.com/9",
+                                       "short_summary": "H"}).status_code == 400
+        assert _post(base, "/update", {"url": "https://a.com/9",
+                                       "short_summary": "H"}).status_code == 400
+
+
+def test_delete_route(tmp_db):
+    aid = _insert(tmp_db, "https://a.com/1", selected=1)
+    with _server(tmp_db) as base:
+        resp = _post(base, "/delete", {"id": aid})
+        assert resp.status_code == 200 and resp.json() == {"id": aid, "selected": 1}
+        assert _post(base, "/delete", {"id": aid}).status_code == 404
+    assert _row(tmp_db, aid) is None
+
+
+def test_create_route(tmp_db):
+    _insert(tmp_db, "https://a.com/1")
+    with _server(tmp_db) as base:
+        resp = _post(base, "/create", {"url": "https://www.added.com/s",
+                                       "short_summary": "Hand-added story",
+                                       "site_name": ""})
+        assert resp.status_code == 200
+        assert resp.json()["row"]["site_name"] == "added.com"
+        page = httpx.get(f"{base}/").text
+    assert "<h2>Other</h2>" in page and "Hand-added story" in page
+
+
+def test_unknown_post_path_404(tmp_db):
+    init_db(tmp_db)
+    with _server(tmp_db) as base:
+        assert _post(base, "/nope", {}).status_code == 404
+
+
+def test_cross_origin_post_rejected(tmp_db):
+    aid = _insert(tmp_db, "https://a.com/1", selected=1)
+    with _server(tmp_db) as base:
+        r = httpx.post(f"{base}/delete", content=f'{{"id": {aid}}}',
+                       headers={"Content-Type": "text/plain"})
+        assert r.status_code == 415
+        r = httpx.post(f"{base}/delete", json={"id": aid},
+                       headers={"Origin": "https://evil.example"})
+        assert r.status_code == 403
+        r = httpx.post(f"{base}/toggle", params={"id": aid},
+                       headers={"Origin": "https://evil.example"})
+        assert r.status_code == 403
+        assert _post(base, "/delete", {"id": aid}).status_code == 200
+
+
+def test_same_origin_header_allowed(tmp_db):
+    aid = _insert(tmp_db, "https://a.com/1")
+    with _server(tmp_db) as base:
+        r = httpx.post(f"{base}/delete", json={"id": aid}, headers={"Origin": base})
+    assert r.status_code == 200
+
+
+def test_huge_id_400(tmp_db):
+    init_db(tmp_db)
+    with _server(tmp_db) as base:
+        assert _post(base, "/delete", {"id": 99999999999999999999}).status_code == 400

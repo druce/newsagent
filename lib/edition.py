@@ -2,6 +2,8 @@
 
 Pure functions over a run dir (runs/edition-<id>/) and the DB:
 
+  build_merge_batch     → (agent writes edition-merge-results/)    → apply_merge
+                                     (apply_merge calls build_section_batches)
   build_section_batches → (agents write edition-sections-results/) → apply_sections
   build_edit_batch      → (agent writes edition-edit-results/)     → apply_edit
 
@@ -25,9 +27,11 @@ from pydantic import ValidationError
 
 from lib.edition_images import DEFAULT_IMAGE_DIR, fetch_item_images
 
-from lib.prompts._dispatch_schemas import EditionIssue, EditionSection
+from lib.prompts._dispatch_schemas import EditionIssue, EditionMerge, EditionSection
 from lib.prompts.edit_edition import EDIT_EDITION, EditEditionInput
 from lib.prompts.edit_edition import render_user_prompt as _render_edit
+from lib.prompts.merge_edition_cats import MERGE_EDITION_CATS, MergeEditionCatsInput
+from lib.prompts.merge_edition_cats import render_user_prompt as _render_merge
 from lib.prompts.write_edition_section import (
     WRITE_EDITION_SECTION,
     WriteEditionSectionInput,
@@ -35,6 +39,10 @@ from lib.prompts.write_edition_section import (
 from lib.prompts.write_edition_section import render_user_prompt as _render_section
 from lib.utilities import strip_tracking_params
 
+MERGE_BATCHES = "edition-merge-batches"
+MERGE_RESULTS = "edition-merge-results"
+MERGE_CLUSTERS_WARN = (12, 30)  # outside this range → warning (target ~15–25)
+MERGE_OTHER_WARN = 3            # more "Other" stories than this → warning
 SECTIONS_BATCHES = "edition-sections-batches"
 SECTIONS_RESULTS = "edition-sections-results"
 EDIT_BATCHES = "edition-edit-batches"
@@ -90,13 +98,30 @@ def build_section_batches(rows: list[dict], run_dir: Path, kicker_count: int,
     return paths
 
 
+def build_merge_batch(rows: list[dict], run_dir: Path, kicker_count: int) -> Path:
+    """Freeze the curated rows (run_dir/rows.json) and write the one merge batch."""
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "rows.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1))
+    stories = [{k: r.get(k) for k in
+                ("id", "cat", "session_id", "title", "short_summary", "rating")}
+               for r in rows]
+    meta = {
+        "kind": "edition-merge", "kicker_count": kicker_count,
+        "ids": [r["id"] for r in rows],
+        "output_schema": EditionMerge.model_json_schema(),
+    }
+    d = _fresh_dir(run_dir / MERGE_BATCHES)
+    return _write_batch(d, 0, meta, MERGE_EDITION_CATS.system_prompt,
+                        _render_merge(MergeEditionCatsInput(stories=stories)))
+
+
 # ── validation (also used by tools/check_batch.py) ───────────────────────────
 
-def _check_items(items: list, batch: dict) -> tuple[list[str], list[str]]:
+def _id_errors(got: list[int], batch: dict) -> list[str]:
+    """Every batch id exactly once: missing / extra / duplicate."""
     errors: list[str] = []
-    warnings: list[str] = []
     expected = [int(i) for i in batch.get("ids", [])]
-    got = [it.id for it in items]
     missing = sorted(set(expected) - set(got))
     extra = sorted(set(got) - set(expected))
     dups = sorted({i for i in got if got.count(i) > 1})
@@ -106,6 +131,12 @@ def _check_items(items: list, batch: dict) -> tuple[list[str], list[str]]:
         errors.append(f"extra ids ({len(extra)}): {extra}")
     if dups:
         errors.append(f"duplicate ids ({len(dups)}): {dups}")
+    return errors
+
+
+def _check_items(items: list, batch: dict) -> tuple[list[str], list[str]]:
+    errors = _id_errors([it.id for it in items], batch)
+    warnings: list[str] = []
     n = int(batch.get("kicker_count", 0))
     for it in items:
         if not it.kicker.strip():
@@ -147,7 +178,85 @@ def validate_issue(result: dict, batch: dict) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+def validate_merge(result: dict, batch: dict) -> tuple[list[str], list[str]]:
+    try:
+        merge = EditionMerge.model_validate(result)
+    except ValidationError as exc:
+        return [f"schema: {exc.errors()[:3]}"], []
+    errors = _id_errors([a.id for a in merge.assignments], batch)
+    warnings: list[str] = []
+    empty = [a.id for a in merge.assignments if not a.cat.strip()]
+    if empty:
+        errors.append(f"empty cat for ids: {empty}")
+    known = {int(i) for i in batch.get("ids", [])}
+    for n, d in enumerate(merge.duplicates):
+        if len(set(d.ids)) < 2:
+            errors.append(f"duplicates[{n}]: needs at least 2 distinct ids, got {d.ids}")
+        unknown = sorted(set(d.ids) - known)
+        if unknown:
+            errors.append(f"duplicates[{n}]: unknown ids {unknown}")
+    clusters = {a.cat.strip() for a in merge.assignments if a.cat.strip()}
+    lo, hi = MERGE_CLUSTERS_WARN
+    if not lo <= len(clusters) <= hi and len(known) > lo:
+        warnings.append(f"{len(clusters)} clusters (target ~15–25)")
+    other = sum(1 for a in merge.assignments if a.cat.strip().lower() == "other")
+    if other > MERGE_OTHER_WARN:
+        warnings.append(f"{other} stories left in Other")
+    return errors, warnings
+
+
 # ── apply ────────────────────────────────────────────────────────────────────
+
+def apply_merge(run_dir: Path, docs: str) -> list[Path]:
+    """Validate the merge result, write run_dir/merge.json, and build the section
+    batches from the frozen rows re-grouped by merged cat: clusters by their best
+    rating, stories by rating within. Raises ValueError if the result is invalid."""
+    run_dir = Path(run_dir)
+    batch = json.loads((run_dir / MERGE_BATCHES / "batch-000.json").read_text())
+    result = json.loads((run_dir / MERGE_RESULTS / "batch-000.json").read_text())
+    errors, _ = validate_merge(result, batch)
+    if errors:
+        raise ValueError("merge result failed validation: " + "; ".join(errors))
+    merge = EditionMerge.model_validate(result).model_dump()
+    (run_dir / "merge.json").write_text(json.dumps(merge, ensure_ascii=False, indent=1))
+
+    cat_of = {a["id"]: a["cat"].strip() for a in merge["assignments"]}
+    rows = [{**r, "cat": cat_of[r["id"]]}
+            for r in json.loads((run_dir / "rows.json").read_text())]
+
+    def score(r: dict) -> float:
+        return r["rating"] if r.get("rating") is not None else float("-inf")
+
+    best: dict[str, float] = {}
+    for r in rows:
+        best[r["cat"]] = max(best.get(r["cat"], float("-inf")), score(r))
+    rows.sort(key=lambda r: (-best[r["cat"]], r["cat"], -score(r), r["id"]))
+    return build_section_batches(rows, run_dir, int(batch["kicker_count"]), docs)
+
+
+def merge_duplicates(run_dir: Path, issue: dict) -> tuple[dict[int, list[str]], list[str]]:
+    """The merge step's duplicate groups, phrased with the final kickers.
+
+    Returns ({item id: ['"<other kicker>" (reason)', ...]}, [one note per group]).
+    Empty when the run had no merge step (--prepare-sections)."""
+    path = Path(run_dir) / "merge.json"
+    if not path.exists():
+        return {}, []
+    kicker = {int(it["id"]): (it.get("kicker") or f"id {it['id']}")
+              for c in issue["clusters"] for it in c["items"]}
+    per_item: dict[int, list[str]] = {}
+    notes: list[str] = []
+    for d in json.loads(path.read_text()).get("duplicates") or []:
+        ids = [int(i) for i in d["ids"] if int(i) in kicker]
+        if len(ids) < 2:
+            continue
+        for i in ids:
+            per_item.setdefault(i, []).extend(
+                f'"{kicker[o]}" ({d["reason"]})' for o in ids if o != i)
+        notes.append("possible duplicates: "
+                     + " / ".join(f'"{kicker[i]}"' for i in ids) + f' ({d["reason"]})')
+    return per_item, notes
+
 
 def apply_sections(run_dir: Path) -> tuple[list[dict], list[str]]:
     """Validate every section result; on success write run_dir/sections.json."""
@@ -227,8 +336,9 @@ def apply_edit(run_dir: Path, db_path: str, out_dir: Path,
         rel_images = {i: (os.path.relpath(p, out_dir) if p else None, reason)
                       for i, (p, reason) in fetched.items()}
         stats = {"with": sum(1 for p, _ in fetched.values() if p), "total": len(urls)}
+    dupes, _ = merge_duplicates(run_dir, issue)
     md = render_edition_md(issue, urls, now.strftime("AI Reading for %A %B %-d"),
-                           images=rel_images)
+                           images=rel_images, dupes=dupes)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"edition-{now:%Y-%m-%d-%H%M%S}.md"
@@ -271,9 +381,11 @@ def _item_line(it: dict, url: str) -> str:
 
 
 def render_edition_md(issue: dict, urls: dict[int, str], title: str,
-                      images: dict[int, tuple[str | None, str]] | None = None) -> str:
+                      images: dict[int, tuple[str | None, str]] | None = None,
+                      dupes: dict[int, list[str]] | None = None) -> str:
     """`images` maps item id → (path relative to the md file, "") or (None, reason).
-    None (the default) emits no image lines at all."""
+    None (the default) emits no image lines at all. `dupes` maps item id → the
+    merge step's possible-duplicate notes, one comment line each."""
     out = [f"# {title}", issue["subtitle"].strip(),
            f"<!-- subtitle alts: {_comment(' | '.join(issue['subtitle_alts']))} -->"]
     for note in issue.get("notes") or []:
@@ -295,6 +407,8 @@ def render_edition_md(issue: dict, urls: dict[int, str], title: str,
             lines.append(f"<!-- alts: {_comment(' | '.join(it['alt_kickers']))} -->")
             if it.get("flag"):
                 lines.append(f"<!-- flag: {_comment(it['flag'])} -->")
+            for d in (dupes or {}).get(int(it["id"]), []):
+                lines.append(f"<!-- possible duplicate: {_comment(d)} -->")
             lines.append("")
         blocks.append("\n".join(lines).rstrip("\n"))
     out.append("")

@@ -57,6 +57,16 @@ async function setTitle(id, title) {
   return bhPatch('/posts/' + id, { title, web_title: title, email_subject_line: title });
 }
 
+/* Set the post SUBTITLE (shown under the title on web and in email; display_subtitle_*
+ * flags are on in the "Daily" template) and the email preview text to the same string —
+ * what the editor did by hand on 2026-11-16. Returns the readback so the caller can
+ * confirm both took (the field names were read off that hand-edited draft). */
+async function setSubtitle(id, text) {
+  await bhPatch('/posts/' + id, { web_subtitle: text, email_preview_text: text });
+  const d = await bhGet('/posts/' + id);
+  return { subtitle_ok: d.web_subtitle === text, preview_ok: d.email_preview_text === text };
+}
+
 /* Web settings pinned on every draft, independent of what the template carries.
  * `display_thumbnail_on_web` = the "Show thumbnail on top" toggle in Web settings
  * (PATCH-able, persists — verified 2026-11-02 on a scratch draft). */
@@ -78,5 +88,5 @@ async function createDraftFromTemplate(templateName, title) {
            status: d.status, draft_url: d.draft_url };
 }
 
-window.bh = { getAuth, bhGet, bhPost, bhPatch, bhDelete, findTemplate, setTitle, createDraftFromTemplate };
+window.bh = { getAuth, bhGet, bhPost, bhPatch, bhDelete, findTemplate, setTitle, setSubtitle, createDraftFromTemplate };
 'bh helpers ready';

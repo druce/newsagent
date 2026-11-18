@@ -52,3 +52,20 @@ class EditionIssue(BaseModel):
     subtitle_alts: List[str]
     clusters: List[EditionSection]
     notes: List[str] = []
+
+
+class EditionMergeAssignment(BaseModel):
+    id: int                      # published_articles.id
+    cat: str                     # merged working cluster name (not printed)
+
+
+class EditionDuplicate(BaseModel):
+    ids: List[int]               # 2+ ids that report the same specific news
+    reason: str
+
+
+class EditionMerge(BaseModel):
+    """newsagent:edition merge step: one cluster per story, across sessions."""
+    assignments: List[EditionMergeAssignment]
+    duplicates: List[EditionDuplicate] = []
+    notes: List[str] = []

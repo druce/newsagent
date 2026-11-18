@@ -214,6 +214,20 @@ Useful when developing, debugging, or wanting to inspect state between steps.
 # → writes out/bsky-<stamp>.html
 ```
 
+### Auto-post a session's picks to Bluesky (v2, no clicking)
+
+Posts the session's `selected=1` stories from `published_articles`, highest rating first,
+one every `--interval` seconds, and exits when none are left. Post text is the
+`short_summary` one-liner; each row's `bsky_status` becomes `posted` or `failed` (failures
+are not retried). Independent of the 🦋 queue below.
+
+```bash
+# Requires BSKY_USERNAME + BSKY_SECRET
+.venv/bin/python -m lib.steps.bsky_share_v2                 # most recent session, every 180s
+.venv/bin/python -m lib.steps.bsky_share_v2 --session SID --interval 120
+.venv/bin/python -m lib.steps.bsky_share_v2 --dry-run       # list posting order only
+```
+
 ### Share newsletter items to Bluesky (queue + auto-poster)
 
 Each item row in `out/latest.html` and `out/latest_short.html` has a 🦋 link. Run the
@@ -254,6 +268,13 @@ noon of the previous calendar day, grouped by category (alphabetical, then "Othe
 uncategorized) and sorted by rating, 50 per page. Each row shows the headline link and
 summary bullets plus a **Select** button that flips `published_articles.selected` on the
 spot (no reload).
+
+Each row also has a **✎ Edit** button that opens an inline form for the URL, headline
+(`short_summary`) and source (`site_name`) — e.g. to repoint an aggregator link at the
+underlying story. No other column changes, and embeddings are not recomputed. The form has
+**Delete** (hard-deletes the row, with an inline yes/no). **+ Add story** at the top inserts a
+row into the most recent session with category "Other", title = headline, source defaulting
+to the URL's domain, and `selected=1`. A URL that already exists is rejected.
 
 ```bash
 .venv/bin/python -m lib.steps.curate                 # http://127.0.0.1:8766/

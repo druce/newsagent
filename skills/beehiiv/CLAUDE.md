@@ -150,6 +150,13 @@ executing.
 
 ## Inputs are fixed (don't search)
 
+- Alternate source: the edition markdown (`out/latest-edition.md`). Convert it with
+  `scripts/edition_md_to_html.py` first: `## Section` → `<h1>` → beehiiv Heading 1 node, and
+  one `<hr />` content break before every heading but the first (the md's divider lines (`---`, `———`, …) are
+  ignored). Verify `heads` as well as imgs/hrs/links. The subtitle line goes to the post's
+  `web_subtitle` + `email_preview_text` via `setSubtitle()`, not the body. See SKILL.md
+  "Alternate source".
+
 - Digest: `/Users/drucev/projects/newsagent/out/latest-bsky.html` (symlink to the dated
   `out/bsky-YYYY-MM-DD-HHMMSS.html` from the `newsagent:bluesky` step; regenerated daily — image &
   post count vary, read it fresh each run). Body shape: a **flat list of posts** (no `<h2>`

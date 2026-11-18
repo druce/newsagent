@@ -1,6 +1,6 @@
 ---
 name: select
-description: Mine HDBSCAN noise for new clusters, consolidate the full cluster-name list, reassign every headline to a final section (or "Other"), and run global MMR top-K (default 100). Three sequential subagent dispatch rounds + one apply step.
+description: Mine HDBSCAN noise for new clusters, consolidate the full cluster-name list, reassign every headline to a final section (or "Other"), and run global MMR top-K (default 60). Three sequential subagent dispatch rounds + one apply step.
 ---
 
 # newsagent:select
@@ -16,7 +16,7 @@ flow with a three-round consolidation pipeline that produces a flat
 | A | Repechage: mine HDBSCAN noise for new themes | 50 noise items / batch | Opus |
 | B | Consolidate: unify HDBSCAN + repechage names | 1 batch (all clusters) | Opus |
 | C | Reassign: every headline → final name or "Other" | 25 headlines / batch | Haiku |
-| D | Global MMR top-K (default 100, λ=0.7) | in-process math | — |
+| D | Global MMR top-K (default 60, λ=0.7) | in-process math | — |
 | E | Build sections from MMR survivors | in-process | — |
 
 Phases A→C are sequentially dependent (B reads A's results; C reads B's
@@ -121,7 +121,7 @@ The three prepare flags are mutually exclusive with each other and with
 - Every headline gets a `cluster_name` (one of the consolidated final names
   or the literal string `"Other"`).
 - `state.newsletter_section_data` populated with exactly `--k` items
-  (top by global MMR; default 100).
+  (top by global MMR; default 60).
 - `state.clusters` populated with `{section_name: [headline_index_str, ...]}`
   using only the survivors of MMR.
 - `runs/<SID>/select.json` written with `n_selected`, per-section counts,

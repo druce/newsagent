@@ -73,11 +73,18 @@ window.bh._inline = function (el) {
  * Run on the dashboard (after uploads) BEFORE navigating to /edit. */
 window.bh.buildDoc = function (html) {
   var doc = new DOMParser().parseFromString(html, 'text/html');
-  var content = [], missing = [], imgs = 0, hrs = 0, links = 0;
+  var content = [], missing = [], imgs = 0, hrs = 0, links = 0, heads = 0;
   var kids = doc.body.children;
   for (var i = 0; i < kids.length; i++) {
     var el = kids[i], tag = el.tagName;
     if (tag === 'HR') { content.push({ type: 'horizontalRule' }); hrs++; continue; }
+    // Section headings (edition source): <h1>/<h2>/<h3> -> a real heading node at that level
+    // (beehiiv's "Heading 1" is { type:'heading', attrs:{ level:1 } }).
+    if (/^H[1-3]$/.test(tag)) {
+      var hin = window.bh._inline(el);
+      if (hin.length) { content.push({ type: 'heading', attrs: { level: +tag[1] }, content: hin }); heads++; }
+      continue;
+    }
     if (tag === 'P') {
       var img = el.querySelector('img');
       if (img) {
@@ -97,7 +104,7 @@ window.bh.buildDoc = function (html) {
   var docJson = { type: 'doc', content: content };
   window.__bh_doc = docJson;
   try { localStorage.setItem(window.bh.DOC_KEY, JSON.stringify(docJson)); } catch (e) {}
-  return { nodes: content.length, imgs: imgs, hrs: hrs, links: links, missing: missing };
+  return { nodes: content.length, imgs: imgs, hrs: hrs, links: links, heads: heads, missing: missing };
 };
 
 /* (/edit) Insert the NEXT chunk of the stashed doc into the live editor. Caller invokes this
@@ -148,17 +155,18 @@ window.bh.editorCounts = function () {
   var pm = document.querySelector('.ProseMirror');
   if (!pm || !pm.editor) return { error: 'no editor on .ProseMirror' };
   var j = pm.editor.getJSON();
-  var imgs = 0, hrs = 0, links = 0, emptyParas = 0, lastText = '';
+  var imgs = 0, hrs = 0, links = 0, heads = 0, emptyParas = 0, lastText = '';
   (function walk(n) {
     if (!n) return;
     if (n.type === 'imageBlock') imgs++;
+    if (n.type === 'heading') heads++;
     if (n.type === 'horizontalRule') hrs++;
     if (n.type === 'paragraph' && (!n.content || !n.content.length)) emptyParas++;
     if (n.marks && n.marks.some(function (m) { return m.type === 'link'; })) links++;
     if (n.type === 'text' && n.text) lastText = n.text;
     if (n.content) n.content.forEach(walk);
   })(j);
-  return { top: (j.content || []).length, imgs: imgs, hrs: hrs, links: links, emptyParas: emptyParas, lastText: lastText.slice(-90) };
+  return { top: (j.content || []).length, imgs: imgs, hrs: hrs, links: links, heads: heads, emptyParas: emptyParas, lastText: lastText.slice(-90) };
 };
 
 'build_doc helpers ready';

@@ -111,6 +111,8 @@ _SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_bsky_queue_status ON bsky_queue(status)",
     "CREATE INDEX IF NOT EXISTS idx_published_articles_published_at "
     "ON published_articles(published_at)",
+    "CREATE INDEX IF NOT EXISTS idx_published_articles_session_id "
+    "ON published_articles(session_id)",
 ]
 
 
@@ -401,8 +403,9 @@ class PublishedArticle:
     — exactly what `recent()` returns to `crossdedupe`. `embedding` is the
     OpenAI text-embedding-3-large vector of `title + short_summary`.
 
-    The `bsky_*` columns are placeholders: `bsky_queue` is still the share
-    daemon's source of truth, and nothing here writes them yet.
+    The `bsky_*` columns are written by `lib.bsky_queue.published`
+    (`bsky_share_v2`); v1's click-to-share daemon still uses `bsky_queue`.
+    Nothing in this class writes them.
     """
     session_id: str
     url: str

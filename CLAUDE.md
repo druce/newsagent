@@ -59,7 +59,7 @@ Each engine accepts `reasoning_effort: int = 4` and maps it to provider-specific
 
 ## State and data storage
 
-- `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`, `bsky_queue`, `published_articles`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`. `bsky_queue` backs the share-to-Bluesky daemon (`url` UNIQUE → permanent dedup). `published_articles` is one row per URL (`url` UNIQUE) for every rated article: title, short_summary (one-liner), summary (bullets), site_name, cat, rating, `selected` (MMR pick), a `title+short_summary` embedding (selected rows only), `published_at`, and placeholder `bsky_status/uri/error/attempts` (not written yet — `bsky_queue` stays authoritative until a later migration). Written by `select` (all rated rows, `published_at` NULL); `send` stamps `published_at` on the selected rows. "Published" = `selected=1 AND published_at IS NOT NULL` — the only rows `crossdedupe` reads for cross-day story-level suppression. On a URL seen again later, an unpublished row is overwritten by the newer session; a published row stays frozen; `bsky_*` is never overwritten.
+- `newsletter_agent.db` — SQLite source of truth. Tables: `urls`, `articles`, `sites` (with `scrape_method`), `newsletters`, `agent_state`, `bsky_queue`, `published_articles`. Every step checkpoints to `agent_state` keyed by `(session_id, step_name)`. `bsky_queue` backs the share-to-Bluesky daemon (`url` UNIQUE → permanent dedup). `published_articles` is one row per URL (`url` UNIQUE) for every rated article: title, short_summary (one-liner), summary (bullets), site_name, cat, rating, `selected` (MMR pick), a `title+short_summary` embedding (selected rows only), `published_at`, and `bsky_status/uri/error/attempts` (written by `lib.steps.bsky_share_v2`, which posts a session's selected rows by rating; v1's 🦋 daemon still uses `bsky_queue`). Written by `select` (all rated rows, `published_at` NULL); `send` stamps `published_at` on the selected rows. "Published" = `selected=1 AND published_at IS NOT NULL` — the only rows `crossdedupe` reads for cross-day story-level suppression. On a URL seen again later, an unpublished row is overwritten by the newer session; a published row stays frozen; `bsky_*` is never overwritten.
 - `config.yaml` — systemwide operator settings (loaded by `lib/appconfig.py`).
   Currently `blocked_domains`: domains (and their subdomains) dropped at
   gather time (initial URL) and again at download time after redirects
@@ -95,11 +95,13 @@ Every step is `.venv/bin/python -m lib.steps.<step>` (see `lib/steps/` for the l
 .venv/bin/python -m lib.steps.pipeline --resume SID
 .venv/bin/python -m lib.steps.pipeline --from cluster --session SID
 
-# Curation page: toggle published_articles.selected for sessions since noon yesterday
+# Curation page: toggle published_articles.selected for sessions since noon yesterday;
+# inline ✎ Edit (url / short_summary / site_name only), Delete, + Add story (latest session, cat Other)
 .venv/bin/python -m lib.steps.curate   # http://127.0.0.1:8766/
 
 # Issue draft from the curated picks (house style, docs/style/): /newsagent:edition
-.venv/bin/python -m lib.steps.edition --prepare-sections [--kickers N]
+# --prepare → one Opus agent merges the sessions' cats (+ flags dup stories) → --apply-merge RUN
+.venv/bin/python -m lib.steps.edition --prepare [--kickers N]
 
 # Install (Playwright browser is a separate step)
 .venv/bin/pip install -e ".[dev]"

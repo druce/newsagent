@@ -57,7 +57,7 @@ from lib.published import record_session_articles
 from lib.state import NewsletterAgentState
 
 
-_DEFAULT_TOP_K = 100
+_DEFAULT_TOP_K = 60
 _MMR_LAMBDA = 0.7
 _DEFAULT_REPECHAGE_BATCH = 50
 _DEFAULT_REASSIGN_BATCH = 25

@@ -343,3 +343,155 @@ def test_section_batch_includes_title_for_no_content_items(tmp_db, tmp_path):
     build_section_batches(selected_rows(tmp_db, SINCE), run_dir, 3, "DOCS")
     prompt = (run_dir / "edition-sections-batches" / "batch-000.md").read_text()
     assert "Amazon delivery drones take off" in prompt
+
+
+# ── cat merge (edition-merge) ────────────────────────────────────────────────
+
+def _rows(*specs):
+    """specs: (id, cat, rating) → curated-row dicts like selected_rows returns."""
+    return [{"id": i, "session_id": IN_SID, "url": f"https://ex.com/{i}", "title": f"T{i}",
+             "short_summary": f"S{i}", "summary": "- b", "site_name": "Ex", "cat": c,
+             "rating": r, "selected": 1} for i, c, r in specs]
+
+
+def _merge(assign, dupes=(), notes=()):
+    return {"assignments": [{"id": i, "cat": c} for i, c in assign],
+            "duplicates": [{"ids": list(ids), "reason": why} for ids, why in dupes],
+            "notes": list(notes)}
+
+
+def test_build_merge_batch_writes_rows_and_batch(tmp_path):
+    from lib.edition import MERGE_BATCHES, build_merge_batch
+    rows = _rows((1, "Huang Ouster", 9.0), (2, "Other", 1.0))
+    p = build_merge_batch(rows, tmp_path, kicker_count=4)
+    assert p == tmp_path / MERGE_BATCHES / "batch-000.json"
+    meta = json.loads(p.read_text())
+    assert meta["kind"] == "edition-merge" and meta["ids"] == [1, 2]
+    assert meta["kicker_count"] == 4
+    assert json.loads((tmp_path / "rows.json").read_text()) == rows
+    prompt = p.with_suffix(".md").read_text()
+    assert "Huang Ouster" in prompt and "S2" in prompt and IN_SID in prompt
+
+
+def test_validate_merge_ok_and_id_errors():
+    from lib.edition import validate_merge
+    batch = {"kind": "edition-merge", "ids": [1, 2, 3]}
+    assert validate_merge(_merge([(1, "A"), (2, "A"), (3, "B")]), batch)[0] == []
+    errors = validate_merge(_merge([(1, "A"), (1, "A"), (4, " ")]), batch)[0]
+    text = " ".join(errors)
+    assert "missing" in text and "extra" in text and "duplicate" in text
+    assert "empty cat" in text
+
+
+def test_validate_merge_bad_duplicate_groups():
+    from lib.edition import validate_merge
+    batch = {"kind": "edition-merge", "ids": [1, 2]}
+    bad = _merge([(1, "A"), (2, "A")], dupes=[((1,), "solo"), ((1, 9), "unknown id")])
+    text = " ".join(validate_merge(bad, batch)[0])
+    assert "at least 2" in text and "9" in text
+
+
+def test_validate_merge_cluster_count_and_other_are_warnings():
+    from lib.edition import validate_merge
+    ids = list(range(1, 42))
+    batch = {"kind": "edition-merge", "ids": ids}
+    errors, warnings = validate_merge(_merge([(i, f"C{i}") for i in ids]), batch)
+    assert errors == [] and any("41 clusters" in w for w in warnings)
+    errors, warnings = validate_merge(_merge([(i, "Other") for i in ids]), batch)
+    assert errors == [] and any("Other" in w for w in warnings)
+
+
+def test_apply_merge_regroups_rows_into_section_batches(tmp_path, tmp_db):
+    from lib.edition import MERGE_RESULTS, SECTIONS_BATCHES, apply_merge, build_merge_batch
+    rows = _rows((1, "Jensen Huang Downfall", 5.0), (2, "Jensen Huang Ouster", 9.0),
+                 (3, "Other", 2.0), (4, "Data Centers", 3.0))
+    build_merge_batch(rows, tmp_path, kicker_count=3)
+    (tmp_path / MERGE_RESULTS).mkdir()
+    (tmp_path / MERGE_RESULTS / "batch-000.json").write_text(json.dumps(_merge(
+        [(1, "Huang and Nvidia"), (2, "Huang and Nvidia"), (3, "Data Centers"),
+         (4, "Data Centers")], dupes=[((1, 2), "same ouster news")])))
+    paths = apply_merge(tmp_path, docs="DOCS")
+    metas = [json.loads(p.read_text()) for p in paths]
+    assert [m["cat"] for m in metas] == ["Huang and Nvidia", "Data Centers"]  # max rating first
+    assert metas[0]["ids"] == [2, 1] and metas[1]["ids"] == [4, 3]           # rating within
+    assert all(m["kicker_count"] == 3 for m in metas)
+    assert paths[0].parent == tmp_path / SECTIONS_BATCHES
+    merged = json.loads((tmp_path / "merge.json").read_text())
+    assert merged["duplicates"] == [{"ids": [1, 2], "reason": "same ouster news"}]
+
+
+def test_apply_merge_rejects_invalid_result(tmp_path):
+    from lib.edition import MERGE_RESULTS, apply_merge, build_merge_batch
+    build_merge_batch(_rows((1, "A", 1.0), (2, "B", 1.0)), tmp_path, kicker_count=3)
+    (tmp_path / MERGE_RESULTS).mkdir()
+    (tmp_path / MERGE_RESULTS / "batch-000.json").write_text(json.dumps(_merge([(1, "A")])))
+    with pytest.raises(ValueError, match="missing"):
+        apply_merge(tmp_path, docs="DOCS")
+
+
+def test_render_dupes_comment_under_each_item():
+    out = render_edition_md(ISSUE, {1: "https://a.com", 2: "https://b.com", 3: "https://c.com"},
+                            "AI Reading", dupes={1: ['"Sparking joy?" (same launch)'],
+                                                 2: ['"Brin it on" (same launch)']})
+    assert out.count("<!-- possible duplicate:") == 2
+    assert '<!-- possible duplicate: "Sparking joy?" (same launch) -->' in out
+    plain = render_edition_md(ISSUE, {1: "u", 2: "u", 3: "u"}, "AI Reading")
+    assert "possible duplicate:" not in plain
+
+
+def test_check_batch_edition_merge(tmp_path):
+    bd, rd = tmp_path / "edition-merge-batches", tmp_path / "edition-merge-results"
+    bd.mkdir(); rd.mkdir()
+    (bd / "batch-000.json").write_text(json.dumps({"kind": "edition-merge", "ids": [1, 2]}))
+    (rd / "batch-000.json").write_text(json.dumps(_merge([(1, "A"), (2, "A")])))
+    ok = _check(rd / "batch-000.json")
+    assert ok.returncode == 0 and ok.stdout.startswith("OK (edition-merge)"), ok.stdout
+    (rd / "batch-000.json").write_text(json.dumps(_merge([(1, "A")])))
+    bad = _check(rd / "batch-000.json")
+    assert bad.returncode == 1 and "missing" in bad.stdout
+
+
+def test_cli_prepare_apply_merge_and_dupe_notes(tmp_db, tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    import lib.steps.edition as step
+
+    a = _insert(tmp_db, url="https://a.com/1", cat="Huang Downfall", rating=5.0)
+    b = _insert(tmp_db, url="https://a.com/2", cat="Huang Ouster", rating=9.0)
+    monkeypatch.setattr(step, "_RUNS", tmp_path / "runs")
+    monkeypatch.setattr(step, "_OUT", tmp_path / "out")
+    r = CliRunner()
+
+    res = r.invoke(step.cli, ["--prepare", "--since", SINCE, "--db", tmp_db, "--kickers", "3"])
+    assert res.exit_code == 0, res.output
+    run = res.output.split()[1]
+    run_dir = tmp_path / "runs" / run
+    assert "edition-merge-batches/batch-000.json" in res.output and "2 categories" in res.output
+
+    res = r.invoke(step.cli, ["--apply-merge", run])  # no result yet
+    assert res.exit_code == 1 and "no merge result" in res.output
+
+    (run_dir / "edition-merge-results").mkdir()
+    (run_dir / "edition-merge-results" / "batch-000.json").write_text(json.dumps(
+        _merge([(a, "Huang"), (b, "Huang")], dupes=[((a, b), "same news")])))
+    res = r.invoke(step.cli, ["--apply-merge", run])
+    assert res.exit_code == 0, res.output
+    assert "2 categories → 1 sections" in res.output and "1 possible duplicate" in res.output
+    assert "2 items  Huang" in res.output
+
+    (run_dir / "edition-sections-results").mkdir()
+    (run_dir / "edition-sections-results" / "batch-000.json").write_text(json.dumps(
+        {**T, "cat": "Huang", "items": [_item(b, kicker="Board stiff"), _item(a, kicker="Jen and done")]}))
+    assert r.invoke(step.cli, ["--apply-sections", run]).exit_code == 0
+    (run_dir / "edition-edit-results").mkdir()
+    (run_dir / "edition-edit-results" / "batch-000.json").write_text(json.dumps(
+        {"subtitle": "Sub", "subtitle_alts": list("abcde"), "notes": [],
+         "clusters": [{**T, "cat": "Huang", "items": [_item(b, kicker="Board stiff"),
+                                                       _item(a, kicker="Jen and done")]}]}))
+    res = r.invoke(step.cli, ["--apply-edit", run, "--db", tmp_db, "--no-images"])
+    assert res.exit_code == 0, res.output
+    assert "note: possible duplicates: " in res.output and "same news" in res.output
+    md = (tmp_path / "out" / "latest-edition.md").read_text()
+    assert '<!-- possible duplicate: "Jen and done" (same news) -->' in md
+    with sqlite3.connect(tmp_db) as conn:  # DB cat untouched
+        assert conn.execute("SELECT cat FROM published_articles WHERE id=?", (a,)).fetchone()[0] \
+            == "Huang Downfall"
