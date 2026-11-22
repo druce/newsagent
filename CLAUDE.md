@@ -34,7 +34,8 @@ Do not import from that path; do not modify it.
 Plus the standalone `newsagent:bluesky`, `newsagent:beehiiv`, and the
 recovery/maintenance skills (including `newsagent:backfill-published`, which
 rebuilds the `published_articles` store from past `select` checkpoints). `newsagent:finalize` chains bluesky → beehiiv after
-a Chrome/beehiiv-login pre-flight; it is the only skill that hard-requires the
+a Chrome/beehiiv-login pre-flight (`finalize edition` skips bluesky and imports `out/latest-edition.md`;
+`newsagent:edition` calls it automatically after rendering); it is the only skill that hard-requires the
 Chrome extension end to end and it never falls back to a headless browser.
 
 `dedupe` runs between `download` and `summarize` so duplicate articles aren't summarized twice. It's a full member of `WORKFLOW_STEPS` (see `lib/state.py:25`).

@@ -102,6 +102,16 @@ def test_validate_section_duplicate_and_long_kicker_warning():
     assert any("7 words" in w for w in warnings)
 
 
+def test_validate_section_summary_length():
+    long = " ".join(["word"] * 26)
+    mid = " ".join(["word"] * 21)
+    errors, warnings = validate_section(
+        {**T, "cat": "A", "items": [_item(1, summary=long), _item(2, summary=mid)]}, SECTION_BATCH)
+    assert any("id 1" in e and "summary over 25 words (26)" in e for e in errors)
+    assert not any("id 2" in e for e in errors)
+    assert any("id 2" in w and "summary over 20 words (21)" in w for w in warnings)
+
+
 def test_validate_issue_flattens_clusters():
     batch = {"kind": "edition-issue", "ids": [1, 2], "kicker_count": 3}
     ok = {"subtitle": "Hacktoberfest", "subtitle_alts": list("abcde"),
@@ -144,7 +154,7 @@ URLS = {1: "https://a.com/x?utm_source=z", 2: "https://b.com/(y)", 3: "https://c
 
 def test_render_cluster_title():
     md = render_edition_md(ISSUE, URLS, "AI Reading")
-    block = "## Tim Cooked\n<!-- title alts: A | B | C -->\n"
+    block = "## Tim Cooked\n- Alt titles: A | B | C\n"
     assert block in md
     assert md.index(block) < md.index("[Brin it on")
 
@@ -154,31 +164,32 @@ def test_render_edition_md_format():
     lines = md.splitlines()
     assert lines[0] == "# AI Reading for Sunday November 15"
     assert "Software eats itself" in lines[1]
-    assert "<!-- subtitle alts: s1 | s2 | s3 | s4 | s5 -->" in md
+    assert "- Alt subtitles: s1 | s2 | s3 | s4 | s5" in md
+    assert "<!--" not in md
     assert ("[Brin it on: Sergey Brin says \\[Argon\\] helps](https://a.com/x)"
             " - _Business\\_Insider_") in md
     assert "[Sparking joy? Meta releases a thing](https://b.com/%28y%29) - _Business Insider_" in md
     assert "[No kicker here](https://c.com/z)" in md
-    assert "<!-- alts: a | b | c -->" in md
-    assert "<!-- flag: possible duplicate of 1 - -> check -->" in md
-    assert md.count("\n———\n") == 1
+    assert "- Alt kickers: a | b | c" in md
+    assert "- Flag: possible duplicate of 1 --> check" in md
+    assert md.count("\n---\n") == 1
     assert lines[-1] == "Follow the latest AI headlines via druce.ai on Bluesky"
 
 
-def test_render_image_line_and_none_comment():
+def test_render_image_line_and_no_image_bullet():
     imgs = {1: ("../download/edition-images/x.jpg", ""), 2: (None, "logo")}
     lines = render_edition_md(ISSUE, URLS, "T", images=imgs).splitlines()
     i1 = next(i for i, l in enumerate(lines) if l.startswith("[Brin it on"))
     assert lines[i1 - 1] == "![](../download/edition-images/x.jpg)"
     i2 = next(i for i, l in enumerate(lines) if l.startswith("[Sparking joy?"))
-    assert lines[i2 - 1] == "<!-- img: none (logo) -->"
+    assert lines[i2 - 1] == "- No image: logo"
     i3 = next(i for i, l in enumerate(lines) if l.startswith("[No kicker"))
-    assert lines[i3 - 1] == "<!-- img: none (no og:image) -->"
+    assert lines[i3 - 1] == "- No image: no og:image"
 
 
 def test_render_no_images_kwarg_emits_nothing():
     md = render_edition_md(ISSUE, URLS, "T")
-    assert "![" not in md and "img:" not in md
+    assert "![" not in md and "No image" not in md
 
 
 # ── recent_kickers ───────────────────────────────────────────────────────────
@@ -235,7 +246,7 @@ def test_section_and_edit_round_trip_uses_db_urls(tmp_db, tmp_path, monkeypatch)
     md = path.read_text()
     assert stats == {"with": 1, "total": 2}
     assert "![](../download/edition-images/abc.jpg)" in md
-    assert "<!-- img: none (fetch failed) -->" in md
+    assert "- No image: fetch failed" in md
     path2, stats2 = apply_edit(run_dir, tmp_db, out_dir, now=datetime(2026, 11, 15, 9, 0, 0),
                                images=False)
     assert stats2 is None and "![" not in path2.read_text()
@@ -429,14 +440,14 @@ def test_apply_merge_rejects_invalid_result(tmp_path):
         apply_merge(tmp_path, docs="DOCS")
 
 
-def test_render_dupes_comment_under_each_item():
+def test_render_dupes_bullet_under_each_item():
     out = render_edition_md(ISSUE, {1: "https://a.com", 2: "https://b.com", 3: "https://c.com"},
                             "AI Reading", dupes={1: ['"Sparking joy?" (same launch)'],
                                                  2: ['"Brin it on" (same launch)']})
-    assert out.count("<!-- possible duplicate:") == 2
-    assert '<!-- possible duplicate: "Sparking joy?" (same launch) -->' in out
+    assert out.count("- Possible duplicate:") == 2
+    assert '- Possible duplicate: "Sparking joy?" (same launch)' in out
     plain = render_edition_md(ISSUE, {1: "u", 2: "u", 3: "u"}, "AI Reading")
-    assert "possible duplicate:" not in plain
+    assert "Possible duplicate:" not in plain
 
 
 def test_check_batch_edition_merge(tmp_path):
@@ -491,7 +502,15 @@ def test_cli_prepare_apply_merge_and_dupe_notes(tmp_db, tmp_path, monkeypatch):
     assert res.exit_code == 0, res.output
     assert "note: possible duplicates: " in res.output and "same news" in res.output
     md = (tmp_path / "out" / "latest-edition.md").read_text()
-    assert '<!-- possible duplicate: "Jen and done" (same news) -->' in md
+    assert '- Possible duplicate: "Jen and done" (same news)' in md
     with sqlite3.connect(tmp_db) as conn:  # DB cat untouched
         assert conn.execute("SELECT cat FROM published_articles WHERE id=?", (a,)).fetchone()[0] \
             == "Huang Downfall"
+
+
+def test_render_notes_as_bullets_under_subtitle():
+    md = render_edition_md({**ISSUE, "notes": ["kept both IPO clusters"]}, URLS, "T")
+    lines = md.splitlines()
+    assert lines[1] == ISSUE["subtitle"]
+    assert lines[2].startswith("- Alt subtitles: ")
+    assert lines[3] == "- Note: kept both IPO clusters"

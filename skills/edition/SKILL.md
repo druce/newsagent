@@ -1,6 +1,6 @@
 ---
 name: edition
-description: Draft today's newsletter issue in house style from the stories curated in the curate page (published_articles rows with selected=1, sessions since noon yesterday). One Opus subagent first merges the sessions' overlapping categories into ~15–25 clusters and flags likely duplicate stories, then one Opus subagent per cluster writes the items (kicker + one-sentence summary + source label + N alternative kickers, default 3), then one Opus subagent does the final edit (issue order, copy edit against docs/style/, kicker de-duplication, a funny title + alts per cluster, subtitle), and a candidate og:image is fetched for every item. Writes out/edition-<stamp>.md for the editor to edit. Use after curating, when the user wants "the edition", "today's draft", or a house-style draft from their picks.
+description: Draft today's newsletter issue in house style from the stories curated in the curate page (published_articles rows with selected=1, sessions since noon yesterday). One Opus subagent first merges the sessions' overlapping categories into ~15–25 clusters and flags likely duplicate stories, then one Opus subagent per cluster writes the items (kicker + one-sentence summary + source label + N alternative kickers, default 3), then one Opus subagent does the final edit (issue order, copy edit against docs/style/, kicker de-duplication, a funny title + alts per cluster, subtitle), and a candidate og:image is fetched for every item. Writes out/edition-<stamp>.md, then imports it into a beehiiv draft via newsagent:finalize edition, where the editor edits it. Use after curating, when the user wants "the edition", "today's draft", or a house-style draft from their picks.
 ---
 
 # newsagent:edition
@@ -46,7 +46,7 @@ Dispatch ONE agent: `subagent_type: "general-purpose"`, `model: "opus"`,
 Prints `N categories → M sections`, then one line per section with its batch-NNN.json
 path and prompt `.md`, then any `duplicate?` groups and notes. Tell the user the section
 count and every duplicate group (they are only flagged; the draft keeps both stories,
-marked `<!-- possible duplicate: … -->`). If it fails validation, re-dispatch the merge
+marked `- Possible duplicate: …`). If it fails validation, re-dispatch the merge
 agent and run apply again.
 
 Fallback: `--prepare-sections` skips the merge and writes one section batch per session
@@ -104,14 +104,29 @@ This writes `out/edition-<stamp>.md` and the `out/latest-edition.md` symlink. UR
 database by id, with tracking params stripped (house-style §3); the model never writes links.
 It also fetches a candidate image for every item (og:image, CardyB fallback, resized to 600px
 wide, cached in `download/edition-images/`), drawn as `![](../download/edition-images/…)` above
-the item. Missing ones are `<!-- img: none (reason) -->`. This takes about 30 seconds; add
+the item. Missing ones are `- No image: reason`. This takes about 30 seconds; add
 `--no-images` to re-render without it. Each cluster opens with `## <title>` and
-`<!-- title alts: … -->`. Report to the user:
+`- Alt titles: …`. Report to the user:
 - the path
 - the subtitle
 - the `Images: N/M` line
 - the cluster, item and flag counts
 - every `note:` and `warning:` line
 
-The `<!-- alts / title alts / img / flag / note -->` comments are
-for the editor. They stay visible in an editor and never render.
+Editor notes are plain bullet lines, `- Label: text`: `Alt subtitles` and `Note` under the
+subtitle, `Alt titles` under each heading, and `No image`, `Alt kickers`, `Flag`,
+`Possible duplicate` with each item. They go into the beehiiv draft as bulleted lists, so
+the editor reads them there and deletes them before sending.
+
+## Step 7: make the beehiiv draft (automatic)
+
+Right after Step 6, without asking, invoke `newsagent:finalize` with args `edition` and
+follow it end to end: Chrome pre-flight, then newsagent:beehiiv's edition-markdown source
+against `out/latest-edition.md`. It creates a **draft only** and never publishes. Editing
+now happens in beehiiv, so import the md exactly as rendered.
+
+If pre-flight fails, report the Step 6 results plus the failed check and its fix, and stop:
+the md is complete, and `/newsagent:finalize edition` imports it later. Add to the report:
+- the beehiiv `draft_url`, title and `email_subject_line` readback
+- the subtitle/preview readback
+- the persisted `editorCounts()` against the converter's counts

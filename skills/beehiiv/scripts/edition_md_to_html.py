@@ -13,15 +13,19 @@ Mapping:
   `![](../download/...)`     -> <p><img src='file:///abs/download/...'></p>
   `[text](url) - _Source_`   -> <p><a href='url'>text</a> - <em>Source</em></p>
   `Follow the latest ...`    -> footer paragraph linking the Bluesky profile
-  `<!-- ... -->`             -> dropped (editor notes)
+  `- Label: text` bullets     -> <ul><li>…</li></ul>  (editor notes from newsagent:edition:
+                                alt kickers/titles/subtitles, flags, duplicates, missing
+                                images; consecutive bullets form one list)
+  `<!-- ... -->`             -> dropped (old-style editor notes)
   first plain line before
   the first `## ` heading    -> NOT in the body: printed as "subtitle" for setSubtitle()
                                 (beehiiv's web_subtitle + email_preview_text fields)
   any other line             -> <p><em>line</em></p>
 
 Exits non-zero on an item line it can't parse, so a malformed edit is caught before
-anything reaches beehiiv. Prints {items, headings, hrs, imgs, links, subtitle} — the
-counts are the verification targets for the editor; subtitle is null when the md has none.
+anything reaches beehiiv. Prints {items, headings, hrs, imgs, links, lists, bullets,
+subtitle} — the counts are the verification targets for the editor; subtitle is null when
+the md has none.
 """
 from __future__ import annotations
 
@@ -40,9 +44,22 @@ _IMG = re.compile(r"^!\[[^\]]*\]\((?:\.\./)?([^)]+)\)$")
 
 def convert(md: str, root: str) -> tuple[str, dict]:
     out = []
-    n = {"items": 0, "headings": 0, "hrs": 0, "imgs": 0, "links": 0, "subtitle": None}
+    n = {"items": 0, "headings": 0, "hrs": 0, "imgs": 0, "links": 0,
+         "lists": 0, "bullets": 0, "subtitle": None}
+    bullets: list[str] = []
+
+    def flush() -> None:
+        if bullets:
+            out.append("<ul>" + "".join(f"<li>{html.escape(b)}</li>" for b in bullets) + "</ul>")
+            n["lists"] += 1; n["bullets"] += len(bullets)
+            bullets.clear()
+
     for raw in md.split("\n"):
         line = raw.strip()
+        if line.startswith("- ") and not _RULE.match(line):
+            bullets.append(line[2:].strip())
+            continue
+        flush()
         # divider lines in any spelling (---, ----, ———, ***) — breaks come only from headings
         if not line or line.startswith("# ") or line.startswith("<!--") or _RULE.match(line):
             continue
@@ -75,6 +92,7 @@ def convert(md: str, root: str) -> tuple[str, dict]:
         if len(line) > 2 and line[0] == line[-1] and line[0] in "*_":
             line = line[1:-1].strip()
         out.append(f"<p><em>{html.escape(line)}</em></p>")
+    flush()
     return "<html><body>\n" + "\n".join(out) + "\n</body></html>\n", n
 
 

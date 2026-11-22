@@ -295,10 +295,13 @@ articles:
    `## ` title (plus N alternatives) for each cluster, and the subtitle.
 3. Python fetches a candidate image for every item (the article's og:image, resized to
    600px wide, cached in `download/edition-images/`) and puts it above the item. Delete
-   the ones you don't want; missing ones show as `<!-- img: none (reason) -->`.
+   the ones you don't want; missing ones show as `- No image: reason`.
+4. `/newsagent:finalize edition` runs automatically and imports the md into a beehiiv
+   draft (Chrome extension + beehiiv login required). Edit the issue there.
 
-The output is `out/edition-<stamp>.md` (and `out/latest-edition.md`), to edit by hand.
-Alternatives and flags appear as HTML comments under each item. The style is defined by
+The output is `out/edition-<stamp>.md` (and `out/latest-edition.md`). Alternatives, flags,
+possible duplicates and merge notes appear as `- Label: text` bullets, which become bulleted
+lists in the beehiiv draft; delete them there before sending. The style is defined by
 `docs/style/style-guide.md`, `gold-headlines.md` and `house-style.md`; edit those to
 change it.
 

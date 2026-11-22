@@ -64,10 +64,11 @@ THE FINAL EDIT — do these in order, as separate passes over the whole issue:
 1. Shape the issue (house-style §1).
    - Pick the lead: the day's dominant story by editorial weight, not by input order. Put that cluster first, with 3–10 items.
    - Order the rest: markets/compute, policy, security, labor in the middle; culture, oddities and light items at the tail.
-   - You may move an item to a better-fitting cluster, split a cluster, or rename a cluster (`cat` is a working label, not printed). Many single-item clusters are fine. Never drop or merge items.
+   - You may move an item to a better-fitting cluster, split a cluster, merge clusters, or rename a cluster (`cat` is a working label, not printed). Single-item clusters should be moved to a relevant cluster or the final catchall cluster. Never drop items or merge multiple items into a single item.
 
 2. Copy edit every item.
-   - Check `summary` against §2 and §3: one sentence, 15–30 words (cap 35), actor first, present tense, at least one concrete specific, no terminal period, semicolon not a second sentence. Use AI, US/UK/UN, `$40 billion`, `%`, model and company names as the vendor writes them, American spelling, straight quotes, and no em dashes.
+   - Simplify every `summary`: it is the headline, so make it as simple as possible. One plain sentence, who did what plus the single most striking specific, 10–20 words, hard cap 25. COUNT THE WORDS and cut any over 20: drop backstory, second facts, "who previously…" modifiers, lists and secondary names; avoid semicolons. When in doubt, cut a clause, not the specific.
+   - Check `summary` against §2 and §3: actor first, present tense, no terminal period. Use AI, US/UK/UN, `$40 billion`, `%`, model and company names as the vendor writes them, American spelling, straight quotes, and no em dashes.
    - Fix grammar, typos and names (§6 items 2, 5 and 6).
    - Check each `source` against the §2 label table.
    - Each item carries `facts` (the original one-line summary) as ground truth. Your summary may not state anything that is not in `facts` or the drafted summary.

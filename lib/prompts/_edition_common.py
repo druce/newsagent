@@ -18,7 +18,7 @@ RULES = """\
 OVERRIDES = """\
 - EVERY item gets a kicker (this overrides house-style's "about one in five").
 - Under every item, propose exactly {kicker_count} alternative kickers in `alt_kickers`. Across an item's alternatives, mix the five techniques in gold-headlines.md (title/pop-culture swap, pun on a name, idiom or jargon twist, deadpan, ventriloquism); do not give the same technique twice in a row. Alternatives must differ in joke, not just wording.
-- Never drop or merge an item. If an item looks like a duplicate of another, or like something house-style §5 would cut, keep it and set `flag` to one short line (e.g. "possible duplicate of 123", "§5: vendor PR without a hook"). Otherwise leave `flag` null.
+- Never drop items or merge multiple items into a single item. If an item looks like a duplicate of another, or like something house-style §5 would cut, keep it and set `flag` to one short line (e.g. "possible duplicate of 123", "§5: vendor PR without a hook"). Otherwise leave `flag` null.
 - You do not write links. Each item is identified by its `id`; links are attached later from the database."""
 
 

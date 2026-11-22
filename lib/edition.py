@@ -49,8 +49,12 @@ EDIT_BATCHES = "edition-edit-batches"
 EDIT_RESULTS = "edition-edit-results"
 SUBTITLE_ALTS = 5
 MAX_KICKER_WORDS = 7
+# Item summary (the headline): aim <= 20 words, hard cap 25 — same cap as the pipeline's
+# write_section headlines. Over the cap fails check_batch so the agent rewrites it.
+TARGET_SUMMARY_WORDS = 20
+MAX_SUMMARY_WORDS = 25
 FOOTER = "Follow the latest AI headlines via druce.ai on Bluesky"
-SEPARATOR = "———"
+SEPARATOR = "---"  # markdown horizontal rule (content break)
 
 
 # ── batch files ──────────────────────────────────────────────────────────────
@@ -145,6 +149,12 @@ def _check_items(items: list, batch: dict) -> tuple[list[str], list[str]]:
             errors.append(f"id {it.id}: empty summary")
         if len(it.alt_kickers) != n:
             errors.append(f"id {it.id}: alt_kickers has {len(it.alt_kickers)}, need {n}")
+        sw = len(it.summary.split())
+        if sw > MAX_SUMMARY_WORDS:
+            errors.append(f"id {it.id}: summary over {MAX_SUMMARY_WORDS} words ({sw}); "
+                          "cut to one fact, drop the second clause")
+        elif sw > TARGET_SUMMARY_WORDS:
+            warnings.append(f"id {it.id}: summary over {TARGET_SUMMARY_WORDS} words ({sw})")
         words = len(it.kicker.split())
         if words > MAX_KICKER_WORDS:
             warnings.append(f"id {it.id}: kicker over {MAX_KICKER_WORDS} words ({words})")
@@ -363,8 +373,11 @@ def _href(url: str) -> str:
     return url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
 
 
-def _comment(s: str) -> str:
-    return s.replace("--", "- -")
+def _note(label: str, text: str) -> str:
+    """One editor-note bullet, e.g. `- Alt kickers: a | b | c`. Visible in the md and
+    imported into beehiiv as a bulleted list, so the editor reads them there and
+    deletes them before sending."""
+    return f"- {label}: " + " ".join(text.split())
 
 
 def _item_line(it: dict, url: str) -> str:
@@ -385,30 +398,31 @@ def render_edition_md(issue: dict, urls: dict[int, str], title: str,
                       dupes: dict[int, list[str]] | None = None) -> str:
     """`images` maps item id → (path relative to the md file, "") or (None, reason).
     None (the default) emits no image lines at all. `dupes` maps item id → the
-    merge step's possible-duplicate notes, one comment line each."""
+    merge step's possible-duplicate notes, one bullet each. Editor notes (alternatives,
+    flags, missing images, merge notes) are `- Label: text` bullets, not comments."""
     out = [f"# {title}", issue["subtitle"].strip(),
-           f"<!-- subtitle alts: {_comment(' | '.join(issue['subtitle_alts']))} -->"]
+           _note("Alt subtitles", " | ".join(issue["subtitle_alts"]))]
     for note in issue.get("notes") or []:
-        out.append(f"<!-- note: {_comment(note)} -->")
+        out.append(_note("Note", note))
     blocks = []
     for cluster in issue["clusters"]:
         lines = []
         if (cluster.get("title") or "").strip():
             lines.append(f"## {cluster['title'].strip()}")
-            lines.append(f"<!-- title alts: {_comment(' | '.join(cluster.get('title_alts') or []))} -->")
+            lines.append(_note("Alt titles", " | ".join(cluster.get("title_alts") or [])))
             lines.append("")
         for it in cluster["items"]:
             url = strip_tracking_params(urls.get(int(it["id"])) or "#")
             if images is not None:
                 img, reason = images.get(int(it["id"]), (None, "no og:image"))
                 lines.append(f"![]({_href(img)})" if img
-                             else f"<!-- img: none ({_comment(reason)}) -->")
+                             else _note("No image", reason))
             lines.append(_item_line(it, url))
-            lines.append(f"<!-- alts: {_comment(' | '.join(it['alt_kickers']))} -->")
+            lines.append(_note("Alt kickers", " | ".join(it["alt_kickers"])))
             if it.get("flag"):
-                lines.append(f"<!-- flag: {_comment(it['flag'])} -->")
+                lines.append(_note("Flag", it["flag"]))
             for d in (dupes or {}).get(int(it["id"]), []):
-                lines.append(f"<!-- possible duplicate: {_comment(d)} -->")
+                lines.append(_note("Possible duplicate", d))
             lines.append("")
         blocks.append("\n".join(lines).rstrip("\n"))
     out.append("")

@@ -1,6 +1,6 @@
 ---
 name: finalize
-description: End-to-end daily Bluesky roundup — runs newsagent:bluesky to build the digest, then newsagent:beehiiv to import it into a beehiiv draft via the logged-in Chrome session. Pre-flights Chrome and aborts before doing any work if the extension or the beehiiv login is unavailable. Use when the user wants to "finalize", "do the daily roundup", "build and import today's digest", or run bluesky and beehiiv back to back.
+description: End-to-end daily Bluesky roundup — runs newsagent:bluesky to build the digest, then newsagent:beehiiv to import it into a beehiiv draft via the logged-in Chrome session. With the argument `edition` it skips bluesky and imports the newsagent:edition markdown (out/latest-edition.md) instead; newsagent:edition calls it that way automatically. Pre-flights Chrome and aborts before doing any work if the extension or the beehiiv login is unavailable. Use when the user wants to "finalize", "do the daily roundup", "build and import today's digest", or run bluesky and beehiiv back to back.
 compatibility: Requires the Claude Chrome extension AND a logged-in app.beehiiv.com session — the same hard requirement as newsagent:beehiiv. macOS (pbcopy). There is no headless fallback — if Chrome is unavailable this skill reports failure and stops.
 ---
 
@@ -16,9 +16,24 @@ This skill is a **thin orchestrator**. It deliberately duplicates none of the
 two skills' instructions — invoke each one and follow it as written. When
 `bluesky` or `beehiiv` changes, this file stays correct.
 
-No arguments. The Bluesky handle is always `druce.ai` (see
-`project_bsky_default_handle` in the memory store) and both skills run with
+**Arguments:** none for the Bluesky roundup. The Bluesky handle is always `druce.ai`
+(see `project_bsky_default_handle` in the memory store) and both skills run with
 their own defaults.
+
+**`edition`** — import the house-style edition instead of the Bluesky digest:
+
+```
+Chrome pre-flight → newsagent:beehiiv (edition source) → report
+```
+
+Phase 1 (bluesky) is skipped entirely, so the Bluesky dedup marker is never touched
+and the "do not re-run phase 1" rule below doesn't apply. Phase 2 follows
+newsagent:beehiiv's **"Alternate source: an edition markdown file"** section against
+`out/latest-edition.md` (convert with `edition_md_to_html.py`, `setSubtitle` after
+creating the draft, verify headings, lists and bullets as well). `newsagent:edition`
+invokes `newsagent:finalize edition` as its last step. If the beehiiv phase fails,
+re-run `/newsagent:finalize edition` (or `/newsagent:beehiiv` with the edition
+source); nothing upstream needs redoing.
 
 ## Phase 0 — Chrome pre-flight (before ANY work)
 
@@ -127,7 +142,8 @@ marker means they likely need `--no-dedup` to reproduce the same digest.
 On success, report in this order:
 
 - **Digest** — the stamped `out/bsky-YYYY-MM-DD-HHMMSS.html` path, plus post and
-  image counts.
+  image counts. (Edition mode: the `out/edition-<stamp>.md` path and the converter's
+  counts instead.)
 - **Draft** — the beehiiv `draft_url`, the title, and the `email_subject_line`
   readback (they must match; a bare `"AI Reading for"` means the subject patch
   didn't take), and `display_thumbnail_on_web` (must be `false`).

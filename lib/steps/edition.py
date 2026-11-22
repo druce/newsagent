@@ -166,7 +166,7 @@ def cli(prepare: bool, apply_merge_run: str | None, prepare_sections: bool,
     click.echo(f"Subtitle: {result['subtitle']}")
     if img_stats:
         click.echo(f"Images: {img_stats['with']}/{img_stats['total']} items "
-                   f"(missing ones are marked <!-- img: none (reason) -->)")
+                   f"(missing ones are marked `- No image: reason`)")
     _, dupe_notes = merge_duplicates(run_dir, result)
     for note in (result.get("notes") or []) + dupe_notes:
         click.echo(f"  note: {note}")

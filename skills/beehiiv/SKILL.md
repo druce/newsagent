@@ -74,18 +74,27 @@ pbcopy < out/edition-<stamp>.html                                               
   heading except the first. The converter ignores the md's own divider lines (`---`, `———`, …) and strips `*…*` from asides, so a missing or
   extra divider in the hand-edited md never produces a doubled or absent break. There is NO
   break between items inside a section.
-- The `# Title` line is dropped (the title comes from the API, step 1); `<!-- … -->` editor
-  notes are dropped. The **subtitle** (the first plain line under the title) is NOT put in
+- The `# Title` line is dropped (the title comes from the API, step 1). The edition's editor
+  notes are `- Label: text` bullet lines (alt kickers/titles/subtitles, flags, possible
+  duplicates, missing images, merge notes); consecutive bullets become one `<ul>`, which
+  `buildDoc` turns into a beehiiv **bulleted list** (`bulletList` > `listItem` > `paragraph`).
+  They are meant to be read and deleted in the beehiiv editor before sending. Old-style
+  `<!-- … -->` comments are still dropped. The **subtitle** (the first plain line under the title) is NOT put in
   the body: the converter prints it as `"subtitle"`, and right after step 1 call
   `window.bh.setSubtitle(id, subtitle)`, which sets `web_subtitle` and `email_preview_text`
   to it. Confirm `{subtitle_ok:true, preview_ok:true}`. (If `subtitle` is null, skip it.)
 - Images are `download/edition-images/…` (not `bsky-images`); `build_image_clipboard.py`
   reads any `file://` src, so nothing else changes.
 - The converter fails on an item line it can't parse (`[text](url) - _Source_`) — fix the md,
-  don't hand-patch the HTML. It prints `{items, headings, hrs, imgs, links, subtitle}`: the
-  counts are the targets. Verify `buildDoc` → `heads === headings`, and `editorCounts()` (before and after the
+  don't hand-patch the HTML. It prints `{items, headings, hrs, imgs, links, lists, bullets,
+  subtitle}`: the counts are the targets. Verify `buildDoc` → `heads === headings`,
+  `lists === lists`, `bullets === bullets`, and `editorCounts()` (before and after the
   persistence reload) → `heads === headings`, `hrs === hrs`, `imgs === imgs`,
-  `links === links`, `emptyParas === 0`, footer last.
+  `links === links`, `lists === lists`, `bullets === bullets`, `emptyParas === 0`, footer last.
+- The `bulletList`/`listItem` node names are TipTap's defaults and were not yet confirmed
+  against beehiiv's schema when this was written (2026-11-19). If the first chunk that holds
+  a list returns `{err:…}`, read `Object.keys(editor.schema.nodes)` on `/edit`, fix the names
+  in `build_doc.js`, and update this note.
 
 ## Chrome is driven ONLY by the Claude Chrome tools
 

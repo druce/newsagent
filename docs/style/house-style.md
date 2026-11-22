@@ -6,7 +6,7 @@ Derived from 50 published issues (Sep 8 – Oct 26, 2026) and four machine-diges
 
 - **Subject / H1:** `AI Reading for <Weekday> <Month> <D>` (e.g. "AI Reading for Monday October 26"). Fixed template.
 - **Subtitle** (preheader and line under the H1): 2–8 words, riffs on the lead theme. Checked before send; it is the first text readers see in the inbox.
-- **Body:** 15–30 clusters separated by `———`. Each cluster opens with a `## ` section title (1–7 words, calibrated in gold-headlines.md "Section titles"; voice per style-guide.md), then usually an image (captions left empty), then its items. 40–55 items per issue; 1–7 items per cluster, many single-item clusters.
+- **Body:** 15–30 clusters separated by `---` (markdown horizontal rule). Each cluster opens with a `## ` section title (1–7 words, calibrated in gold-headlines.md "Section titles"; voice per style-guide.md), then usually an image (captions left empty), then its items. 40–55 items per issue; 2–7 items per cluster; move a single-item cluster's item into a relevant cluster or the final catchall cluster.
 - **Order:** lead cluster = the day's dominant story, 3–10 items, chosen by editorial weight, not digest order. Middle = markets/compute, policy, security, labor. Tail = culture, oddities, light items.
 - **Embeds:** YouTube and X embeds render in plain text as `Youtube: <title> (url)` / `Tweet: (url)`. These are embeds, not errors.
 - **Footer:** `Follow the latest AI headlines via druce.ai on Bluesky`.
@@ -19,10 +19,12 @@ Derived from 50 published issues (Sep 8 – Oct 26, 2026) and four machine-diges
 
 **Summary**
 - One sentence, sentence case, present tense, active voice. Lead with the actor: "Meta releases…", "Jamie Dimon says…".
-- 15–30 words; cap at 35. (Only 7 of 2,248 items exceeded 40 words.)
-- At least one concrete specific: a number, a name, a date, a comparison. "Up to 70% of websites", "$124 billion", "from 27% to 9%".
+- **As simple as possible.** 10–20 words; hard cap 25 (the same cap as the pipeline's headlines). Count the words. Over the cap, cut a clause, not the specific.
+- **One fact per item:** who did what, plus the one detail that makes it news. Drop backstory, second facts, "who previously…" / "which comes after…" modifiers, lists of three, and secondary names. The reader can click.
+- Plain words a general reader knows; gloss or drop jargon. Short verbs: "cuts" not "announces a reduction in".
+- One concrete specific, the most striking one: a number, a name, a date, a comparison. "Up to 70% of websites", "$124 billion", "from 27% to 9%". Not three.
 - Attribution verbs: says, warns, finds, estimates, claims, alleges. Use "claims" for vendor benchmarks and unverified assertions.
-- Join two related facts with a semicolon, not a second sentence.
+- Never a second sentence. Prefer dropping the second fact; a semicolon joining two facts is a last resort and must still fit the cap.
 - No terminal period. **[normalize]** — the machine summaries omit it; hand-typed items often add one.
 - Not allowed in the summary: the source's Title Case headline, first-person source copy ("We gave Claude…", "When we started asking questions…"), vendor marketing voice ("you can explore and use directly"), questions, clickbait.
 
