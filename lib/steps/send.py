@@ -23,6 +23,7 @@ from lib.utilities import (
     run_stamp,
     send_gmail,
 )
+from lib.steplog import step_log
 
 
 _OUT_DIR = Path("out")
@@ -403,6 +404,7 @@ def deliver_newsletter(
               help="Write out/<date>.html but skip sending email.")
 @click.option("--force-email", "force_email", is_flag=True,
               help="Send email even if a newsletter has already been delivered for this session.")
+@step_log("send")
 def cli(
     db_path: str,
     session_id: str,

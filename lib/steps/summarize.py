@@ -28,6 +28,7 @@ from lib.llm import call_prompt, get_prompt
 from lib.prompts.extract_summaries import ExtractSummariesInput, ExtractSummariesOutput
 from lib.state import NewsletterAgentState
 from lib.utilities import strip_source_attribution
+from lib.steplog import step_log
 
 _DEFAULT_BATCH = 10
 _MAX_TEXT_CHARS = 8_000
@@ -203,6 +204,7 @@ def _write_report(session_id: str, total: int, summarized: int) -> None:
               help="Read result JSONs from this dir and apply to state")
 @click.option("--batch-size", type=int, default=_DEFAULT_BATCH,
               show_default=True, help="Articles per batch")
+@step_log("summarize")
 def cli(
     db_path: str,
     session_id: str,

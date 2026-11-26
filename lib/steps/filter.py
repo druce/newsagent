@@ -25,6 +25,7 @@ import lib.prompts  # noqa: F401 — register FILTER_URLS
 from lib.llm import call_prompt, get_prompt
 from lib.prompts.filter_urls import FilterUrlsInput, FilterUrlsOutput
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _DEFAULT_BATCH = 25
@@ -181,6 +182,7 @@ def _write_report(session_id: str, total: int, ai_count: int, kept: int) -> None
               help="Read result JSONs from this dir and apply to state")
 @click.option("--batch-size", type=int, default=_DEFAULT_BATCH,
               show_default=True, help="Items per batch (prepare-batches mode)")
+@step_log("filter")
 def cli(
     db_path: str,
     session_id: str,

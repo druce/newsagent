@@ -513,4 +513,5 @@ def test_render_notes_as_bullets_under_subtitle():
     lines = md.splitlines()
     assert lines[1] == ISSUE["subtitle"]
     assert lines[2].startswith("- Alt subtitles: ")
-    assert lines[3] == "- Note: kept both IPO clusters"
+    assert lines[3] == "- Stories: 3"
+    assert lines[4] == "- Note: kept both IPO clusters"

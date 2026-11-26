@@ -52,3 +52,4 @@ docs/superpowers/
 .playwright-mcp/
 .claude/settings.local.json.*
 *.pid
+.gui-bridge.json

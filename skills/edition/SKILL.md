@@ -113,7 +113,7 @@ the item. Missing ones are `- No image: reason`. This takes about 30 seconds; ad
 - the cluster, item and flag counts
 - every `note:` and `warning:` line
 
-Editor notes are plain bullet lines, `- Label: text`: `Alt subtitles` and `Note` under the
+Editor notes are plain bullet lines, `- Label: text`: `Alt subtitles`, `Stories` (item count) and `Note` under the
 subtitle, `Alt titles` under each heading, and `No image`, `Alt kickers`, `Flag`,
 `Possible duplicate` with each item. They go into the beehiiv draft as bulleted lists, so
 the editor reads them there and deletes them before sending.

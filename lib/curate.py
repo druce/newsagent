@@ -22,8 +22,12 @@ _COLS = ("id", "session_id", "url", "title", "short_summary", "summary",
 # "2026-…") out of it.
 _WHERE = "session_id >= ? AND session_id GLOB '[0-9][0-9][0-9][0-9]-*'"
 
+# Cats whose best story rates highest come first (ties by name), then stories
+# by rating within a cat. 'Other' and uncategorized rows stay at the bottom.
+# The window runs over the filtered rows, before LIMIT/OFFSET, so paging is stable.
 _ORDER = (
     "CASE WHEN cat IS NULL OR cat = '' THEN 2 WHEN cat = 'Other' THEN 1 ELSE 0 END, "
+    "MAX(rating) OVER (PARTITION BY cat) DESC NULLS LAST, "
     "cat, rating DESC NULLS LAST, id"
 )
 

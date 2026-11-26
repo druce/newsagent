@@ -108,6 +108,10 @@ _SCHEMA_STATEMENTS = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_agent_state_session_id ON agent_state(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_state_updated_at ON agent_state(updated_at)",
+    # Covering index: lets "latest checkpoint per session" queries read updated_at
+    # without walking each row's multi-MB state_data overflow pages (GUI, sessions).
+    "CREATE INDEX IF NOT EXISTS idx_agent_state_session_updated "
+    "ON agent_state(session_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_bsky_queue_status ON bsky_queue(status)",
     "CREATE INDEX IF NOT EXISTS idx_published_articles_published_at "
     "ON published_articles(published_at)",

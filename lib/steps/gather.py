@@ -33,6 +33,7 @@ from lib.fetch.rest import fetch_rest
 from lib.fetch.types import FetchResult
 from lib.state import NewsletterAgentState
 from lib.utilities import clean_url
+from lib.steplog import step_log
 
 
 def _domain_of(url: str) -> str:
@@ -113,6 +114,7 @@ def _fetch_one(
 @click.option("--cached-pages", "cached_pages", is_flag=True,
               help="Read html sources from runs/<SID>/pages/<source>.html "
                    "instead of fetching them; rss/rest are still fetched live.")
+@step_log("gather")
 def cli(db_path: str, session_id: str, cached_pages: bool) -> None:
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()
     if state is None:

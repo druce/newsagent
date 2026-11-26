@@ -37,6 +37,9 @@ rebuilds the `published_articles` store from past `select` checkpoints). `newsag
 a Chrome/beehiiv-login pre-flight (`finalize edition` skips bluesky and imports `out/latest-edition.md`;
 `newsagent:edition` calls it automatically after rendering); it is the only skill that hard-requires the
 Chrome extension end to end and it never falls back to a headless browser.
+`newsagent:fix` applies a pasted list of copy-edit fixes to that beehiiv draft in place
+(editor-model find → replace via `skills/beehiiv/scripts/fix_text.js`, marks preserved so
+link text stays linked); it never touches the local .md and never publishes.
 
 `dedupe` runs between `download` and `summarize` so duplicate articles aren't summarized twice. It's a full member of `WORKFLOW_STEPS` (see `lib/state.py:25`).
 
@@ -99,6 +102,12 @@ Every step is `.venv/bin/python -m lib.steps.<step>` (see `lib/steps/` for the l
 # Curation page: toggle published_articles.selected for sessions since noon yesterday;
 # inline ✎ Edit (url / short_summary / site_name only), Delete, + Add story (latest session, cat Other)
 .venv/bin/python -m lib.steps.curate   # http://127.0.0.1:8766/
+
+# Pipeline GUI: workflow diagram, per-step Doc/Code/Log/State pop-ups, live log pane, chat +
+# Run/Stop/Reset driving an interactive session via the newsagent-gui channel (lib/gui_channel.py).
+# Step CLIs tee output to runs/<SID>/<step>.log (lib/steplog.py). See skills/gui/SKILL.md.
+.venv/bin/python -m lib.steps.gui      # http://127.0.0.1:8767/
+tools/claude-gui.sh                    # claude session connected to the GUI's chat/buttons
 
 # Issue draft from the curated picks (house style, docs/style/): /newsagent:edition
 # --prepare → one Opus agent merges the sessions' cats (+ flags dup stories) → --apply-merge RUN

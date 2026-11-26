@@ -87,7 +87,7 @@ python -m lib.steps.select --session SID --apply-results runs/<SID>
 
 Loads reassign results, applies cluster_name to every headline (unmapped or
 "Other" → routed to the `Other` bucket), runs global MMR top-K (default
-100, override with `--k`), populates `state.newsletter_section_data` +
+60, override with `--k`), populates `state.newsletter_section_data` +
 `state.clusters`, writes `runs/<SID>/select.json`.
 
 ## Classic mode (non-interactive)
@@ -103,7 +103,7 @@ MMR/finalize. Useful for cron/CI when no parent Claude is dispatching.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--k` | 100 | Global MMR top-K |
+| `--k` | 60 | Global MMR top-K |
 | `--lambda` | 0.7 | MMR relevance/diversity trade-off |
 | `--repechage-batch-size` | 50 | Noise headlines per phase-A batch |
 | `--reassign-batch-size` | 25 | Headlines per phase-C batch |

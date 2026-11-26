@@ -26,6 +26,7 @@ from lib.embeddings import embed_texts
 from lib.llm import call_prompt, get_prompt
 from lib.prompts.name_topic_batch import NameTopicBatchInput, NameTopicBatchOutput
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _BATCHES_SUBDIR = "cluster-batches"
@@ -247,6 +248,7 @@ def _write_report(
               help="Write batches to runs/<SID>/cluster-batches/ for subagent dispatch")
 @click.option("--apply-results", "apply_results", default=None,
               help="Read result JSON from this dir and apply to state")
+@step_log("cluster")
 def cli(
     db_path: str,
     session_id: str,

@@ -17,6 +17,7 @@ import numpy as np
 
 from lib.embeddings import embed_texts
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _SIM_THRESHOLD = 0.95
@@ -113,6 +114,7 @@ def _drop_near_duplicates(
 @click.option("--db", "db_path", default="newsletter_agent.db")
 @click.option("--session", "session_id", required=True)
 @click.option("--threshold", default=_SIM_THRESHOLD, type=float)
+@step_log("dedupe")
 def cli(db_path: str, session_id: str, threshold: float) -> None:
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()
     if state is None:

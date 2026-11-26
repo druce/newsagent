@@ -33,6 +33,7 @@ from lib.prompts.coverage_boost import (
     CoverageBoostOutput,
 )
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _DEFAULT_BATCH = 25
@@ -277,6 +278,7 @@ def _write_report(
 @click.option("--shortlist-threshold", type=float,
               default=_DEFAULT_SHORTLIST_THRESHOLD, show_default=True,
               help="Cosine cutoff for shortlisting pairs for the judge")
+@step_log("coverage")
 def cli(
     db_path: str,
     session_id: str,

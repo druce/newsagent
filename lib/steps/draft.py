@@ -36,6 +36,7 @@ from lib.llm import call_prompt, get_prompt
 from lib.prompts._dispatch_schemas import DraftSectionResult
 from lib.prompts.write_section import WriteSectionInput
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _BATCHES_SUBDIR = "draft-batches"
@@ -226,6 +227,7 @@ def _draft_section_classic(
               help="[--assemble-section] whether the critic loop accepted the section.")
 @click.option("--out", "out_path", default=None,
               help="[--assemble-section] path to write the DraftSectionResult JSON.")
+@step_log("draft")
 def cli(
     db_path: str,
     session_id: str,

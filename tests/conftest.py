@@ -85,3 +85,11 @@ def _stub_published_embeddings(monkeypatch):
     that care patch lib.published.embed_texts themselves (overrides this)."""
     monkeypatch.setattr(
         "lib.published.embed_texts", lambda texts: [[0.5, 0.5] for _ in texts])
+
+
+@pytest.fixture(autouse=True)
+def _isolate_step_logs(monkeypatch, tmp_path):
+    """Step CLIs tee output to runs/<SID>/<step>.log via lib.steplog; keep tests
+    from writing logs into the real runs/ directory."""
+    import lib.steplog
+    monkeypatch.setattr(lib.steplog, "RUNS_ROOT", tmp_path / "_steplogs")

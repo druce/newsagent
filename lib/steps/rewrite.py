@@ -27,6 +27,7 @@ from lib.llm import call_prompt, get_prompt
 from lib.prompts._dispatch_schemas import RewriteResult
 from lib.state import NewsletterAgentState
 from lib.steps.send import deliver_newsletter
+from lib.steplog import step_log
 
 
 _BATCHES_SUBDIR = "rewrite-batches"
@@ -196,6 +197,7 @@ def _load_result(results_dir: Path) -> tuple[Optional[RewriteResult], list[str]]
               help="Email recipient for the auto-sent newsletter (defaults to GMAIL_USER).")
 @click.option("--no-email", "no_email", is_flag=True,
               help="Render and write out/<date>.html but skip the Gmail send.")
+@step_log("rewrite")
 def cli(
     db_path: str,
     session_id: str,

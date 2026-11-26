@@ -43,6 +43,7 @@ from lib.sources import (
     reset_db_cache,
 )
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _DOWNLOAD_DIR = Path("download")
@@ -294,6 +295,7 @@ def _load_sitename_results(
               help="Classic mode: resolve unknown site names in-process via "
                    "this engine (cron/CI only; e.g. google:gemini-3.1-flash-lite). "
                    "Default: write sitename batches for Haiku subagent dispatch.")
+@step_log("download")
 def cli(db_path: str, session_id: str, max_urls: int | None, parallel: int,
         apply_sitenames: str | None, engine: str | None) -> None:
     state = NewsletterAgentState(session_id=session_id, db_path=db_path).load_latest_from_db()

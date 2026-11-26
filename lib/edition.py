@@ -401,7 +401,8 @@ def render_edition_md(issue: dict, urls: dict[int, str], title: str,
     merge step's possible-duplicate notes, one bullet each. Editor notes (alternatives,
     flags, missing images, merge notes) are `- Label: text` bullets, not comments."""
     out = [f"# {title}", issue["subtitle"].strip(),
-           _note("Alt subtitles", " | ".join(issue["subtitle_alts"]))]
+           _note("Alt subtitles", " | ".join(issue["subtitle_alts"])),
+           _note("Stories", str(sum(len(c["items"]) for c in issue["clusters"])))]
     for note in issue.get("notes") or []:
         out.append(_note("Note", note))
     blocks = []

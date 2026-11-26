@@ -55,6 +55,7 @@ from lib.prompts.extract_noise_clusters import (
 )
 from lib.published import record_session_articles
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _DEFAULT_TOP_K = 60
@@ -640,6 +641,7 @@ def _write_select_report(
               show_default=True)
 @click.option("--reassign-batch-size", type=int, default=_DEFAULT_REASSIGN_BATCH,
               show_default=True)
+@step_log("select")
 def cli(
     db_path: str,
     session_id: str,

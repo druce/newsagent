@@ -39,6 +39,7 @@ from lib.embeddings import embed_texts
 from lib.llm import call_prompt, get_prompt
 from lib.prompts.dedupe_vs_archive import DedupeVsArchiveInput, DedupeVsArchiveOutput
 from lib.state import NewsletterAgentState
+from lib.steplog import step_log
 
 
 _DEFAULT_BATCH = 25
@@ -285,6 +286,7 @@ def _write_report(session_id: str, considered: int, dropped: int) -> None:
               show_default=True, help="Suppress stories published in the last N days")
 @click.option("--shortlist-threshold", type=float, default=_DEFAULT_SHORTLIST_THRESHOLD,
               show_default=True, help="Cosine cutoff for shortlisting pairs for the judge")
+@step_log("crossdedupe")
 def cli(
     db_path: str,
     session_id: str,

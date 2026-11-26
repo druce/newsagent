@@ -42,15 +42,21 @@ def test_fetch_page_window_excludes_older_and_non_date_sessions(tmp_db):
         "2026-11-14-21-11-41", "2026-11-15-07-00-14"}
 
 
-def test_fetch_page_orders_cat_then_rating(tmp_db):
+def test_fetch_page_orders_cats_by_top_rating_then_rating(tmp_db):
     for cat, rating in [("Zeta", 1.0), ("Alpha", 0.5), ("Alpha", 0.9),
-                        ("Other", 2.0), (None, 3.0), ("", 3.0), ("Alpha", None)]:
+                        ("Other", 2.0), (None, 3.0), ("", 3.0), ("Alpha", None),
+                        ("Beta", 0.2), ("Beta", 0.9), ("Gamma", None)]:
         _insert(tmp_db, cat=cat, rating=rating)
     r = fetch_page(tmp_db, SINCE, 1)
-    assert [(x["cat"], x["rating"]) for x in r["rows"]][:5] == [
-        ("Alpha", 0.9), ("Alpha", 0.5), ("Alpha", None), ("Zeta", 1.0),
+    # Cats by their best story (desc); ties by name; no-rating cats after
+    # rated ones; Other, then blank, always last.
+    assert [(x["cat"], x["rating"]) for x in r["rows"]][:8] == [
+        ("Zeta", 1.0),
+        ("Alpha", 0.9), ("Alpha", 0.5), ("Alpha", None),
+        ("Beta", 0.9), ("Beta", 0.2),
+        ("Gamma", None),
         ("Other", 2.0)]
-    assert {x["cat"] for x in r["rows"][5:]} == {None, ""}
+    assert {x["cat"] for x in r["rows"][8:]} == {None, ""}
 
 
 def test_fetch_page_paginates_and_clamps(tmp_db):

@@ -10,7 +10,6 @@ Published issues before Nov 2026 had no section headlines; drafts now title each
 [Kicker: Factual summary sentence](url) - _Source_
 ```
 
-- **Rate:** 22% of items carry a kicker (487 of 2,248). Usually the first item in a cluster; rarely more than one per cluster.
 - **Length:** median 3 words; 88% are 5 words or fewer; 7 words is the practical ceiling.
 - **Case:** sentence case, except where the referenced title's own capitalization is the joke (`Of Mice and Models`, `A Tale of Two Trillions`).
 - **The summary carries the facts; the kicker never replaces them.** The kicker should land on its own and get funnier after reading the summary.

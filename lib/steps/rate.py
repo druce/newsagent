@@ -59,6 +59,7 @@ from lib.llm import call_prompt
 from lib.rating import bradley_terry_scores
 from lib.state import NewsletterAgentState
 from lib.utilities import is_no_content, send_gmail, write_short_digest
+from lib.steplog import step_log
 
 # One Decisions API call per article per axis (~0.3 s each, no output tokens);
 # 16 in flight per axis, 48 total across the three concurrent axes.
@@ -245,6 +246,7 @@ def _lookup_reputation(db_path: str, url: str) -> float:
               help="Email recipient for the rated digest (defaults to GMAIL_USER).")
 @click.option("--no-email", "no_email", is_flag=True,
               help="Write out/<date>_short.html but skip sending email.")
+@step_log("rate")
 def cli(
     db_path: str,
     session_id: str,
